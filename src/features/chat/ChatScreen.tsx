@@ -19,7 +19,9 @@ import {
   ArrowLeft,
   Bell,
   CheckCircle2,
+  Camera,
   Copy,
+  Ellipsis,
   MessageCircle,
   Mic,
   MicOff,
@@ -30,12 +32,11 @@ import {
   Reply,
   Search,
   Send,
+  Settings,
   Share2,
-  ShieldCheck,
-  SmilePlus,
-  Sticker,
   Store,
   UserPlus,
+  UsersRound,
   Video,
   VideoOff,
   X,
@@ -92,6 +93,7 @@ export default function ChatScreen({
   const [contacts, setContacts] = useState<ChatContact[]>([]);
   const [requestingId, setRequestingId] = useState<string | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
+  const [segment, setSegment] = useState<"personal" | "business">("personal");
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [callSession, setCallSession] = useState<CallSession | null>(null);
@@ -113,6 +115,14 @@ export default function ChatScreen({
   const openConversation = useCallback(
     async (conversation: Conversation) => {
       setSelected(conversation);
+      if (
+        conversation.requestStatus &&
+        conversation.requestStatus !== "accepted"
+      ) {
+        setMessages([]);
+        setState("ready");
+        return;
+      }
       setState("loading");
       try {
         await dataSource.markConversationRead(conversation.id);
@@ -209,6 +219,18 @@ export default function ChatScreen({
       ),
     [conversations, query],
   );
+  const unreadConversations = useMemo(
+    () => filtered.filter((conversation) => conversation.unreadCount > 0).length,
+    [filtered],
+  );
+  const unreadMessages = useMemo(
+    () =>
+      filtered.reduce(
+        (total, conversation) => total + conversation.unreadCount,
+        0,
+      ),
+    [filtered],
+  );
   const incomingRequests = useMemo(
     () =>
       conversations.filter(
@@ -264,30 +286,42 @@ export default function ChatScreen({
       <View style={styles.header}>
         <View style={styles.headerCopy}>
           <Text accessibilityRole="header" style={styles.title}>
-            Messages
-          </Text>
-          <Text style={styles.headerSubtitle}>
-            {sharedPost ? "Choose a friend to share this post" : "Private conversations"}
+            Chats
           </Text>
         </View>
         <View style={styles.headerActions}>
-          {onBusinessSearch ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Search businesses"
-              onPress={onBusinessSearch}
-              style={styles.iconButton}
-            >
-              <Store color="#111111" size={20} />
-            </Pressable>
-          ) : null}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Message requests${incomingRequests.length ? `, ${incomingRequests.length} new` : ""}`}
-            onPress={() => setRequestsOpen(true)}
+            accessibilityLabel="Start a new chat"
+            onPress={() => setNewChatOpen(true)}
             style={styles.iconButton}
           >
-            <Bell color="#111111" size={21} />
+            <Plus color="#ffffff" size={24} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Chat settings"
+            onPress={() =>
+              Alert.alert(
+                "Coming soon",
+                "Chat settings are not wired in Phase 1 yet.",
+              )
+            }
+            style={styles.iconButtonMuted}
+          >
+            <Settings color="#475467" size={20} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`More options${incomingRequests.length ? `, ${incomingRequests.length} request${incomingRequests.length === 1 ? "" : "s"} waiting` : ""}`}
+            onPress={() =>
+              incomingRequests.length > 0
+                ? setRequestsOpen(true)
+                : Alert.alert("No extra actions yet", "More chat tools will be added in the next phase.")
+            }
+            style={styles.iconButtonMuted}
+          >
+            <Ellipsis color="#475467" size={20} />
             {incomingRequests.length > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
@@ -296,14 +330,6 @@ export default function ChatScreen({
               </View>
             )}
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Start a new chat"
-            onPress={() => setNewChatOpen(true)}
-            style={styles.iconButton}
-          >
-            <Plus color="#111111" size={24} />
-          </Pressable>
         </View>
       </View>
       <View style={styles.searchBox}>
@@ -311,17 +337,69 @@ export default function ChatScreen({
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Search conversations"
+          placeholder="Search chats and people"
           placeholderTextColor="#728096"
           style={styles.searchInput}
           accessibilityLabel="Search conversations"
           returnKeyType="search"
         />
       </View>
-      <View style={styles.securityStrip} accessibilityLiveRegion="polite">
-        <ShieldCheck size={15} color="#138a4b" />
-        <Text style={styles.securityText}>
-          Your conversations stay private and secure
+      <View style={styles.segmentedControl}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: segment === "personal" }}
+          onPress={() => setSegment("personal")}
+          style={[
+            styles.segmentButton,
+            segment === "personal" && styles.segmentButtonActive,
+          ]}
+        >
+          <UsersRound
+            color={segment === "personal" ? "#16a34a" : "#667085"}
+            size={18}
+          />
+          <Text
+            style={[
+              styles.segmentLabel,
+              segment === "personal" && styles.segmentLabelActive,
+            ]}
+          >
+            Personal
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: segment === "business" }}
+          onPress={() => setSegment("business")}
+          style={[
+            styles.segmentButton,
+            segment === "business" && styles.segmentButtonActive,
+          ]}
+        >
+          <Store
+            color={segment === "business" ? "#16a34a" : "#667085"}
+            size={18}
+          />
+          <Text
+            style={[
+              styles.segmentLabel,
+              segment === "business" && styles.segmentLabelActive,
+            ]}
+          >
+            Business
+          </Text>
+        </Pressable>
+      </View>
+      <View style={styles.summaryRow}>
+        <Text style={styles.summaryPrimary}>
+          {segment === "personal" ? filtered.length : 0}{" "}
+          {segment === "personal" ? "personal chats" : "business chats"}
+        </Text>
+        <Text style={styles.summarySecondary}>
+          {segment === "personal" ? unreadConversations : 0} active unread
+        </Text>
+        <Text style={styles.summarySecondary}>
+          {segment === "personal" ? unreadMessages : 0} unread
         </Text>
       </View>
       {sharedPost && (
@@ -347,7 +425,9 @@ export default function ChatScreen({
           onPress={() => setRequestsOpen(true)}
         />
       )}
-      {state === "loading" ? (
+      {segment === "business" ? (
+        <BusinessPlaceholder onBusinessSearch={onBusinessSearch} />
+      ) : state === "loading" ? (
         <Loading />
       ) : state === "error" ? (
         <ErrorState message={error} retry={loadConversations} />
@@ -455,6 +535,9 @@ function ConversationView({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null);
+  const [messageReactions, setMessageReactions] = useState<
+    Record<string, string>
+  >({});
   const list = useRef<FlatList<ChatMessage>>(null);
   const send = async () => {
     if (conversation.requestStatus && conversation.requestStatus !== "accepted")
@@ -519,6 +602,14 @@ function ConversationView({
     setDraft(`↪ “${quote}”\n`);
     setActionMessage(null);
   };
+  const reactToMessage = (emoji: string) => {
+    if (!actionMessage) return;
+    setMessageReactions((current) => ({
+      ...current,
+      [actionMessage.id]: emoji,
+    }));
+    setActionMessage(null);
+  };
   const startCall = async (kind: CallKind) => {
     if (conversation.requestStatus && conversation.requestStatus !== "accepted") {
       Alert.alert(
@@ -555,7 +646,7 @@ function ConversationView({
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
-        style={styles.fill}
+        style={[styles.fill, styles.conversationScreen]}
         behavior={Platform.select({ ios: "padding", android: undefined })}
         keyboardVerticalOffset={8}
       >
@@ -577,26 +668,42 @@ function ConversationView({
               {conversation.participant.name}
             </Text>
             <Text style={styles.presence}>
-              {conversation.participant.isOnline
-                ? "Online"
-                : "Messages are private"}
+              {conversation.participant.isOnline ? "online" : "Messages are private"}
             </Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Search this conversation"
+            onPress={() =>
+              Alert.alert(
+                "Coming soon",
+                "Conversation search is not wired in Phase 1 yet.",
+              )
+            }
+            style={styles.callControl}
+          >
+            <Search color="#475467" size={20} />
+          </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Start audio call with ${conversation.participant.name}`}
             onPress={() => void startCall("audio")}
             style={styles.callControl}
           >
-            <Phone color="#006D3A" size={19} />
+            <Phone color="#475467" size={19} />
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Start video call with ${conversation.participant.name}`}
-            onPress={() => void startCall("video")}
+            accessibilityLabel="More conversation actions"
+            onPress={() =>
+              Alert.alert(
+                "More actions",
+                "Extra conversation actions are coming in the next phase.",
+              )
+            }
             style={styles.callControl}
           >
-            <Video color="#006D3A" size={19} />
+            <Ellipsis color="#475467" size={20} />
           </Pressable>
         </View>
         {sharedPost &&
@@ -656,6 +763,7 @@ function ConversationView({
               <MessageBubble
                 message={item}
                 onLongPress={() => setActionMessage(item)}
+                reaction={messageReactions[item.id]}
               />
             )}
             onContentSizeChange={() =>
@@ -668,57 +776,94 @@ function ConversationView({
             accessibilityRole="button"
             accessibilityLabel="Choose a sticker"
             onPress={() => setStickersOpen(true)}
-            style={styles.shareButton}
+            style={styles.composerAccessory}
           >
-            <Sticker color="#006D3A" size={20} />
+            <Plus color="#667085" size={22} />
           </Pressable>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            style={styles.composerInput}
-            placeholder={
-              conversation.requestStatus === "pending_outgoing"
-                ? "Waiting for request acceptance"
-                : "Message"
-            }
-            placeholderTextColor="#728096"
-            multiline
-            maxLength={2000}
-            accessibilityLabel={`Message ${conversation.participant.name}`}
-            editable={
-              !conversation.requestStatus ||
-              conversation.requestStatus === "accepted"
-            }
-          />
+          <View style={styles.inputShell}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open emoji keyboard"
+              onPress={() => setEmojiOpen(true)}
+              style={styles.inputAccessory}
+            >
+              <MessageCircle color="#667085" size={20} />
+            </Pressable>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              style={styles.composerInput}
+              placeholder={
+                conversation.requestStatus === "pending_outgoing"
+                  ? "Waiting for request acceptance"
+                  : "Message"
+              }
+              placeholderTextColor="#728096"
+              multiline
+              maxLength={2000}
+              accessibilityLabel={`Message ${conversation.participant.name}`}
+              editable={
+                !conversation.requestStatus ||
+                conversation.requestStatus === "accepted"
+              }
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Attach camera media"
+              onPress={() =>
+                Alert.alert(
+                  "Coming soon",
+                  "Camera attachments are not wired in Phase 1 yet.",
+                )
+              }
+              style={styles.inputAccessory}
+            >
+              <Camera color="#667085" size={20} />
+            </Pressable>
+          </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Open emoji keyboard"
-            onPress={() => setEmojiOpen(true)}
-            style={styles.emojiButton}
+            accessibilityLabel="Open payment actions"
+            onPress={() =>
+              Alert.alert(
+                "Payments later",
+                "Wallet and payment actions stay frontend-only in this phase.",
+              )
+            }
+            style={styles.payButton}
           >
-            <SmilePlus color="#536277" size={20} />
+            <Text style={styles.payButtonText}>Pay</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Send message"
+            accessibilityLabel={draft.trim() ? "Send message" : "Voice message"}
             accessibilityState={{
               disabled:
-                !draft.trim() ||
                 sending ||
                 (conversation.requestStatus !== undefined &&
                   conversation.requestStatus !== "accepted"),
             }}
-            onPress={() => void send()}
+            onPress={() =>
+              draft.trim()
+                ? void send()
+                : Alert.alert(
+                    "Coming soon",
+                    "Voice messages are not wired in Phase 1 yet.",
+                  )
+            }
             style={[
               styles.sendButton,
-              (!draft.trim() ||
-                sending ||
+              (sending ||
                 (conversation.requestStatus !== undefined &&
                   conversation.requestStatus !== "accepted")) &&
                 styles.sendDisabled,
             ]}
           >
-            <Send color="#fff" size={19} />
+            {draft.trim() ? (
+              <Send color="#fff" size={19} />
+            ) : (
+              <Mic color="#fff" size={19} />
+            )}
           </Pressable>
         </View>
         <EmojiPicker
@@ -745,6 +890,7 @@ function ConversationView({
           close={() => setActionMessage(null)}
           copy={() => void copyMessage()}
           reply={replyToMessage}
+          react={reactToMessage}
         />
         <CallOverlay
           session={callSession}
@@ -813,6 +959,39 @@ function ConversationRow({
     </Pressable>
   );
 }
+
+function BusinessPlaceholder({
+  onBusinessSearch,
+}: {
+  onBusinessSearch?: () => void;
+}) {
+  return (
+    <View style={styles.businessWrap}>
+        <View style={styles.businessCard}>
+          <View style={styles.businessIcon}>
+            <Store color="#16a34a" size={28} />
+          </View>
+        <Text style={styles.businessTitle}>Business chats stay separate</Text>
+        <Text style={styles.businessText}>
+          Storefront conversations will appear here once you open a verified
+          business chat. We kept this segment safe instead of inventing new chat
+          types.
+        </Text>
+        {onBusinessSearch ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Search sellers"
+            onPress={onBusinessSearch}
+            style={styles.businessButton}
+          >
+            <Text style={styles.businessButtonText}>Search sellers</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function Avatar({ label, online }: { label: string; online?: boolean }) {
   return (
     <View style={styles.avatarWrap}>
@@ -826,9 +1005,11 @@ function Avatar({ label, online }: { label: string; online?: boolean }) {
 function MessageBubble({
   message,
   onLongPress,
+  reaction,
 }: {
   message: ChatMessage;
   onLongPress: () => void;
+  reaction?: string;
 }) {
   const mine = message.senderId === CURRENT_USER_ID;
   return (
@@ -872,6 +1053,11 @@ function MessageBubble({
           {mine && message.status === "read" ? " · Read" : ""}
         </Text>
       </Pressable>
+      {reaction ? (
+        <View style={[styles.reactionPill, mine && styles.reactionPillMine]}>
+          <Text style={styles.reactionPillText}>{reaction}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -928,16 +1114,31 @@ function MessageActions({
   close,
   copy,
   reply,
+  react,
 }: {
   message: ChatMessage | null;
   close: () => void;
   copy: () => void;
   reply: () => void;
+  react: (emoji: string) => void;
 }) {
   return (
     <Modal visible={Boolean(message)} transparent animationType="fade" onRequestClose={close}>
       <Pressable style={styles.sheetBackdrop} onPress={close}>
         <Pressable style={styles.actionSheet} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.reactionTray}>
+            {["❤️", "😂", "😮", "😢", "😡", "👍"].map((emoji) => (
+              <Pressable
+                key={emoji}
+                accessibilityRole="button"
+                accessibilityLabel={`React with ${emoji}`}
+                onPress={() => react(emoji)}
+                style={styles.reactionOption}
+              >
+                <Text style={styles.reactionOptionText}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
           <Text numberOfLines={2} style={styles.actionPreview}>{message?.text}</Text>
           <Pressable accessibilityRole="button" onPress={reply} style={styles.actionRow}>
             <Reply color="#078f4a" size={20} />
@@ -1421,14 +1622,21 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
   },
   headerCopy: { flex: 1 },
-  title: { color: "#111111", fontSize: 24, lineHeight: 30, fontWeight: "800" },
-  headerSubtitle: { color: "#7c8781", fontSize: 12, marginTop: 1 },
+  title: { color: "#111111", fontSize: 34, lineHeight: 40, fontWeight: "800" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 10 },
   iconButton: {
     width: 44,
     height: 44,
-    borderRadius: 16,
-    backgroundColor: "#eaf7ee",
+    borderRadius: 22,
+    backgroundColor: "#16a34a",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconButtonMuted: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#f2f4f7",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1488,15 +1696,45 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   searchInput: { flex: 1, color: "#111111", fontSize: 15, paddingVertical: 6 },
-  securityStrip: {
-    marginHorizontal: 18,
-    marginTop: 11,
-    marginBottom: 10,
+  segmentedControl: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 14,
+    borderRadius: 22,
+    backgroundColor: "#f2f4f7",
+    padding: 4,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 4,
   },
-  securityText: { color: "#668071", fontSize: 11, fontWeight: "500" },
+  segmentButton: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  segmentButtonActive: {
+    backgroundColor: "#ffffff",
+    shadowColor: "#101828",
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  segmentLabel: { color: "#667085", fontSize: 16, fontWeight: "700" },
+  segmentLabelActive: { color: "#16a34a" },
+  summaryRow: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 18,
+  },
+  summaryPrimary: { color: "#101828", fontSize: 16, fontWeight: "800" },
+  summarySecondary: { color: "#667085", fontSize: 15, fontWeight: "500" },
   shareSelectionBanner: {
     marginHorizontal: 16,
     marginBottom: 12,
@@ -1630,24 +1868,22 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginTop: 5,
   },
-  list: { paddingHorizontal: 12, paddingBottom: 24, gap: 8 },
+  list: { paddingHorizontal: 0, paddingBottom: 24 },
   row: {
-    minHeight: 72,
+    minHeight: 92,
     flexDirection: "row",
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     gap: 12,
     backgroundColor: "#ffffff",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#edf0ee",
-    boxShadow: "0 4px 14px rgba(20, 35, 27, 0.04)",
+    borderBottomWidth: 1,
+    borderColor: "#eef2f6",
   },
   avatarWrap: { width: 51, height: 51 },
   avatar: {
     width: 48,
     height: 48,
-    borderRadius: 16,
+    borderRadius: 24,
     backgroundColor: "#dff4e7",
     alignItems: "center",
     justifyContent: "center",
@@ -1664,12 +1900,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#ffffff",
   },
-  rowCopy: { flex: 1, minWidth: 0, justifyContent: "center", gap: 5 },
+  rowCopy: { flex: 1, minWidth: 0, justifyContent: "center", gap: 6 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
-  rowBottom: { flexDirection: "row", alignItems: "center", gap: 8 },
-  personName: { color: "#111111", fontSize: 16, fontWeight: "600" },
-  time: { color: "#aaaaaa", fontSize: 11 },
-  preview: { color: "#888888", fontSize: 14, flex: 1 },
+  rowBottom: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 24 },
+  personName: { color: "#111111", fontSize: 18, fontWeight: "700" },
+  time: { color: "#667085", fontSize: 13, fontWeight: "500" },
+  preview: { color: "#667085", fontSize: 15, flex: 1, lineHeight: 20 },
   previewUnread: { color: "#333333", fontWeight: "500" },
   requestPill: {
     height: 23,
@@ -1756,6 +1992,7 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
   },
   retryText: { color: "#FFFFFF", fontWeight: "600" },
+  conversationScreen: { backgroundColor: "#ebe7df" },
   conversationHeader: {
     minHeight: 60,
     paddingHorizontal: 12,
@@ -1818,13 +2055,18 @@ const styles = StyleSheet.create({
   mineWrap: { alignItems: "flex-end" },
   message: {
     maxWidth: "82%",
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 10,
+    elevation: 2,
   },
-  mine: { backgroundColor: "#95ec69" },
+  mine: { backgroundColor: "#12d39b" },
   theirs: { backgroundColor: "#ffffff" },
-  messageText: { color: "#111111", fontSize: 16, lineHeight: 22 },
+  messageText: { color: "#111111", fontSize: 16, lineHeight: 24 },
   stickerMessage: { paddingHorizontal: 4, paddingVertical: 2 },
   transparentMessage: { backgroundColor: "transparent" },
   stickerText: {
@@ -1855,45 +2097,82 @@ const styles = StyleSheet.create({
     fontSize: 11,
     alignSelf: "flex-end",
   },
-  mineTime: { color: "#4c7840" },
+  mineTime: { color: "rgba(255,255,255,0.86)" },
+  reactionPill: {
+    marginTop: 4,
+    marginLeft: 10,
+    minWidth: 34,
+    paddingHorizontal: 8,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  reactionPillMine: { marginLeft: 0, marginRight: 10 },
+  reactionPillText: { fontSize: 14 },
   composer: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: "#cfcfcf",
+    borderColor: "#d3d7de",
     backgroundColor: "#ffffff",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 10,
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     gap: 8,
   },
-  shareButton: {
-    width: 35,
+  composerAccessory: {
+    width: 36,
     height: 42,
     alignItems: "center",
     justifyContent: "center",
   },
-  emojiButton: {
-    width: 30,
-    height: 42,
+  inputShell: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: 26,
+    backgroundColor: "#f2f4f7",
+    paddingHorizontal: 4,
+    flexDirection: "row",
+    alignItems: "flex-end",
+  },
+  inputAccessory: {
+    width: 42,
+    height: 50,
     alignItems: "center",
     justifyContent: "center",
   },
   composerInput: {
     flex: 1,
     maxHeight: 112,
-    minHeight: 42,
-    backgroundColor: "#ffffff",
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 9,
+    minHeight: 50,
+    backgroundColor: "transparent",
+    paddingHorizontal: 4,
+    paddingTop: 14,
+    paddingBottom: 12,
     color: "#111111",
     fontSize: 16,
   },
+  payButton: {
+    minWidth: 58,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#9333ea",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  payButtonText: { color: "#ffffff", fontSize: 15, fontWeight: "800" },
   sendButton: {
     width: 44,
     height: 42,
-    borderRadius: 14,
+    borderRadius: 21,
     backgroundColor: "#07c160",
     alignItems: "center",
     justifyContent: "center",
@@ -1961,6 +2240,21 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
     gap: 4,
   },
+  reactionTray: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 8,
+  },
+  reactionOption: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f8fafc",
+  },
+  reactionOptionText: { fontSize: 22 },
   actionPreview: {
     color: "#66716b",
     fontSize: 13,
@@ -2028,4 +2322,50 @@ const styles = StyleSheet.create({
   callButtonDanger: { backgroundColor: "#ed3f4f" },
   callButtonSuccess: { backgroundColor: "#07c160" },
   callButtonLabel: { color: "#e8efeb", fontSize: 11, textAlign: "center" },
+  businessWrap: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+  },
+  businessCard: {
+    borderRadius: 28,
+    backgroundColor: "#f4fbf6",
+    borderWidth: 1,
+    borderColor: "#daf2e0",
+    padding: 24,
+    alignItems: "center",
+  },
+  businessIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 22,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  businessTitle: {
+    color: "#111827",
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  businessText: {
+    color: "#667085",
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: "center",
+    marginTop: 10,
+  },
+  businessButton: {
+    marginTop: 18,
+    minHeight: 48,
+    paddingHorizontal: 22,
+    borderRadius: 16,
+    backgroundColor: "#16a34a",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  businessButtonText: { color: "#ffffff", fontSize: 15, fontWeight: "800" },
 });
