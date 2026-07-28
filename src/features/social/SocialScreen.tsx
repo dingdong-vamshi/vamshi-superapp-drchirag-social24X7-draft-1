@@ -73,6 +73,7 @@ type Props = {
   uploadMedia?: MediaUploader;
   onOpenComments?: (post: SocialPost) => void;
   onOpenProfile?: (user: SocialUser) => void;
+  onOpenOwnProfile?: () => void;
   onShareToChat?: ShareToChat;
 };
 
@@ -124,6 +125,7 @@ export function SocialScreen({
   uploadMedia,
   onOpenComments,
   onOpenProfile,
+  onOpenOwnProfile,
   onShareToChat,
 }: Props) {
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -368,9 +370,10 @@ export function SocialScreen({
         onCreate={() => void createStory()}
         onCreatePost={() => setComposerOpen(true)}
         onOpen={(index) => setStoryIndex(index)}
+        onOpenOwnProfile={onOpenOwnProfile}
       />
     ),
-    [stories, viewer],
+    [stories, viewer, onOpenOwnProfile],
   );
 
   if (loading) return <Centered label="Loading social" />;
@@ -460,12 +463,14 @@ function Stories({
   onCreate,
   onCreatePost,
   onOpen,
+  onOpenOwnProfile,
 }: {
   stories: SocialStory[];
   viewer: SocialUser;
   onCreate: () => void;
   onCreatePost: () => void;
   onOpen: (index: number) => void;
+  onOpenOwnProfile?: () => void;
 }) {
   return (
     <View style={styles.storyBlock}>
@@ -486,7 +491,13 @@ function Stories({
         </Pressable>
       </View>
       <View style={styles.composerCard}>
-        <Avatar user={viewer} size={42} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open my social profile"
+          onPress={onOpenOwnProfile}
+        >
+          <Avatar user={viewer} size={42} />
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Create a post"

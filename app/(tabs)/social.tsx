@@ -39,6 +39,18 @@ export default function SocialPage() {
     <SocialScreen
       viewer={viewer}
       repository={repository}
+      onOpenOwnProfile={() => router.push('/social-profile')}
+      onOpenProfile={(profileUser) =>
+        router.push({
+          pathname: '/social-profile',
+          params: {
+            userId: profileUser.id,
+            handle: profileUser.handle,
+            displayName: profileUser.displayName,
+            avatarUrl: profileUser.avatarUrl || '',
+          },
+        })
+      }
       onShareToChat={async (post) =>
         router.push({
           pathname: '/chats',
