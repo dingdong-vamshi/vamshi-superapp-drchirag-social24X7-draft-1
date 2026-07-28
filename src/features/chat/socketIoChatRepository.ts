@@ -74,7 +74,9 @@ export function createSocketIoChatRepository(): ChatDataSource {
     const userId = await currentChatUserId();
     const threadId = messageThreadKey(userId, participantId);
     await new Promise<void>((resolve) => {
+      const timeoutId = setTimeout(() => resolve(), 3000);
       active.emit('chat:history', { threadId }, (result: { ok: boolean; messages?: ServerChatMessage[] }) => {
+        clearTimeout(timeoutId);
         if (result.ok) {
           result.messages?.forEach((message) => void ingestChatMessage(toClientMessage(message)));
         }
