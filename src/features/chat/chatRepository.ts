@@ -42,6 +42,18 @@ function sortConversations(conversations: Conversation[]) {
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+const samePair = (request: DemoRequest, viewerId: string, participantId: string) =>
+  (
+    request.requesterId === viewerId
+    && request.recipientId === participantId
+  ) || (
+    request.requesterId === participantId
+    && request.recipientId === viewerId
+  );
+
+const sortRequestsNewestFirst = (left: DemoRequest, right: DemoRequest) =>
+  right.createdAt.localeCompare(left.createdAt);
+
 const initialsFor = (name: string) =>
   name
     .trim()
@@ -297,6 +309,40 @@ function upsertPrioritizedConversation(
   }
 }
 
+function resolvePairConversation(
+  viewerId: string,
+  participant: ChatContact,
+  requests: DemoRequest[],
+): Conversation | null {
+  const pairRequests = requests
+    .filter((request) => samePair(request, viewerId, participant.id))
+    .sort(sortRequestsNewestFirst);
+  if (pairRequests.length === 0) return null;
+
+  const accepted = pairRequests.find((request) => request.status === 'accepted');
+  if (accepted) {
+    return {
+      id: participant.id,
+      participant,
+      unreadCount: 0,
+      updatedAt: accepted.createdAt,
+      requestStatus: 'accepted',
+      requestMessage: accepted.note,
+    };
+  }
+
+  const latest = pairRequests[0];
+  const incoming = latest.recipientId === viewerId;
+  return {
+    id: participant.id,
+    participant,
+    unreadCount: incoming ? 1 : 0,
+    updatedAt: latest.createdAt,
+    requestStatus: incoming ? 'pending_incoming' : 'pending_outgoing',
+    requestMessage: latest.note,
+  };
+}
+
 async function saveSnapshot(snapshot: Snapshot) {
   cache = snapshot;
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -314,20 +360,18 @@ export const localChatRepository: ChatDataSource = {
     const profiles = await readProfiles();
     const requests = await readDemoRequests();
     const requestConversationsByParticipant = new Map<string, Conversation>();
-    requests.forEach((request) => {
-      if (request.requesterId !== viewerId && request.recipientId !== viewerId) return [];
-      const participantId = request.requesterId === viewerId ? request.recipientId : request.requesterId;
+    const participantIds = [...new Set(
+      requests.flatMap((request) => {
+        if (request.requesterId !== viewerId && request.recipientId !== viewerId) return [];
+        return [request.requesterId === viewerId ? request.recipientId : request.requesterId];
+      }),
+    )];
+    participantIds.forEach((participantId) => {
       const participant = profiles.find((profile) => profile.id === participantId);
-      if (!participant) return [];
-      const incoming = request.recipientId === viewerId;
-      upsertPrioritizedConversation(requestConversationsByParticipant, {
-        id: participant.id,
-        participant,
-        unreadCount: incoming && request.status === 'pending' ? 1 : 0,
-        updatedAt: request.createdAt,
-        requestStatus: request.status === 'accepted' ? 'accepted' : incoming ? 'pending_incoming' : 'pending_outgoing',
-        requestMessage: request.note,
-      });
+      if (!participant) return;
+      const conversation = resolvePairConversation(viewerId, participant, requests);
+      if (!conversation) return;
+      upsertPrioritizedConversation(requestConversationsByParticipant, conversation);
     });
     const requestConversations = [...requestConversationsByParticipant.values()];
     const withLatestMessages = requestConversations.map((conversation) => {
@@ -372,13 +416,14 @@ export const localChatRepository: ChatDataSource = {
     const snapshot = await readSnapshot();
     const target = snapshot.conversations.find((conversation) => conversation.id === conversationId);
     const requests = await readDemoRequests();
-    const activeRequest = requests.find((request) =>
-      (request.requesterId === viewerId && request.recipientId === conversationId)
-      || (request.requesterId === conversationId && request.recipientId === viewerId)
-    );
+    const pairRequests = requests.filter((request) => samePair(request, viewerId, conversationId));
+    const hasAcceptedRequest = pairRequests.some((request) => request.status === 'accepted');
     if (
-      (target?.requestStatus && target.requestStatus !== 'accepted')
-      || (activeRequest && activeRequest.status !== 'accepted')
+      !hasAcceptedRequest
+      && (
+        (target?.requestStatus && target.requestStatus !== 'accepted')
+        || pairRequests.length > 0
+      )
     ) {
       throw new Error('Message request has not been accepted.');
     }
@@ -417,12 +462,46 @@ export const localChatRepository: ChatDataSource = {
     const viewerId = await currentChatUserId();
     const cleanNote = note?.trim() || `Hi ${contact.name}, I would like to message you on Social 24x7.`;
     const requests = await readDemoRequests();
+    const pairRequests = requests.filter((request) => samePair(request, viewerId, contact.id));
+    const hasAcceptedRequest = pairRequests.some((request) => request.status === 'accepted');
+    const hasIncomingPending = pairRequests.some(
+      (request) =>
+        request.requesterId === contact.id
+        && request.recipientId === viewerId
+        && request.status === 'pending',
+    );
+    const nowIso = new Date().toISOString();
+
+    if (hasAcceptedRequest || hasIncomingPending) {
+      await writeDemoRequests(requests.map((request) => (
+        samePair(request, viewerId, contact.id)
+          ? { ...request, status: 'accepted' as const }
+          : request
+      )));
+      const snapshot = await readSnapshot();
+      const accepted = {
+        ...(snapshot.conversations.find((conversation) => conversation.id === contact.id) ?? conversationFor(contact, 'accepted')),
+        requestStatus: 'accepted' as const,
+        requestMessage: cleanNote,
+        unreadCount: 0,
+        updatedAt: nowIso,
+      };
+      await saveSnapshot({
+        ...snapshot,
+        conversations: snapshot.conversations.some((conversation) => conversation.id === contact.id)
+          ? snapshot.conversations.map((conversation) => conversation.id === contact.id ? accepted : conversation)
+          : [...snapshot.conversations, accepted],
+        messages: { ...snapshot.messages, [messageThreadKey(viewerId, contact.id)]: snapshot.messages[messageThreadKey(viewerId, contact.id)] ?? [] },
+      });
+      return accepted;
+    }
+
     const nextRequest: DemoRequest = {
       requesterId: viewerId,
       recipientId: contact.id,
       note: cleanNote,
       status: 'pending',
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     };
     await writeDemoRequests([
       nextRequest,
@@ -455,7 +534,7 @@ export const localChatRepository: ChatDataSource = {
     const viewerId = await currentChatUserId();
     const requests = await readDemoRequests();
     await writeDemoRequests(requests.map((request) => (
-      request.requesterId === conversationId && request.recipientId === viewerId
+      samePair(request, viewerId, conversationId)
         ? { ...request, status: 'accepted' as const }
         : request
     )));
