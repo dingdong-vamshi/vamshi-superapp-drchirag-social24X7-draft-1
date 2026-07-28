@@ -20,6 +20,15 @@ type RequestRow = {
   created_at: string;
 };
 
+const samePair = (request: RequestRow, viewerId: string, participantId: string) =>
+  (
+    request.requester_id === viewerId
+    && request.recipient_id === participantId
+  ) || (
+    request.requester_id === participantId
+    && request.recipient_id === viewerId
+  );
+
 const isUuid = (value?: string | null) =>
   Boolean(value?.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i));
 
@@ -46,9 +55,26 @@ const toContact = (row: ProfileRow): ChatContact => {
   };
 };
 
-const requestStatusFor = (row: RequestRow, viewerId: string): Conversation['requestStatus'] => {
-  if (row.status === 'accepted') return 'accepted';
-  return row.requester_id === viewerId ? 'pending_outgoing' : 'pending_incoming';
+const resolveRequestStatus = (
+  requests: RequestRow[],
+  viewerId: string,
+  participantId: string,
+): { status: Conversation['requestStatus']; createdAt: string } | null => {
+  const pairRequests = requests
+    .filter((request) => samePair(request, viewerId, participantId))
+    .sort((left, right) => right.created_at.localeCompare(left.created_at));
+  if (!pairRequests.length) return null;
+
+  const accepted = pairRequests.find((request) => request.status === 'accepted');
+  if (accepted) {
+    return { status: 'accepted', createdAt: accepted.created_at };
+  }
+
+  const latest = pairRequests[0];
+  return {
+    status: latest.requester_id === viewerId ? 'pending_outgoing' : 'pending_incoming',
+    createdAt: latest.created_at,
+  };
 };
 
 export const createSupabaseChatRepository = ({
@@ -81,17 +107,17 @@ export const createSupabaseChatRepository = ({
         .in('id', otherIds);
 
       const contacts = new Map((profiles as ProfileRow[] | null | undefined)?.map((profile) => [profile.id, toContact(profile)]) ?? []);
-      const remote = requests.flatMap((request) => {
-        const otherId = request.requester_id === viewerId ? request.recipient_id : request.requester_id;
+      const remote = otherIds.flatMap((otherId) => {
         const contact = contacts.get(otherId);
-        if (!contact) return [];
+        const resolved = resolveRequestStatus(requests, viewerId, otherId);
+        if (!contact || !resolved) return [];
         return [{
           id: otherId,
           participant: contact,
-          unreadCount: request.requester_id === viewerId ? 0 : 1,
-          updatedAt: request.created_at,
-          requestStatus: requestStatusFor(request, viewerId),
-          requestMessage: request.requester_id === viewerId
+          unreadCount: resolved.status === 'pending_incoming' ? 1 : 0,
+          updatedAt: resolved.createdAt,
+          requestStatus: resolved.status,
+          requestMessage: resolved.status === 'pending_outgoing'
             ? `Hi ${contact.name}, I would like to message you on Social 24x7.`
             : `${contact.name} wants to message you on Social 24x7.`,
         } satisfies Conversation];
@@ -143,6 +169,27 @@ export const createSupabaseChatRepository = ({
 
     async sendMessageRequest(contact, note) {
       if (viewerId && isUuid(contact.id)) {
+        const { data } = await client
+          .from('connection_requests')
+          .select('requester_id,recipient_id,status,created_at')
+          .or(`and(requester_id.eq.${viewerId},recipient_id.eq.${contact.id}),and(requester_id.eq.${contact.id},recipient_id.eq.${viewerId})`);
+        const pairRequests = (data as RequestRow[] | null | undefined) ?? [];
+        const hasAccepted = pairRequests.some((request) => request.status === 'accepted');
+        const hasIncomingPending = pairRequests.some(
+          (request) =>
+            request.requester_id === contact.id
+            && request.recipient_id === viewerId
+            && request.status === 'pending',
+        );
+
+        if (hasAccepted || hasIncomingPending) {
+          await client
+            .from('connection_requests')
+            .update({ status: 'accepted' })
+            .or(`and(requester_id.eq.${viewerId},recipient_id.eq.${contact.id}),and(requester_id.eq.${contact.id},recipient_id.eq.${viewerId})`);
+          return localChatRepository.acceptMessageRequest(contact.id);
+        }
+
         await client
           .from('connection_requests')
           .upsert(
@@ -162,8 +209,7 @@ export const createSupabaseChatRepository = ({
         await client
           .from('connection_requests')
           .update({ status: 'accepted' })
-          .eq('requester_id', conversationId)
-          .eq('recipient_id', viewerId);
+          .or(`and(requester_id.eq.${conversationId},recipient_id.eq.${viewerId}),and(requester_id.eq.${viewerId},recipient_id.eq.${conversationId})`);
       }
       return localChatRepository.acceptMessageRequest(conversationId);
     },
