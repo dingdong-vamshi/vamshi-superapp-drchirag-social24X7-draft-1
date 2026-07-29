@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../../lib/supabase';
 
 import {
   CURRENT_USER_ID,
@@ -65,13 +66,48 @@ const initialsFor = (name: string) =>
 
 export async function currentChatUserId() {
   const raw = await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY);
-  if (!raw) return CURRENT_USER_ID;
-  try {
-    const parsed = JSON.parse(raw) as { user?: { id?: unknown } };
-    return typeof parsed.user?.id === 'string' ? parsed.user.id : CURRENT_USER_ID;
-  } catch {
-    return CURRENT_USER_ID;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { user?: { id?: unknown } };
+      if (typeof parsed.user?.id === 'string') return parsed.user.id;
+    } catch {
+      // fall through to Supabase session lookup below
+    }
   }
+  if (supabase) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (typeof user?.id === 'string') return user.id;
+    } catch {
+      // no-op
+    }
+  }
+  return CURRENT_USER_ID;
+}
+
+export async function seedChatContact(contact: ChatContact) {
+  const raw = await AsyncStorage.getItem(PROFILE_STORAGE_KEY);
+  let profiles: LocalProfileRecord[] = [];
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      profiles = Array.isArray(parsed) ? parsed.filter(isProfileRecord) : [];
+    } catch {
+      profiles = [];
+    }
+  }
+
+  const next: LocalProfileRecord = {
+    ...contact,
+    discoverable: true,
+    usernameDiscoverable: true,
+    phoneDiscoverable: Boolean(contact.phone),
+  };
+
+  const merged = [next, ...profiles.filter((profile) => profile.id !== contact.id)];
+  await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(merged));
 }
 
 async function readSnapshot(): Promise<Snapshot> {
