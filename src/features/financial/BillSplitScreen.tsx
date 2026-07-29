@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   SafeAreaView,
@@ -36,7 +37,7 @@ const groupDefaults = () => ({
 });
 
 export default function BillSplitScreen() {
-  const { user } = useAuth();
+  const { user, initialized } = useAuth();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<BillTab>("groups");
   const [createOpen, setCreateOpen] = useState(false);
@@ -67,10 +68,14 @@ export default function BillSplitScreen() {
   const workspaceQuery = useQuery({
     queryKey: ["bill-workspace", user && "id" in user ? user.id : "guest"],
     queryFn: () => listBillWorkspace(user),
+    enabled: initialized,
+    retry: 1,
   });
   const connectionsQuery = useQuery({
     queryKey: ["accepted-connections", user && "id" in user ? user.id : "guest"],
     queryFn: () => listAcceptedConnections(user),
+    enabled: initialized,
+    retry: 1,
   });
 
   const groups = workspaceQuery.data?.groups ?? [];
@@ -107,6 +112,11 @@ export default function BillSplitScreen() {
       setGroupForm(groupDefaults());
       await invalidate();
     },
+    onError: (error) =>
+      Alert.alert(
+        "Could not create group",
+        error instanceof Error ? error.message : "Please try again.",
+      ),
   });
 
   const inviteMutation = useMutation({
@@ -119,12 +129,16 @@ export default function BillSplitScreen() {
       setInviteeId("");
       await invalidate();
     },
+    onError: (error) =>
+      Alert.alert("Could not send invite", error instanceof Error ? error.message : "Please try again."),
   });
 
   const invitationMutation = useMutation({
     mutationFn: async (input: { invitation: BillSplitInvitation; response: "accepted" | "rejected" }) =>
       respondToBillInvitation(user, input.invitation, input.response),
     onSuccess: invalidate,
+    onError: (error) =>
+      Alert.alert("Could not update invite", error instanceof Error ? error.message : "Please try again."),
   });
 
   const expenseMutation = useMutation({
@@ -132,17 +146,18 @@ export default function BillSplitScreen() {
       if (!selectedGroup?.id || !expenseForm.title.trim() || toMinorUnits(expenseForm.totalInput) <= 0n) {
         throw new Error("Enter a valid expense.");
       }
+      if (selectedMembers.length === 0) {
+        throw new Error("Add at least one group member before recording expenses.");
+      }
+      const totalMinor = toMinorUnits(expenseForm.totalInput);
       const sharesPayload =
         expenseForm.splitType === "equal"
-          ? selectedMembers.map((member) => ({
-              participantUserId: member.userId,
-              shareInput: (Number(expenseForm.totalInput || "0") / Math.max(selectedMembers.length, 1)).toFixed(2),
-            }))
+          ? buildEqualShares(selectedMembers, totalMinor)
           : selectedMembers.map((member) => ({
               participantUserId: member.userId,
               shareInput: exactShares[member.userId] || "0",
             }));
-      if (expenseForm.splitType === "exact" && exactSplitTotal(sharesPayload) !== toMinorUnits(expenseForm.totalInput)) {
+      if (expenseForm.splitType === "exact" && exactSplitTotal(sharesPayload) !== totalMinor) {
         throw new Error("Exact shares must add up to the total amount.");
       }
       return addBillExpense({
@@ -171,6 +186,8 @@ export default function BillSplitScreen() {
       setExactShares({});
       await invalidate();
     },
+    onError: (error) =>
+      Alert.alert("Could not save expense", error instanceof Error ? error.message : "Please try again."),
   });
 
   const settlementMutation = useMutation({
@@ -191,9 +208,11 @@ export default function BillSplitScreen() {
       });
       await invalidate();
     },
+    onError: (error) =>
+      Alert.alert("Could not save settlement", error instanceof Error ? error.message : "Please try again."),
   });
 
-  if (workspaceQuery.isLoading) {
+  if (!initialized || workspaceQuery.isLoading) {
     return (
       <SafeAreaView style={styles.safe}>
         <Centered title="Loading Bill Split" text="Fetching your groups and balances..." loading />
@@ -349,13 +368,20 @@ export default function BillSplitScreen() {
         ) : null}
       </ScrollView>
 
-      <SimpleModal visible={createOpen} title="Create Bill Split Group" onClose={() => setCreateOpen(false)} onSubmit={() => void createMutation.mutate()} submitLabel="Create group">
+      <SimpleModal
+        visible={createOpen}
+        title="Create Bill Split Group"
+        onClose={() => setCreateOpen(false)}
+        onSubmit={() => void createMutation.mutate()}
+        submitLabel={createMutation.isPending ? "Creating..." : "Create group"}
+        disabled={createMutation.isPending}
+      >
         <Field label="Name" value={groupForm.name} onChangeText={(value) => setGroupForm((current) => ({ ...current, name: value }))} />
         <Field label="Description" value={groupForm.description} onChangeText={(value) => setGroupForm((current) => ({ ...current, description: value }))} />
         <Field label="Category" value={groupForm.category} onChangeText={(value) => setGroupForm((current) => ({ ...current, category: value }))} />
       </SimpleModal>
 
-      <SimpleModal visible={inviteOpen} title="Invite Accepted Connection" onClose={() => setInviteOpen(false)} onSubmit={() => void inviteMutation.mutate()} submitLabel="Send invite">
+      <SimpleModal visible={inviteOpen} title="Invite Accepted Connection" onClose={() => setInviteOpen(false)} onSubmit={() => void inviteMutation.mutate()} submitLabel={inviteMutation.isPending ? "Sending..." : "Send invite"} disabled={inviteMutation.isPending}>
         {(connectionsQuery.data ?? []).map((connection: AcceptedConnection) => (
           <Pressable key={connection.id} onPress={() => setInviteeId(connection.id)} style={[styles.selectableRow, inviteeId === connection.id && styles.selectableRowActive]}>
             <Text style={styles.groupTitle}>{connection.name}</Text>
@@ -364,10 +390,20 @@ export default function BillSplitScreen() {
         ))}
       </SimpleModal>
 
-      <SimpleModal visible={expenseOpen} title="Add Expense" onClose={() => setExpenseOpen(false)} onSubmit={() => void expenseMutation.mutate()} submitLabel="Save expense">
+      <SimpleModal visible={expenseOpen} title="Add Expense" onClose={() => setExpenseOpen(false)} onSubmit={() => void expenseMutation.mutate()} submitLabel={expenseMutation.isPending ? "Saving..." : "Save expense"} disabled={expenseMutation.isPending}>
         <Field label="Title" value={expenseForm.title} onChangeText={(value) => setExpenseForm((current) => ({ ...current, title: value }))} />
         <Field label="Total amount" value={expenseForm.totalInput} onChangeText={(value) => setExpenseForm((current) => ({ ...current, totalInput: value }))} keyboardType="decimal-pad" />
-        <Field label="Paid by" value={expenseForm.paidByUserId} onChangeText={(value) => setExpenseForm((current) => ({ ...current, paidByUserId: value }))} />
+        <Text style={styles.fieldLabel}>Paid by</Text>
+        <View style={styles.rowGap}>
+          {selectedMembers.map((member: BillSplitMember) => (
+            <ChipButton
+              key={member.userId}
+              label={member.name}
+              active={(expenseForm.paidByUserId || activeUserId) === member.userId}
+              onPress={() => setExpenseForm((current) => ({ ...current, paidByUserId: member.userId }))}
+            />
+          ))}
+        </View>
         <Field label="Date" value={expenseForm.expenseDate} onChangeText={(value) => setExpenseForm((current) => ({ ...current, expenseDate: value }))} />
         <Field label="Category" value={expenseForm.category} onChangeText={(value) => setExpenseForm((current) => ({ ...current, category: value }))} />
         <View style={styles.rowGap}>
@@ -387,9 +423,29 @@ export default function BillSplitScreen() {
           : null}
       </SimpleModal>
 
-      <SimpleModal visible={settlementOpen} title="Record Settlement" onClose={() => setSettlementOpen(false)} onSubmit={() => void settlementMutation.mutate()} submitLabel="Save settlement">
-        <Field label="Payer user ID" value={settlementForm.payerId} onChangeText={(value) => setSettlementForm((current) => ({ ...current, payerId: value }))} />
-        <Field label="Payee user ID" value={settlementForm.payeeId} onChangeText={(value) => setSettlementForm((current) => ({ ...current, payeeId: value }))} />
+      <SimpleModal visible={settlementOpen} title="Record Settlement" onClose={() => setSettlementOpen(false)} onSubmit={() => void settlementMutation.mutate()} submitLabel={settlementMutation.isPending ? "Saving..." : "Save settlement"} disabled={settlementMutation.isPending}>
+        <Text style={styles.fieldLabel}>Payer</Text>
+        <View style={styles.rowGap}>
+          {selectedMembers.map((member: BillSplitMember) => (
+            <ChipButton
+              key={`payer-${member.userId}`}
+              label={member.name}
+              active={settlementForm.payerId === member.userId}
+              onPress={() => setSettlementForm((current) => ({ ...current, payerId: member.userId }))}
+            />
+          ))}
+        </View>
+        <Text style={styles.fieldLabel}>Payee</Text>
+        <View style={styles.rowGap}>
+          {selectedMembers.map((member: BillSplitMember) => (
+            <ChipButton
+              key={`payee-${member.userId}`}
+              label={member.name}
+              active={settlementForm.payeeId === member.userId}
+              onPress={() => setSettlementForm((current) => ({ ...current, payeeId: member.userId }))}
+            />
+          ))}
+        </View>
         <Field label="Amount" value={settlementForm.amountInput} onChangeText={(value) => setSettlementForm((current) => ({ ...current, amountInput: value }))} keyboardType="decimal-pad" />
         <Field label="Date" value={settlementForm.settlementDate} onChangeText={(value) => setSettlementForm((current) => ({ ...current, settlementDate: value }))} />
         <Field label="Notes" value={settlementForm.notes} onChangeText={(value) => setSettlementForm((current) => ({ ...current, notes: value }))} />
@@ -400,6 +456,22 @@ export default function BillSplitScreen() {
 
 function Badge() {
   return <SplitSquareVertical color="#2563eb" size={22} />;
+}
+
+function minorToInput(value: bigint) {
+  const whole = value / 100n;
+  const fraction = value % 100n;
+  return `${whole.toString()}.${fraction.toString().padStart(2, "0")}`;
+}
+
+function buildEqualShares(members: BillSplitMember[], totalMinor: bigint) {
+  const memberCount = BigInt(members.length);
+  const base = totalMinor / memberCount;
+  const remainder = Number(totalMinor % memberCount);
+  return members.map((member, index) => ({
+    participantUserId: member.userId,
+    shareInput: minorToInput(base + (index < remainder ? 1n : 0n)),
+  }));
 }
 
 function capitalize(value: string) {
@@ -470,6 +542,7 @@ function SimpleModal({
   onClose,
   onSubmit,
   submitLabel,
+  disabled,
   children,
 }: {
   visible: boolean;
@@ -477,6 +550,7 @@ function SimpleModal({
   onClose: () => void;
   onSubmit: () => void;
   submitLabel: string;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -490,7 +564,7 @@ function SimpleModal({
             </Pressable>
           </View>
           {children}
-          <Pressable onPress={onSubmit} style={styles.darkButton}>
+          <Pressable disabled={disabled} onPress={onSubmit} style={[styles.darkButton, disabled && styles.buttonDisabled]}>
             <Text style={styles.darkButtonText}>{submitLabel}</Text>
           </Pressable>
         </ScrollView>
@@ -540,6 +614,7 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   sectionTitle: { color: "#111827", fontSize: 18, fontWeight: "800" },
   darkButton: { minHeight: 50, borderRadius: 16, backgroundColor: "#05051a", paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  buttonDisabled: { opacity: 0.55 },
   darkButtonText: { color: "#ffffff", fontSize: 15, fontWeight: "800" },
   centered: { minHeight: 260, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 30 },
   centerTitle: { color: "#111827", fontSize: 20, fontWeight: "800", textAlign: "center" },
