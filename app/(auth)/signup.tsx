@@ -23,7 +23,6 @@ import {
   UserRound,
 } from "lucide-react-native";
 import { useAuth } from "../../src/lib/AuthContext";
-import { supabase } from "../../src/lib/supabase";
 
 const accent = "#0f9f5f";
 const ink = "#14171f";
@@ -74,7 +73,7 @@ export default function SignupScreen() {
         return;
       }
 
-      if (!configured || !supabase) {
+      if (!configured) {
         Alert.alert(
           "Missing configuration",
           "Set SUPABASE env variables before creating an account.",
@@ -102,6 +101,8 @@ export default function SignupScreen() {
       const result = await signUp({
         email: email.trim().toLowerCase(),
         password,
+        name: name.trim(),
+        username: cleanUsername,
       });
       if (result.error) {
         Alert.alert("Sign up failed", result.error.message);
@@ -116,25 +117,13 @@ export default function SignupScreen() {
         return;
       }
 
-      const { error: profileError } = await supabase.from("profiles").upsert(
-        {
-          id: user.id,
-          username: cleanUsername,
-          display_name: name.trim(),
-          bio: "",
-          is_private: false,
-          avatar_path: null,
-        },
-        { onConflict: "id" },
-      );
-      if (profileError) {
-        Alert.alert("Profile setup failed", profileError.message);
-        return;
-      }
-
       if (result.data.session) {
         router.replace("/social");
       } else {
+        Alert.alert(
+          "Account created",
+          "Your account was created. If email confirmation is enabled on this Supabase project, verify your email and then log in.",
+        );
         router.replace("/login");
       }
     } catch (error) {

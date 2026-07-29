@@ -45,7 +45,12 @@ type AuthContextValue = {
     username: string;
     displayName: string;
   }) => Promise<void>;
-  signUp: (input: { email: string; password: string }) => Promise<AuthResponse>;
+  signUp: (input: {
+    email: string;
+    password: string;
+    name?: string;
+    username?: string;
+  }) => Promise<AuthResponse>;
   signUpDemo: (input: {
     phone: string;
     username: string;
@@ -254,11 +259,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signUp = useCallback(
-    async (input: { email: string; password: string }) => {
+    async (input: {
+      email: string;
+      password: string;
+      name?: string;
+      username?: string;
+    }) => {
       if (!supabase) {
         throw authNotReady;
       }
-      const result = await supabase.auth.signUp({ email: input.email, password: input.password });
+      const result = await supabase.auth.signUp({
+        email: input.email,
+        password: input.password,
+        options: {
+          data: {
+            name: input.name?.trim() || undefined,
+            preferred_username: input.username?.trim() || undefined,
+          },
+        },
+      });
       if (result.data.session) {
         setSession(result.data.session);
       }
