@@ -12,8 +12,13 @@ export default function ChatsPage() {
   const { user } = useAuth();
   const sharedPost = params.sharedId && params.sharedAuthor && params.sharedCaption ? { id: params.sharedId, author: params.sharedAuthor, caption: params.sharedCaption } : undefined;
   const repository = useMemo(() => {
-    if (!supabase || !user || !('identities' in user)) return createSocketIoChatRepository();
-    return createSupabaseChatRepository({ client: supabase, user: user && 'identities' in user ? user : null });
+    const isDemoUser = Boolean(
+      user &&
+      'app_metadata' in user &&
+      user.app_metadata?.provider === 'demo',
+    );
+    if (!supabase || !user || isDemoUser) return createSocketIoChatRepository();
+    return createSupabaseChatRepository({ client: supabase, user });
   }, [user]);
   const callAdapter = useMemo(() => createWebRtcCallAdapter(), [user]);
 
