@@ -57,7 +57,7 @@ const groupDefaults = () => ({
 });
 
 export default function ChitFundScreen() {
-  const { user } = useAuth();
+  const { user, initialized } = useAuth();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<ChitTab>("dashboard");
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -83,10 +83,14 @@ export default function ChitFundScreen() {
   const workspaceQuery = useQuery({
     queryKey: ["chit-workspace", user && "id" in user ? user.id : "guest"],
     queryFn: () => listChitWorkspace(user),
+    enabled: initialized,
+    retry: 1,
   });
   const connectionsQuery = useQuery({
     queryKey: ["accepted-connections", user && "id" in user ? user.id : "guest"],
     queryFn: () => listAcceptedConnections(user),
+    enabled: initialized,
+    retry: 1,
   });
 
   const groups = workspaceQuery.data?.groups ?? [];
@@ -177,6 +181,8 @@ export default function ChitFundScreen() {
     mutationFn: async (input: { invitation: ChitInvitation; response: "accepted" | "rejected" }) =>
       respondToChitInvitation(user, input.invitation, input.response),
     onSuccess: invalidate,
+    onError: (error) =>
+      Alert.alert("Could not update invitation", error instanceof Error ? error.message : "Please try again."),
   });
 
   const contributionMutation = useMutation({
@@ -200,6 +206,8 @@ export default function ChitFundScreen() {
       setContributionCycle("1");
       await invalidate();
     },
+    onError: (error) =>
+      Alert.alert("Could not record contribution", error instanceof Error ? error.message : "Please try again."),
   });
 
   const loanMutation = useMutation({
@@ -207,11 +215,12 @@ export default function ChitFundScreen() {
       if (!selectedGroupId || toMinorUnits(loanAmount) <= 0n || !loanPurpose.trim()) {
         throw new Error("Enter a valid amount and purpose.");
       }
+      const interestBps = selectedGroup?.interestBps ?? Math.round(Number(groupForm.interestRatePercent || "0") * 100);
       return requestChitLoan({
         groupId: selectedGroupId,
         amountInput: loanAmount,
         purpose: loanPurpose,
-        interestBps: Math.round(Number(groupForm.interestRatePercent || selectedGroup?.interestBps || 0) * 100),
+        interestBps,
         nextPaymentDate: loanNextPaymentDate,
       });
     },
@@ -231,6 +240,8 @@ export default function ChitFundScreen() {
       return reviewChitLoan(input.loanId, selectedGroupId, input.status);
     },
     onSuccess: invalidate,
+    onError: (error) =>
+      Alert.alert("Could not review loan", error instanceof Error ? error.message : "Please try again."),
   });
 
   const repaymentMutation = useMutation({
@@ -252,6 +263,8 @@ export default function ChitFundScreen() {
       setRepaymentAmount("");
       await invalidate();
     },
+    onError: (error) =>
+      Alert.alert("Could not record repayment", error instanceof Error ? error.message : "Please try again."),
   });
 
   const roleMutation = useMutation({
@@ -260,6 +273,8 @@ export default function ChitFundScreen() {
       return updateChitMemberRole(selectedGroupId, input.userId, input.role);
     },
     onSuccess: invalidate,
+    onError: (error) =>
+      Alert.alert("Could not update role", error instanceof Error ? error.message : "Please try again."),
   });
 
   const statusMutation = useMutation({
@@ -268,11 +283,13 @@ export default function ChitFundScreen() {
       return updateChitGroupStatus(selectedGroupId, status);
     },
     onSuccess: invalidate,
+    onError: (error) =>
+      Alert.alert("Could not update status", error instanceof Error ? error.message : "Please try again."),
   });
 
   const isManager = myMember?.role === "manager" || myMember?.role === "accountant";
 
-  if (workspaceQuery.isLoading) {
+  if (!initialized || workspaceQuery.isLoading) {
     return (
       <SafeAreaView style={styles.safe}>
         <CenteredState title="Loading Chit Fund" text="Fetching your groups and invitations..." loading />
@@ -385,6 +402,13 @@ export default function ChitFundScreen() {
           <ScrollView contentContainerStyle={styles.content}>
             {groupDetailsQuery.isLoading ? (
               <CenteredState title="Loading group" text="Fetching the selected group details..." loading />
+            ) : groupDetailsQuery.isError ? (
+              <CenteredState
+                title="Could not load group"
+                text={groupDetailsQuery.error instanceof Error ? groupDetailsQuery.error.message : "Please try again."}
+                actionLabel="Retry"
+                onPress={() => void groupDetailsQuery.refetch()}
+              />
             ) : selectedGroup ? (
               <>
                 {tab === "dashboard" ? (
@@ -582,6 +606,7 @@ export default function ChitFundScreen() {
         onClose={() => setCreateOpen(false)}
         onSubmit={() => void createMutation.mutate()}
         submitLabel={createMutation.isPending ? "Creating..." : "Create group"}
+        disabled={createMutation.isPending}
       >
         <Field label="Group name" value={groupForm.name} onChangeText={(value) => setGroupForm((current) => ({ ...current, name: value }))} />
         <Field label="Description" value={groupForm.description} onChangeText={(value) => setGroupForm((current) => ({ ...current, description: value }))} multiline />
@@ -598,7 +623,8 @@ export default function ChitFundScreen() {
         title="Invite accepted connection"
         onClose={() => setInviteOpen(false)}
         onSubmit={() => void inviteMutation.mutate()}
-        submitLabel="Send invitation"
+        submitLabel={inviteMutation.isPending ? "Sending..." : "Send invitation"}
+        disabled={inviteMutation.isPending}
       >
         {(connectionsQuery.data ?? []).map((connection: AcceptedConnection) => (
           <Pressable key={connection.id} onPress={() => setInviteeId(connection.id)} style={[styles.selectableRow, inviteeId === connection.id && styles.selectableRowActive]}>
@@ -617,7 +643,8 @@ export default function ChitFundScreen() {
         title="Record contribution"
         onClose={() => setContributionOpen(false)}
         onSubmit={() => void contributionMutation.mutate()}
-        submitLabel="Save contribution"
+        submitLabel={contributionMutation.isPending ? "Saving..." : "Save contribution"}
+        disabled={contributionMutation.isPending}
       >
         {groupMembers.map((member) => (
           <Pressable key={member.userId} onPress={() => setContributionMemberId(member.userId)} style={[styles.selectableRow, contributionMemberId === member.userId && styles.selectableRowActive]}>
@@ -634,7 +661,8 @@ export default function ChitFundScreen() {
         title="Request loan"
         onClose={() => setLoanOpen(false)}
         onSubmit={() => void loanMutation.mutate()}
-        submitLabel="Submit request"
+        submitLabel={loanMutation.isPending ? "Submitting..." : "Submit request"}
+        disabled={loanMutation.isPending}
       >
         <Field label="Amount required" value={loanAmount} onChangeText={setLoanAmount} keyboardType="decimal-pad" />
         <Field label="Purpose" value={loanPurpose} onChangeText={setLoanPurpose} multiline />
@@ -646,7 +674,8 @@ export default function ChitFundScreen() {
         title="Record repayment"
         onClose={() => setRepaymentTarget(null)}
         onSubmit={() => void repaymentMutation.mutate()}
-        submitLabel="Save repayment"
+        submitLabel={repaymentMutation.isPending ? "Saving..." : "Save repayment"}
+        disabled={repaymentMutation.isPending}
       >
         <Field label="Amount" value={repaymentAmount} onChangeText={setRepaymentAmount} keyboardType="decimal-pad" />
       </SimpleFormModal>
@@ -751,9 +780,9 @@ function InlineButton({
   );
 }
 
-function PrimaryAction({ label, onPress }: { label: string; onPress: () => void }) {
+function PrimaryAction({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={styles.primaryAction}>
+    <Pressable disabled={disabled} onPress={onPress} style={[styles.primaryAction, disabled && styles.buttonDisabled]}>
       <Text style={styles.primaryActionText}>{label}</Text>
     </Pressable>
   );
@@ -820,6 +849,7 @@ function SimpleFormModal({
   onClose,
   onSubmit,
   submitLabel,
+  disabled,
   children,
 }: {
   visible: boolean;
@@ -827,6 +857,7 @@ function SimpleFormModal({
   onClose: () => void;
   onSubmit: () => void;
   submitLabel: string;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -840,7 +871,7 @@ function SimpleFormModal({
             </Pressable>
           </View>
           {children}
-          <PrimaryAction label={submitLabel} onPress={onSubmit} />
+          <PrimaryAction label={submitLabel} onPress={onSubmit} disabled={disabled} />
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -1121,6 +1152,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   primaryActionText: { color: "#ffffff", fontSize: 15, fontWeight: "800" },
+  buttonDisabled: { opacity: 0.55 },
   emptyInline: { color: "#667085", fontSize: 14, lineHeight: 20 },
   modalSafe: { flex: 1, backgroundColor: "#ffffff" },
   modalContent: { padding: 18, gap: 14, paddingBottom: 36 },
