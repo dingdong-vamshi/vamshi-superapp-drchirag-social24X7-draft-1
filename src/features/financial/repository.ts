@@ -36,6 +36,9 @@ const initialsFor = (name: string) =>
     .map((word) => word[0]?.toUpperCase() ?? "")
     .join("") || "?";
 
+const FINANCIAL_QUERY_TIMEOUT_MS = 12000;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 const toMinor = (value: unknown): MinorUnit => {
   if (typeof value === "bigint") return value;
   if (typeof value === "number") return BigInt(Math.round(value));
@@ -50,7 +53,13 @@ function requireSupabaseUser(user: unknown): FinancialAccess {
   if (!user || typeof user !== "object" || !("id" in user)) {
     return { ready: false, userId: "", reason: "You need to sign in first." };
   }
-  if (!("identities" in user)) {
+  if (
+    "app_metadata" in user &&
+    user.app_metadata &&
+    typeof user.app_metadata === "object" &&
+    "provider" in user.app_metadata &&
+    user.app_metadata.provider === "demo"
+  ) {
     return {
       ready: false,
       userId: "",
@@ -63,6 +72,67 @@ function requireSupabaseUser(user: unknown): FinancialAccess {
 
 async function ensureNoError(error: { message: string } | null) {
   if (error) throw new Error(error.message);
+}
+
+async function withTimeout<T>(operation: string, run: Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${operation} timed out. Please retry.`));
+        }, FINANCIAL_QUERY_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function logFinancialError(operation: string, error: unknown, recordId?: string | null) {
+  const message = error instanceof Error ? error.message : "Unknown error";
+  console.warn("[financial]", operation, {
+    message,
+    recordId: recordId ?? null,
+  });
+}
+
+function requireTrimmed(value: string, label: string) {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(`${label} is required.`);
+  return trimmed;
+}
+
+function requirePositiveInteger(value: number, label: string) {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive whole number.`);
+  }
+  return value;
+}
+
+function requireValidDate(value: string, label: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!ISO_DATE_PATTERN.test(trimmed) || Number.isNaN(Date.parse(`${trimmed}T00:00:00.000Z`))) {
+    throw new Error(`${label} must use YYYY-MM-DD format.`);
+  }
+  return trimmed;
+}
+
+function requirePositiveMinor(value: string, label: string) {
+  const amount = toMinorUnits(value);
+  if (amount <= 0n) throw new Error(`${label} must be greater than ₹0.`);
+  return amount;
+}
+
+function parseInterestBps(value: string) {
+  const normalized = value.trim() || "0";
+  const rate = Number(normalized);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+    throw new Error("Interest rate must be a number between 0 and 100.");
+  }
+  return Math.round(rate * 100);
 }
 
 async function loadProfiles(ids: string[]) {
@@ -352,35 +422,43 @@ export async function deleteExpenseTransaction(id: string) {
 export async function listChitWorkspace(user: unknown) {
   const access = requireSupabaseUser(user);
   if (!access.ready) throw new Error(access.reason);
-  const [groupRes, invitationRes, memberRes] = await Promise.all([
-    supabase!.from("chit_groups").select("*").order("updated_at", { ascending: false }),
-    supabase!.from("chit_group_invitations").select("*").order("created_at", { ascending: false }),
-    supabase!.from("chit_group_members").select("*"),
-  ]);
-  await ensureNoError(groupRes.error);
-  await ensureNoError(invitationRes.error);
-  await ensureNoError(memberRes.error);
+  try {
+    const [groupRes, invitationRes, memberRes] = await withTimeout(
+      "listChitWorkspace",
+      Promise.all([
+        supabase!.from("chit_groups").select("*").order("updated_at", { ascending: false }),
+        supabase!.from("chit_group_invitations").select("*").order("created_at", { ascending: false }),
+        supabase!.from("chit_group_members").select("*"),
+      ]),
+    );
+    await ensureNoError(groupRes.error);
+    await ensureNoError(invitationRes.error);
+    await ensureNoError(memberRes.error);
 
-  const groups = (groupRes.data ?? []).map(mapChitGroup);
-  const invitations = (invitationRes.data ?? []).map(mapChitInvitation);
-  const memberRows = memberRes.data ?? [];
-  const profiles = await loadProfiles(memberRows.map((row: any) => row.user_id));
-  const members: ChitMember[] = memberRows.map((row: any) => {
-    const profile = profiles.get(row.user_id);
-    return {
-      groupId: row.group_id,
-      userId: row.user_id,
-      role: row.role,
-      contributionStatus: row.contribution_status,
-      joinedAt: row.joined_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      name: profile?.name || "User",
-      username: profile?.username || "",
-      avatarLabel: profile?.avatarLabel || "U",
-    };
-  });
-  return { groups, invitations, members };
+    const groups = (groupRes.data ?? []).map(mapChitGroup);
+    const invitations = (invitationRes.data ?? []).map(mapChitInvitation);
+    const memberRows = memberRes.data ?? [];
+    const profiles = await loadProfiles(memberRows.map((row: any) => row.user_id));
+    const members: ChitMember[] = memberRows.map((row: any) => {
+      const profile = profiles.get(row.user_id);
+      return {
+        groupId: row.group_id,
+        userId: row.user_id,
+        role: row.role,
+        contributionStatus: row.contribution_status,
+        joinedAt: row.joined_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        name: profile?.name || "User",
+        username: profile?.username || "",
+        avatarLabel: profile?.avatarLabel || "U",
+      };
+    });
+    return { groups, invitations, members };
+  } catch (error) {
+    logFinancialError("listChitWorkspace", error, access.userId);
+    throw error;
+  }
 }
 
 export async function createChitGroup(
@@ -399,19 +477,28 @@ export async function createChitGroup(
 ) {
   const access = requireSupabaseUser(user);
   if (!access.ready) throw new Error(access.reason);
+  const name = requireTrimmed(input.name, "Group name");
+  const durationCycles = requirePositiveInteger(input.durationCycles, "Duration / cycles");
+  const contributionAmountMinor = requirePositiveMinor(
+    input.contributionAmountInput,
+    "Contribution amount",
+  );
+  const interestBps = parseInterestBps(input.interestRatePercent);
+  const startDate = requireValidDate(input.startDate, "Start date");
+  const memberLimit = requirePositiveInteger(input.memberLimit, "Member limit");
   const { data, error } = await supabase!
     .from("chit_groups")
     .insert({
       created_by: access.userId,
       manager_id: access.userId,
-      name: input.name.trim(),
+      name,
       description: input.description.trim(),
-      duration_cycles: input.durationCycles,
+      duration_cycles: durationCycles,
       contribution_frequency: input.contributionFrequency,
-      contribution_amount_minor: toMinorUnits(input.contributionAmountInput).toString(),
-      interest_bps: Math.round(Number(input.interestRatePercent || "0") * 100),
-      start_date: input.startDate || null,
-      member_limit: input.memberLimit,
+      contribution_amount_minor: contributionAmountMinor.toString(),
+      interest_bps: interestBps,
+      start_date: startDate,
+      member_limit: memberLimit,
       status: input.status,
     })
     .select("*")
@@ -483,42 +570,50 @@ export async function respondToChitInvitation(
 }
 
 export async function listChitGroupDetails(groupId: string) {
-  const [contribRes, loanRes, repaymentRes, activityRes] = await Promise.all([
-    supabase!.from("chit_group_contributions").select("*").eq("group_id", groupId).order("contribution_date", { ascending: false }),
-    supabase!.from("chit_group_loans").select("*").eq("group_id", groupId).order("requested_at", { ascending: false }),
-    supabase!.from("chit_group_loan_repayments").select("*").eq("group_id", groupId).order("payment_date", { ascending: false }),
-    supabase!.from("chit_group_activities").select("*").eq("group_id", groupId).order("created_at", { ascending: false }),
-  ]);
-  await ensureNoError(contribRes.error);
-  await ensureNoError(loanRes.error);
-  await ensureNoError(repaymentRes.error);
-  await ensureNoError(activityRes.error);
-  const loansRaw = loanRes.data ?? [];
-  const requesterProfiles = await loadProfiles(loansRaw.map((row: any) => row.requester_id));
-  const loans: ChitLoan[] = loansRaw.map((row: any) => ({
-    id: row.id,
-    groupId: row.group_id,
-    requesterId: row.requester_id,
-    approvedBy: row.approved_by,
-    amountMinor: toMinor(row.amount_minor),
-    purpose: row.purpose,
-    status: row.status,
-    interestBps: row.interest_bps,
-    requestedAt: row.requested_at,
-    decisionAt: row.decision_at,
-    nextPaymentDate: row.next_payment_date,
-    dueDate: row.due_date,
-    notes: row.notes ?? "",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    requesterName: requesterProfiles.get(row.requester_id)?.name || "User",
-  }));
-  return {
-    contributions: (contribRes.data ?? []).map(mapChitContribution),
-    loans,
-    repayments: (repaymentRes.data ?? []).map(mapChitRepayment),
-    activities: (activityRes.data ?? []).map(mapChitActivity),
-  };
+  try {
+    const [contribRes, loanRes, repaymentRes, activityRes] = await withTimeout(
+      "listChitGroupDetails",
+      Promise.all([
+        supabase!.from("chit_group_contributions").select("*").eq("group_id", groupId).order("contribution_date", { ascending: false }),
+        supabase!.from("chit_group_loans").select("*").eq("group_id", groupId).order("requested_at", { ascending: false }),
+        supabase!.from("chit_group_loan_repayments").select("*").eq("group_id", groupId).order("payment_date", { ascending: false }),
+        supabase!.from("chit_group_activities").select("*").eq("group_id", groupId).order("created_at", { ascending: false }),
+      ]),
+    );
+    await ensureNoError(contribRes.error);
+    await ensureNoError(loanRes.error);
+    await ensureNoError(repaymentRes.error);
+    await ensureNoError(activityRes.error);
+    const loansRaw = loanRes.data ?? [];
+    const requesterProfiles = await loadProfiles(loansRaw.map((row: any) => row.requester_id));
+    const loans: ChitLoan[] = loansRaw.map((row: any) => ({
+      id: row.id,
+      groupId: row.group_id,
+      requesterId: row.requester_id,
+      approvedBy: row.approved_by,
+      amountMinor: toMinor(row.amount_minor),
+      purpose: row.purpose,
+      status: row.status,
+      interestBps: row.interest_bps,
+      requestedAt: row.requested_at,
+      decisionAt: row.decision_at,
+      nextPaymentDate: row.next_payment_date,
+      dueDate: row.due_date,
+      notes: row.notes ?? "",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      requesterName: requesterProfiles.get(row.requester_id)?.name || "User",
+    }));
+    return {
+      contributions: (contribRes.data ?? []).map(mapChitContribution),
+      loans,
+      repayments: (repaymentRes.data ?? []).map(mapChitRepayment),
+      activities: (activityRes.data ?? []).map(mapChitActivity),
+    };
+  } catch (error) {
+    logFinancialError("listChitGroupDetails", error, groupId);
+    throw error;
+  }
 }
 
 export async function recordChitContribution(input: {
@@ -700,44 +795,52 @@ async function addChitActivity(
 export async function listBillWorkspace(user: unknown) {
   const access = requireSupabaseUser(user);
   if (!access.ready) throw new Error(access.reason);
-  const [groupRes, invitationRes, memberRes, expenseRes, shareRes, settlementRes, activityRes] =
-    await Promise.all([
-      supabase!.from("bill_split_groups").select("*").order("updated_at", { ascending: false }),
-      supabase!.from("bill_split_invitations").select("*").order("created_at", { ascending: false }),
-      supabase!.from("bill_split_members").select("*"),
-      supabase!.from("bill_split_expenses").select("*").order("expense_date", { ascending: false }),
-      supabase!.from("bill_split_expense_participants").select("*"),
-      supabase!.from("bill_split_settlements").select("*").order("settlement_date", { ascending: false }),
-      supabase!.from("bill_split_activities").select("*").order("created_at", { ascending: false }),
-    ]);
-  await ensureNoError(groupRes.error);
-  await ensureNoError(invitationRes.error);
-  await ensureNoError(memberRes.error);
-  await ensureNoError(expenseRes.error);
-  await ensureNoError(shareRes.error);
-  await ensureNoError(settlementRes.error);
-  await ensureNoError(activityRes.error);
-  const profiles = await loadProfiles((memberRes.data ?? []).map((row: any) => row.user_id));
-  const members: BillSplitMember[] = (memberRes.data ?? []).map((row: any) => {
-    const profile = profiles.get(row.user_id);
+  try {
+    const [groupRes, invitationRes, memberRes, expenseRes, shareRes, settlementRes, activityRes] =
+      await withTimeout(
+        "listBillWorkspace",
+        Promise.all([
+          supabase!.from("bill_split_groups").select("*").order("updated_at", { ascending: false }),
+          supabase!.from("bill_split_invitations").select("*").order("created_at", { ascending: false }),
+          supabase!.from("bill_split_members").select("*"),
+          supabase!.from("bill_split_expenses").select("*").order("expense_date", { ascending: false }),
+          supabase!.from("bill_split_expense_participants").select("*"),
+          supabase!.from("bill_split_settlements").select("*").order("settlement_date", { ascending: false }),
+          supabase!.from("bill_split_activities").select("*").order("created_at", { ascending: false }),
+        ]),
+      );
+    await ensureNoError(groupRes.error);
+    await ensureNoError(invitationRes.error);
+    await ensureNoError(memberRes.error);
+    await ensureNoError(expenseRes.error);
+    await ensureNoError(shareRes.error);
+    await ensureNoError(settlementRes.error);
+    await ensureNoError(activityRes.error);
+    const profiles = await loadProfiles((memberRes.data ?? []).map((row: any) => row.user_id));
+    const members: BillSplitMember[] = (memberRes.data ?? []).map((row: any) => {
+      const profile = profiles.get(row.user_id);
+      return {
+        groupId: row.group_id,
+        userId: row.user_id,
+        joinedAt: row.joined_at,
+        name: profile?.name || "User",
+        username: profile?.username || "",
+        avatarLabel: profile?.avatarLabel || "U",
+      };
+    });
     return {
-      groupId: row.group_id,
-      userId: row.user_id,
-      joinedAt: row.joined_at,
-      name: profile?.name || "User",
-      username: profile?.username || "",
-      avatarLabel: profile?.avatarLabel || "U",
+      groups: (groupRes.data ?? []).map(mapBillGroup),
+      invitations: (invitationRes.data ?? []).map(mapBillInvitation),
+      members,
+      expenses: (expenseRes.data ?? []).map(mapBillExpense),
+      shares: (shareRes.data ?? []).map(mapBillShare),
+      settlements: (settlementRes.data ?? []).map(mapBillSettlement),
+      activities: (activityRes.data ?? []).map(mapBillActivity),
     };
-  });
-  return {
-    groups: (groupRes.data ?? []).map(mapBillGroup),
-    invitations: (invitationRes.data ?? []).map(mapBillInvitation),
-    members,
-    expenses: (expenseRes.data ?? []).map(mapBillExpense),
-    shares: (shareRes.data ?? []).map(mapBillShare),
-    settlements: (settlementRes.data ?? []).map(mapBillSettlement),
-    activities: (activityRes.data ?? []).map(mapBillActivity),
-  };
+  } catch (error) {
+    logFinancialError("listBillWorkspace", error, access.userId);
+    throw error;
+  }
 }
 
 export async function createBillGroup(
@@ -746,14 +849,16 @@ export async function createBillGroup(
 ) {
   const access = requireSupabaseUser(user);
   if (!access.ready) throw new Error(access.reason);
+  const name = requireTrimmed(input.name, "Group name");
+  const category = input.category.trim() || "General";
   const { data, error } = await supabase!
     .from("bill_split_groups")
     .insert({
       owner_id: access.userId,
-      name: input.name.trim(),
+      name,
       description: input.description.trim(),
-      category: input.category.trim(),
-      avatar_label: initialsFor(input.name.trim()).slice(0, 2),
+      category,
+      avatar_label: initialsFor(name).slice(0, 2),
     })
     .select("*")
     .single();
