@@ -93,6 +93,7 @@ export default function ChatScreen({
   const [contacts, setContacts] = useState<ChatContact[]>([]);
   const [requestingId, setRequestingId] = useState<string | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [segment, setSegment] = useState<"personal" | "business">("personal");
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -250,11 +251,14 @@ export default function ChatScreen({
   }, [incomingRequestSignature]);
   const acceptIncomingRequest = async (conversation: Conversation) => {
     try {
+      setAcceptingId(conversation.id);
       await dataSource.acceptMessageRequest(conversation.id);
       await loadConversations();
       setRequestsOpen(false);
     } catch {
       Alert.alert("Could not accept", "Please try again.");
+    } finally {
+      setAcceptingId(null);
     }
   };
 
@@ -461,6 +465,7 @@ export default function ChatScreen({
       <RequestsModal
         visible={requestsOpen}
         requests={incomingRequests}
+        acceptingId={acceptingId}
         close={() => setRequestsOpen(false)}
         acceptRequest={acceptIncomingRequest}
       />
@@ -548,8 +553,14 @@ function ConversationView({
     setSending(true);
     try {
       await dataSource.sendMessage({ conversationId: conversation.id, text });
-    } catch {
+    } catch (cause) {
       setDraft(text);
+      Alert.alert(
+        "Message not sent",
+        cause instanceof Error
+          ? cause.message
+          : "Please try again in a moment.",
+      );
     } finally {
       setSending(false);
     }
@@ -584,8 +595,13 @@ function ConversationView({
         text: sticker,
         type: "sticker",
       });
-    } catch {
-      Alert.alert("Sticker not sent", "Please check your connection and try again.");
+    } catch (cause) {
+      Alert.alert(
+        "Sticker not sent",
+        cause instanceof Error
+          ? cause.message
+          : "Please check your connection and try again.",
+      );
     }
   };
   const chooseEmoji = (emoji: EmojiType) => {
@@ -1423,11 +1439,13 @@ function RequestState({
 function RequestsModal({
   visible,
   requests,
+  acceptingId,
   close,
   acceptRequest,
 }: {
   visible: boolean;
   requests: Conversation[];
+  acceptingId: string | null;
   close: () => void;
   acceptRequest: (conversation: Conversation) => Promise<void>;
 }) {
@@ -1489,11 +1507,18 @@ function RequestsModal({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Accept request from ${item.participant.name}`}
+                  disabled={acceptingId === item.id}
                   onPress={() => void acceptRequest(item)}
                   style={styles.acceptButton}
                 >
-                  <CheckCircle2 color="#ffffff" size={15} />
-                  <Text style={styles.requestButtonText}>Accept</Text>
+                  {acceptingId === item.id ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <>
+                      <CheckCircle2 color="#ffffff" size={15} />
+                      <Text style={styles.requestButtonText}>Accept</Text>
+                    </>
+                  )}
                 </Pressable>
               </View>
             )}
