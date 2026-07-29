@@ -1,12 +1,9 @@
 import { router } from "expo-router";
 import {
   BadgeDollarSign,
-  CarFront,
   CircleHelp,
   Gamepad2,
-  Headphones,
   HeartHandshake,
-  MapPin,
   MessageCircle,
   NotebookPen,
   PiggyBank,
@@ -15,7 +12,6 @@ import {
   Shuffle,
   SplitSquareVertical,
   Store,
-  TrainFront,
   UserPlus,
   UtensilsCrossed,
   type LucideIcon,
@@ -51,26 +47,17 @@ const sections: DiscoverSection[] = [
   {
     title: "Daily Services",
     items: [
-      { label: "Food", icon: UtensilsCrossed, color: "#f97316", background: "#fff1e8", action: () => comingSoon("Food") },
-      { label: "Notes", icon: NotebookPen, color: "#d97706", background: "#fff8dc", action: () => comingSoon("Notes") },
+      { label: "Food", icon: UtensilsCrossed, color: "#f97316", background: "#fff1e8", action: () => router.push("/food") },
+      { label: "Notes", icon: NotebookPen, color: "#d97706", background: "#fff8dc", action: () => router.push("/notes-tasks") },
       { label: "Nearby\nPeople", icon: UserPlus, color: "#2563eb", background: "#ecf3ff", action: () => comingSoon("Nearby People") },
-      { label: "Support", icon: Headphones, color: "#4f46e5", background: "#eef2ff", action: () => comingSoon("Support") },
-    ],
-  },
-  {
-    title: "Travel & Transportation",
-    items: [
-      { label: "Taxi", icon: CarFront, color: "#16a34a", background: "#ebfaef", action: () => comingSoon("Taxi") },
-      { label: "Metro", icon: TrainFront, color: "#2563eb", background: "#eaf1ff", action: () => comingSoon("Metro") },
-      { label: "1km\nDelivery", icon: MapPin, color: "#9333ea", background: "#f5ebff", action: () => comingSoon("1km Delivery") },
     ],
   },
   {
     title: "Shopping",
     items: [
       { label: "Shopping", icon: ShoppingBag, color: "#9333ea", background: "#f5ebff", action: () => router.push("/shop") },
-      { label: "Missing\nPerson", icon: Search, color: "#ef4444", background: "#fdecec", action: () => comingSoon("Missing Person") },
-      { label: "Charity", icon: HeartHandshake, color: "#ec4899", background: "#ffeef6", action: () => comingSoon("Charity") },
+      { label: "Missing\nPerson", icon: Search, color: "#ef4444", background: "#fdecec", action: () => router.push("/missing-persons") },
+      { label: "Charity", icon: HeartHandshake, color: "#ec4899", background: "#ffeef6", action: () => router.push("/charity") },
       { label: "Anonymous\nChat", icon: MessageCircle, color: "#16a34a", background: "#ebfaef", action: () => comingSoon("Anonymous Chat") },
     ],
   },
