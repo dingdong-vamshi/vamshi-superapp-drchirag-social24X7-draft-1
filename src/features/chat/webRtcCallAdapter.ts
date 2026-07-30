@@ -1,8 +1,8 @@
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 
-import { currentChatUserId } from './chatRepository';
-import { inferSignalingUrl } from './socketIoChatRepository';
+import { supabase } from '../../lib/supabase';
 import type { CallAdapter, CallKind, CallSession, CallSignal } from './types';
 
 type WireSignal = {
@@ -18,6 +18,27 @@ type WireSignal = {
 
 const rtcConfiguration: RTCConfiguration = {
   iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
+};
+
+const currentCallUserId = async () => {
+  if (!supabase) return 'anonymous';
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user?.id || 'anonymous';
+};
+
+const inferSignalingUrl = () => {
+  const envUrl = process.env.EXPO_PUBLIC_SIGNALING_URL;
+  if (envUrl) return envUrl;
+
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:8787`;
+  }
+
+  const hostUri = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost;
+  const host = typeof hostUri === 'string' ? hostUri.split(':')[0] : '';
+  return host ? `http://${host}:8787` : '';
 };
 
 export function createWebRtcCallAdapter(): CallAdapter {
@@ -134,7 +155,7 @@ export function createWebRtcCallAdapter(): CallAdapter {
 
   const connect = async () => {
     if (socket) return socket;
-    const userId = await currentChatUserId();
+    const userId = await currentCallUserId();
     const url = inferSignalingUrl();
     if (!url) throw new Error('The call server URL is missing.');
     socket = io(url, {
