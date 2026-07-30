@@ -15,12 +15,16 @@ import {
   View,
 } from "react-native";
 import {
+  Bell,
+  Bookmark,
   Camera,
   Heart,
   ImagePlus,
   MessageCircle,
+  MoreHorizontal,
   Plus,
   RefreshCw,
+  Search,
   Send,
   UserPlus,
   X,
@@ -368,7 +372,6 @@ export function SocialScreen({
         stories={stories}
         viewer={viewer}
         onCreate={() => void createStory()}
-        onCreatePost={() => setComposerOpen(true)}
         onOpen={(index) => setStoryIndex(index)}
         onOpenOwnProfile={onOpenOwnProfile}
       />
@@ -461,67 +464,46 @@ function Stories({
   stories,
   viewer,
   onCreate,
-  onCreatePost,
   onOpen,
   onOpenOwnProfile,
 }: {
   stories: SocialStory[];
   viewer: SocialUser;
   onCreate: () => void;
-  onCreatePost: () => void;
   onOpen: (index: number) => void;
   onOpenOwnProfile?: () => void;
 }) {
   return (
     <View style={styles.storyBlock}>
       <View style={styles.socialHeader}>
-        <View>
-          <Text accessibilityRole="header" style={styles.socialTitle}>
-            Social 24x7
-          </Text>
-          <Text style={styles.socialSubtitle}>Moments from your circle</Text>
-        </View>
+        <Text accessibilityRole="header" style={styles.socialTitle}>
+          social
+        </Text>
+        <Pressable
+          accessibilityRole="search"
+          accessibilityLabel="Search social"
+          style={styles.topSearch}
+        >
+          <Search size={18} color="#8f98a8" />
+          <Text style={styles.topSearchText}>Search</Text>
+        </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Add to your story"
-          onPress={onCreate}
-          style={styles.headerAction}
+          accessibilityLabel="Open notifications"
+          style={styles.notificationButton}
         >
-          <Camera size={20} color="#111111" />
+          <Bell size={24} color="#111111" />
+          <View style={styles.notificationBadge}>
+            <Text style={styles.notificationBadgeText}>3</Text>
+          </View>
         </Pressable>
-      </View>
-      <View style={styles.composerCard}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Open my social profile"
           onPress={onOpenOwnProfile}
         >
-          <Avatar user={viewer} size={42} />
+          <Avatar user={viewer} size={38} />
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Create a post"
-          onPress={onCreatePost}
-          style={styles.composerPrompt}
-        >
-          <Text style={styles.composerPromptText}>Share a moment…</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Create a photo post"
-          onPress={onCreatePost}
-          style={styles.composerPhoto}
-        >
-          <ImagePlus size={20} color={brand} />
-        </Pressable>
-      </View>
-      <View style={styles.sectionHeading}>
-        <Text accessibilityRole="header" style={styles.heading}>
-          Stories
-        </Text>
-        <Text style={styles.sectionMeta}>
-          {stories.length ? `${stories.length} new` : "Add yours"}
-        </Text>
       </View>
       <FlatList
         horizontal
@@ -536,14 +518,14 @@ function Stories({
             onPress={onCreate}
             style={styles.story}
           >
-            <View style={[styles.storyRing, styles.newStory]}>
-              <Avatar user={viewer} size={58} />
+            <View style={[styles.storyRing, styles.addStoryRing]}>
+              <Plus size={31} color="#5f6673" />
               <View style={styles.plusBadge}>
                 <Plus size={13} color="#fff" />
               </View>
             </View>
             <Text numberOfLines={1} style={styles.storyName}>
-              Your story
+              Add story
             </Text>
           </Pressable>
         }
@@ -813,12 +795,15 @@ function PostCard({
           accessibilityRole="button"
           onPress={() => onProfile?.(post.author)}
         >
-          <Text style={styles.authorName}>{post.author.displayName}</Text>
+          <View style={styles.authorNameRow}>
+            <Text style={styles.authorName}>{post.author.handle}</Text>
+            {post.author.following ? <Text style={styles.verifiedDot}>✓</Text> : null}
+          </View>
           <Text style={styles.meta}>
-            @{post.author.handle} · {ago(post.createdAt)}
+            {post.author.displayName}
           </Text>
         </Pressable>
-        {!ownPost && (
+        {!ownPost && !post.author.following ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`${post.author.following ? "Unfollow" : "Follow"} ${post.author.displayName}`}
@@ -835,7 +820,8 @@ function PostCard({
               {post.author.following ? "Following" : "Follow"}
             </Text>
           </Pressable>
-        )}
+        ) : null}
+        <MoreHorizontal size={25} color={ink} />
       </View>
       {post.mediaUrl ? (
         post.mediaType === "video" ? (
@@ -849,12 +835,6 @@ function PostCard({
           />
         )
       ) : null}
-      {post.caption ? (
-        <Text style={styles.caption}>
-          <Text style={styles.captionAuthor}>{post.author.handle} </Text>
-          {post.caption}
-        </Text>
-      ) : null}
       <View style={styles.actions}>
         <Pressable
           accessibilityRole="button"
@@ -864,11 +844,10 @@ function PostCard({
           style={styles.action}
         >
           <Heart
-            size={23}
+            size={28}
             color={post.likedByViewer ? "#E7374F" : ink}
             fill={post.likedByViewer ? "#E7374F" : "none"}
           />
-          <Text style={styles.actionText}>{post.likeCount}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -876,8 +855,7 @@ function PostCard({
           onPress={() => onComments?.(post)}
           style={styles.action}
         >
-          <MessageCircle size={23} color={ink} />
-          <Text style={styles.actionText}>{post.commentCount}</Text>
+          <MessageCircle size={28} color={ink} />
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -892,9 +870,22 @@ function PostCard({
           }}
           style={styles.action}
         >
-          <Send size={21} color={ink} />
+          <Send size={27} color={ink} />
         </Pressable>
+        <View style={styles.actionSpacer} />
+        <Bookmark size={27} color={ink} />
       </View>
+      <Text style={styles.likesText}>{post.likeCount} likes</Text>
+      {post.caption ? (
+        <Text style={styles.caption}>
+          <Text style={styles.captionAuthor}>{post.author.handle} </Text>
+          {post.caption}
+        </Text>
+      ) : null}
+      <Pressable onPress={() => onComments?.(post)}>
+        <Text style={styles.commentsPreview}>View all {post.commentCount} comments</Text>
+      </Pressable>
+      <Text style={styles.timestamp}>{ago(post.createdAt).toUpperCase()} AGO</Text>
     </View>
   );
 }
@@ -1230,7 +1221,7 @@ function EmptyState({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#ffffff" },
-  feed: { paddingBottom: 112, backgroundColor: "#f6f8f7" },
+  feed: { paddingBottom: 112, backgroundColor: "#ffffff" },
   emptyFeed: { flexGrow: 1 },
   center: {
     flex: 1,
@@ -1241,27 +1232,30 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
   },
   storyBlock: {
-    paddingTop: 4,
-    paddingBottom: 18,
+    paddingTop: 8,
+    paddingBottom: 14,
     backgroundColor: "#ffffff",
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    boxShadow: "0 8px 24px rgba(20, 35, 27, 0.06)",
+    borderBottomWidth: 1,
+    borderBottomColor: "#edf0f2",
   },
   socialHeader: {
-    minHeight: 64,
-    paddingHorizontal: 20,
-    marginBottom: 12,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    marginBottom: 16,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    gap: 12,
   },
   kicker: { display: "none" },
   socialTitle: {
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: "800",
+    fontSize: 27,
+    lineHeight: 32,
+    fontWeight: "500",
     color: "#111111",
+    textTransform: "lowercase",
+    borderBottomWidth: 3,
+    borderBottomColor: brand,
+    paddingBottom: 2,
   },
   socialSubtitle: {
     marginTop: 2,
@@ -1277,6 +1271,39 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  topSearch: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 18,
+    backgroundColor: "#f1f3f6",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 15,
+  },
+  topSearchText: { color: "#7d8594", fontSize: 16 },
+  notificationButton: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  notificationBadge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: "#ff314b",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#ffffff",
+  },
+  notificationBadgeText: { color: "#ffffff", fontSize: 10, fontWeight: "800" },
   livePill: { display: "none" },
   liveDot: { display: "none" },
   liveText: { display: "none" },
@@ -1311,15 +1338,23 @@ const styles = StyleSheet.create({
   },
   heading: { fontSize: 16, fontWeight: "700", color: "#111111" },
   sectionMeta: { color: "#8a948f", fontSize: 12, fontWeight: "600" },
-  stories: { paddingHorizontal: 18, gap: 14 },
-  story: { width: 68, alignItems: "center", gap: 6 },
+  stories: { paddingHorizontal: 18, gap: 16 },
+  story: { width: 74, alignItems: "center", gap: 7 },
   storyRing: {
-    width: 64,
-    height: 64,
-    padding: 2,
-    borderRadius: 32,
-    borderWidth: 2,
+    width: 70,
+    height: 70,
+    padding: 3,
+    borderRadius: 35,
+    borderWidth: 3,
     borderColor: "#07c160",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addStoryRing: {
+    borderColor: "#d7dbe1",
+    backgroundColor: "#f2f3f5",
+    boxShadow: "0 7px 16px rgba(15, 23, 42, 0.10)",
   },
   storyPlaceholder: {
     width: "100%",
@@ -1365,7 +1400,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#ffffff",
   },
-  storyName: { maxWidth: 68, fontSize: 11, color: "#555555" },
+  storyName: { maxWidth: 74, fontSize: 13, color: "#111111", textAlign: "center" },
   avatar: {
     backgroundColor: "#dff4e7",
     alignItems: "center",
@@ -1373,26 +1408,36 @@ const styles = StyleSheet.create({
   },
   avatarText: { fontWeight: "700", color: "#07934a" },
   post: {
-    marginHorizontal: 12,
-    marginTop: 12,
-    paddingVertical: 15,
+    marginTop: 10,
+    paddingVertical: 0,
     backgroundColor: "#ffffff",
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "#edf0ee",
+    borderRadius: 0,
+    borderTopWidth: 8,
+    borderTopColor: "#f0f2f4",
     overflow: "hidden",
-    boxShadow: "0 6px 18px rgba(20, 35, 27, 0.05)",
   },
   postHeader: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 12,
   },
   author: { flex: 1 },
-  authorName: { color: "#111111", fontWeight: "600", fontSize: 15 },
-  meta: { color: "#999999", marginTop: 2, fontSize: 12 },
+  authorNameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  authorName: { color: "#111111", fontWeight: "800", fontSize: 16 },
+  verifiedDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "#2f80ed",
+    color: "#ffffff",
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+    fontWeight: "900",
+  },
+  meta: { color: "#747b87", marginTop: 2, fontSize: 13 },
   follow: {
     flexDirection: "row",
     gap: 5,
@@ -1409,7 +1454,7 @@ const styles = StyleSheet.create({
   },
   followText: { color: "#fff", fontWeight: "600", fontSize: 12 },
   followingText: { color: "#333333" },
-  postImage: { width: "100%", height: 360, backgroundColor: "#eeeeee" },
+  postImage: { width: "100%", height: 430, backgroundColor: "#eeeeee" },
   storyViewer: { flex: 1, backgroundColor: "#090b0a" },
   storyProgressRow: {
     position: "absolute",
@@ -1465,21 +1510,44 @@ const styles = StyleSheet.create({
   storyTapLeft: { left: 0 },
   storyTapRight: { right: 0 },
   caption: {
-    color: "#222222",
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    fontSize: 14,
-    lineHeight: 20,
+    color: "#111111",
+    paddingHorizontal: 18,
+    paddingTop: 4,
+    fontSize: 15,
+    lineHeight: 22,
   },
-  captionAuthor: { fontWeight: "600", color: "#576b95" },
+  captionAuthor: { fontWeight: "800", color: "#111111" },
   actions: {
-    paddingHorizontal: 16,
-    paddingTop: 11,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 6,
     flexDirection: "row",
-    gap: 24,
+    alignItems: "center",
+    gap: 14,
   },
-  action: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 34 },
+  action: { alignItems: "center", justifyContent: "center", minHeight: 34 },
+  actionSpacer: { flex: 1 },
   actionText: { color: "#333333", fontWeight: "500" },
+  likesText: {
+    paddingHorizontal: 18,
+    color: "#111111",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  commentsPreview: {
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    color: "#8a8f98",
+    fontSize: 15,
+  },
+  timestamp: {
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 18,
+    color: "#a1a6af",
+    fontSize: 12,
+    letterSpacing: 0.3,
+  },
   fab: {
     position: "absolute",
     right: 18,
