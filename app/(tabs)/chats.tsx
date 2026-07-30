@@ -1,7 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo } from 'react';
 import ChatScreen from '../../src/features/chat/ChatScreen';
-import { createSocketIoChatRepository } from '../../src/features/chat/socketIoChatRepository';
 import { createSupabaseChatRepository } from '../../src/features/chat/supabaseChatRepository';
 import { createWebRtcCallAdapter } from '../../src/features/chat/webRtcCallAdapter';
 import { useAuth } from '../../src/lib/AuthContext';
@@ -17,7 +16,7 @@ export default function ChatsPage() {
       'app_metadata' in user &&
       user.app_metadata?.provider === 'demo',
     );
-    if (!supabase || !user || isDemoUser) return createSocketIoChatRepository();
+    if (!supabase || !user || isDemoUser) return undefined;
     return createSupabaseChatRepository({ client: supabase, user });
   }, [user]);
   const callAdapter = useMemo(() => createWebRtcCallAdapter(), [user]);

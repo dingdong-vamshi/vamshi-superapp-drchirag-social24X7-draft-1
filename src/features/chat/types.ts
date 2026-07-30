@@ -27,6 +27,12 @@ export type SharedPost = {
   imageUrl?: string;
 };
 
+export type MessageReaction = {
+  emoji: string;
+  count: number;
+  reactedByCurrentUser: boolean;
+};
+
 export type ChatMessage = {
   id: string;
   conversationId: string;
@@ -36,9 +42,22 @@ export type ChatMessage = {
   status: MessageStatus;
   type?: 'text' | 'shared_post' | 'sticker';
   post?: SharedPost;
+  reactions?: MessageReaction[];
 };
 
 export type SendMessageInput = Pick<ChatMessage, 'conversationId' | 'text'> & Pick<ChatMessage, 'type' | 'post'>;
+
+export type ChatReportInput = {
+  conversationId: string;
+  messageId?: string;
+  category: string;
+  notes: string;
+};
+
+export type ExportedConversation = {
+  filename: string;
+  text: string;
+};
 
 export type Conversation = {
   id: string;
@@ -46,6 +65,11 @@ export type Conversation = {
   lastMessage?: ChatMessage;
   unreadCount: number;
   updatedAt: string;
+  kind?: 'personal' | 'business' | 'group' | 'support';
+  isArchived?: boolean;
+  isManuallyUnread?: boolean;
+  isPinned?: boolean;
+  clearedAt?: string | null;
   requestStatus?: 'pending_outgoing' | 'pending_incoming' | 'accepted';
   requestMessage?: string;
 };
@@ -59,6 +83,16 @@ export type ChatDataSource = {
   openDirectConversation(contactId: string): Promise<Conversation>;
   sendMessageRequest(contact: ChatContact, note?: string): Promise<Conversation>;
   acceptMessageRequest(conversationId: string): Promise<Conversation>;
+  rejectMessageRequest?(conversationId: string): Promise<void>;
+  cancelMessageRequest?(conversationId: string): Promise<void>;
+  archiveConversation?(conversationId: string): Promise<void>;
+  unarchiveConversation?(conversationId: string): Promise<void>;
+  markConversationUnread?(conversationId: string): Promise<void>;
+  setMessageReaction(messageId: string, emoji: string | null): Promise<void>;
+  pinConversation?(conversationId: string, pinned: boolean): Promise<void>;
+  clearConversation?(conversationId: string): Promise<void>;
+  reportConversation?(input: ChatReportInput): Promise<void>;
+  exportConversation?(conversationId: string): Promise<ExportedConversation>;
   /** Replace with Supabase Realtime or another transport at composition time. */
   subscribe(listener: () => void): () => void;
 };
