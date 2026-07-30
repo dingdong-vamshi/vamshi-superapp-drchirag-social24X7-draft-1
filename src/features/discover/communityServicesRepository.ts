@@ -27,6 +27,10 @@ export type MissingPersonReport = {
   lastSeenDate: string | null;
   description: string;
   status: "missing" | "found";
+  urgent: boolean;
+  rewardMinor: bigint;
+  rewardTerms: string;
+  archivedAt: string | null;
   createdAt: string;
 };
 
@@ -73,8 +77,58 @@ const mapMissing = (row: any): MissingPersonReport => ({
   lastSeenDate: row.last_seen_date,
   description: row.description ?? "",
   status: row.status,
+  urgent: Boolean(row.urgent),
+  rewardMinor: toMinor(row.reward_minor),
+  rewardTerms: row.reward_terms ?? "",
+  archivedAt: row.archived_at,
   createdAt: row.created_at,
 });
+
+const missingSafeColumns = [
+  "id",
+  "reporter_id",
+  "person_name",
+  "age_text",
+  "photo_url",
+  "last_seen_city",
+  "last_seen_location",
+  "last_seen_date",
+  "description",
+  "status",
+  "consent_confirmed",
+  "urgent",
+  "reward_minor",
+  "reward_terms",
+  "archived_at",
+  "created_at",
+  "updated_at",
+].join(",");
+
+const normalizeDate = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new Error("Last-seen date must use YYYY-MM-DD format.");
+  }
+  return trimmed;
+};
+
+async function uploadMissingPhoto(userId: string, photoUri?: string) {
+  if (!photoUri) return "";
+  const response = await fetch(photoUri);
+  if (!response.ok) throw new Error("Could not read the selected photo.");
+  const blob = await response.blob();
+  const extension = photoUri.split("?")[0]?.split(".").pop()?.toLowerCase();
+  const safeExtension = extension && ["jpg", "jpeg", "png", "webp"].includes(extension) ? extension : "jpg";
+  const path = `${userId}/${Date.now()}.${safeExtension}`;
+  const { error } = await supabase!.storage.from("missing-person-photos").upload(path, blob, {
+    contentType: blob.type || "image/jpeg",
+    upsert: false,
+  });
+  ensureNoError(error);
+  const { data } = supabase!.storage.from("missing-person-photos").getPublicUrl(path);
+  return data.publicUrl;
+}
 
 export async function listCharityWorkspace(user: unknown) {
   const userId = userIdFor(user);
@@ -150,7 +204,8 @@ export async function listMissingReports(user: unknown) {
   userIdFor(user);
   const { data, error } = await supabase!
     .from("missing_person_reports")
-    .select("*")
+    .select(missingSafeColumns)
+    .is("archived_at", null)
     .order("created_at", { ascending: false });
   ensureNoError(error);
   return (data ?? []).map(mapMissing);
@@ -165,25 +220,36 @@ export async function createMissingReport(user: unknown, input: {
   description: string;
   reporterContact: string;
   status: "missing" | "found";
+  urgent?: boolean;
+  rewardInput?: string;
+  rewardTerms?: string;
+  photoUri?: string;
+  consentConfirmed?: boolean;
 }) {
   const userId = userIdFor(user);
   if (!input.personName.trim()) throw new Error("Person name is required.");
   if (!input.reporterContact.trim()) throw new Error("Reporter contact is required.");
+  if (!input.consentConfirmed) throw new Error("Confirm consent/guardian authority before submitting.");
+  const photoUrl = await uploadMissingPhoto(userId, input.photoUri);
   const { data, error } = await supabase!
     .from("missing_person_reports")
     .insert({
       reporter_id: userId,
       person_name: input.personName.trim(),
       age_text: input.ageText.trim(),
+      photo_url: photoUrl,
       last_seen_city: input.lastSeenCity.trim(),
       last_seen_location: input.lastSeenLocation.trim(),
-      last_seen_date: input.lastSeenDate.trim() || null,
+      last_seen_date: normalizeDate(input.lastSeenDate),
       description: input.description.trim(),
       reporter_contact: input.reporterContact.trim(),
       status: input.status,
       consent_confirmed: true,
+      urgent: Boolean(input.urgent),
+      reward_minor: toMinorUnits(input.rewardInput || "0").toString(),
+      reward_terms: input.rewardTerms?.trim() ?? "",
     })
-    .select("*")
+    .select(missingSafeColumns)
     .single();
   ensureNoError(error);
   return mapMissing(data);
