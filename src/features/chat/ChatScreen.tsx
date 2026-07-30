@@ -4,6 +4,7 @@ import EmojiPicker, { type EmojiType } from "rn-emoji-keyboard";
 import {
   ActivityIndicator,
   Alert,
+  type AlertButton,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -43,7 +44,6 @@ import {
 } from "lucide-react-native";
 
 import { unconfiguredCallAdapter } from "./callAdapter";
-import { localChatRepository } from "./chatRepository";
 import {
   CURRENT_USER_ID,
   type CallAdapter,
@@ -64,6 +64,38 @@ type Props = {
   sharedPost?: SharedPost;
 };
 type LoadState = "loading" | "ready" | "error";
+type ChatListFilter = "all" | "unread" | "requests" | "archived";
+
+const unavailableChatRepository: ChatDataSource = {
+  async listConversations() {
+    throw new Error("Sign in with a real Supabase account to load chats.");
+  },
+  async listMessages() {
+    throw new Error("Sign in with a real Supabase account to load messages.");
+  },
+  async sendMessage() {
+    throw new Error("Sign in with a real Supabase account to send messages.");
+  },
+  async setMessageReaction() {
+    throw new Error("Sign in with a real Supabase account to react to messages.");
+  },
+  async markConversationRead() {},
+  async searchContacts() {
+    return [];
+  },
+  async openDirectConversation() {
+    throw new Error("Sign in with a real Supabase account to open chats.");
+  },
+  async sendMessageRequest() {
+    throw new Error("Sign in with a real Supabase account to send requests.");
+  },
+  async acceptMessageRequest() {
+    throw new Error("Sign in with a real Supabase account to accept requests.");
+  },
+  subscribe() {
+    return () => {};
+  },
+};
 
 const formatTime = (date: string) =>
   new Intl.DateTimeFormat(undefined, {
@@ -78,7 +110,7 @@ const preview = (conversation: Conversation) =>
     : "No messages yet");
 
 export default function ChatScreen({
-  dataSource = localChatRepository,
+  dataSource = unavailableChatRepository,
   callAdapter = unconfiguredCallAdapter,
   onBack,
   onBusinessSearch,
@@ -93,23 +125,49 @@ export default function ChatScreen({
   const [contacts, setContacts] = useState<ChatContact[]>([]);
   const [requestingId, setRequestingId] = useState<string | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [actioningId, setActioningId] = useState<string | null>(null);
   const [segment, setSegment] = useState<"personal" | "business">("personal");
+  const [listFilter, setListFilter] = useState<ChatListFilter>("all");
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [callSession, setCallSession] = useState<CallSession | null>(null);
   const selectedRef = useRef<Conversation | null>(null);
+  const conversationsRef = useRef<Conversation[]>([]);
+  const hasLoadedOnceRef = useRef(false);
+  const loadSeqRef = useRef(0);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownRequestSignatureRef = useRef<string | null>(null);
 
-  const loadConversations = useCallback(async () => {
+  const loadConversations = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
+    const loadId = ++loadSeqRef.current;
+    const shouldBlock =
+      mode === "initial" &&
+      !hasLoadedOnceRef.current &&
+      conversationsRef.current.length === 0;
     try {
       setError(null);
-      setState("loading");
-      setConversations(await dataSource.listConversations());
+      if (shouldBlock) setState("loading");
+      else setIsRefreshing(true);
+      const next = await dataSource.listConversations();
+      if (loadId !== loadSeqRef.current) return;
+      conversationsRef.current = next;
+      setConversations(next);
+      hasLoadedOnceRef.current = true;
+      setHasLoadedOnce(true);
       setState("ready");
     } catch {
-      setError("Chats could not be loaded from this device. Please try again.");
-      setState("error");
+      if (!hasLoadedOnceRef.current && conversationsRef.current.length === 0) {
+        setError("Chats could not be loaded from this device. Please try again.");
+        setState("error");
+      } else {
+        setError("Chats could not be refreshed. Showing your latest loaded conversations.");
+      }
+    } finally {
+      if (loadId === loadSeqRef.current) setIsRefreshing(false);
     }
   }, [dataSource]);
 
@@ -154,20 +212,38 @@ export default function ChatScreen({
   );
 
   useEffect(() => {
-    void loadConversations();
+    conversationsRef.current = conversations;
+  }, [conversations]);
+  useEffect(() => {
+    hasLoadedOnceRef.current = hasLoadedOnce;
+  }, [hasLoadedOnce]);
+
+  const runRealtimeRefresh = useCallback(() => {
+    const active = selectedRef.current;
+    if (active) void refreshSelectedMessages(active.id);
+    else void loadConversations("refresh");
+  }, [loadConversations, refreshSelectedMessages]);
+
+  const scheduleRealtimeRefresh = useCallback(() => {
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(runRealtimeRefresh, 250);
+  }, [runRealtimeRefresh]);
+
+  useEffect(() => {
+    void loadConversations("initial");
   }, [loadConversations]);
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
   useEffect(
-    () =>
-      dataSource.subscribe(() => {
-        const active = selectedRef.current;
-        if (active) void refreshSelectedMessages(active.id);
-        else void loadConversations();
-      }),
-    [dataSource, loadConversations, refreshSelectedMessages],
+    () => dataSource.subscribe(scheduleRealtimeRefresh),
+    [dataSource, scheduleRealtimeRefresh],
   );
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    };
+  }, []);
   useEffect(
     () =>
       callAdapter.subscribe((next) => {
@@ -194,7 +270,7 @@ export default function ChatScreen({
     try {
       setRequestingId(contact.id);
       await dataSource.sendMessageRequest(contact, note);
-      await loadConversations();
+      await loadConversations("refresh");
       setNewChatOpen(false);
       setLookup("");
       Alert.alert(
@@ -203,7 +279,6 @@ export default function ChatScreen({
       );
     } catch {
       setError("That request could not be sent. Please try again.");
-      setState("error");
     } finally {
       setRequestingId(null);
     }
@@ -211,26 +286,54 @@ export default function ChatScreen({
 
   // Keep every hook above view branches. Selecting a conversation must not
   // change this component's hook order.
-  const filtered = useMemo(
+  const segmentConversations = useMemo(
     () =>
-      conversations.filter((conversation) =>
-        conversation.participant.name
-          .toLocaleLowerCase()
-          .includes(query.toLocaleLowerCase()),
-      ),
-    [conversations, query],
+      conversations.filter((conversation) => {
+        const kind = conversation.kind ?? "personal";
+        return segment === "business" ? kind === "business" : kind !== "business";
+      }),
+    [conversations, segment],
   );
-  const unreadConversations = useMemo(
-    () => filtered.filter((conversation) => conversation.unreadCount > 0).length,
-    [filtered],
+  const filtered = useMemo(
+    () => {
+      const normalizedQuery = query.trim().toLocaleLowerCase();
+      return segmentConversations
+        .filter((conversation) => {
+          if (listFilter === "unread") return conversation.unreadCount > 0;
+          if (listFilter === "requests") {
+            return Boolean(
+              conversation.requestStatus &&
+              conversation.requestStatus !== "accepted",
+            );
+          }
+          if (listFilter === "archived") return Boolean(conversation.isArchived);
+          return !conversation.isArchived;
+        })
+        .filter((conversation) => {
+          if (!normalizedQuery) return true;
+          const haystack = [
+            conversation.participant.name,
+            conversation.participant.username,
+            preview(conversation),
+          ]
+            .join(" ")
+            .toLocaleLowerCase();
+          return haystack.includes(normalizedQuery);
+        });
+    },
+    [listFilter, query, segmentConversations],
+  );
+  const visibleSegmentConversations = useMemo(
+    () => segmentConversations.filter((conversation) => !conversation.isArchived),
+    [segmentConversations],
   );
   const unreadMessages = useMemo(
     () =>
-      filtered.reduce(
+      visibleSegmentConversations.reduce(
         (total, conversation) => total + conversation.unreadCount,
         0,
       ),
-    [filtered],
+    [visibleSegmentConversations],
   );
   const incomingRequests = useMemo(
     () =>
@@ -249,17 +352,98 @@ export default function ChatScreen({
     shownRequestSignatureRef.current = incomingRequestSignature;
     setRequestsOpen(true);
   }, [incomingRequestSignature]);
-  const acceptIncomingRequest = async (conversation: Conversation) => {
+	  const acceptIncomingRequest = async (conversation: Conversation) => {
+	    try {
+	      setAcceptingId(conversation.id);
+	      await dataSource.acceptMessageRequest(conversation.id);
+	      await loadConversations("refresh");
+	      setRequestsOpen(false);
+	    } catch {
+	      Alert.alert("Could not accept", "Please try again.");
+	    } finally {
+	      setAcceptingId(null);
+	    }
+	  };
+  const rejectIncomingRequest = async (conversation: Conversation) => {
+    if (!dataSource.rejectMessageRequest) return;
     try {
-      setAcceptingId(conversation.id);
-      await dataSource.acceptMessageRequest(conversation.id);
-      await loadConversations();
-      setRequestsOpen(false);
+      setActioningId(conversation.id);
+      await dataSource.rejectMessageRequest(conversation.id);
+      await loadConversations("refresh");
     } catch {
-      Alert.alert("Could not accept", "Please try again.");
+      Alert.alert("Could not reject", "Please try again.");
     } finally {
-      setAcceptingId(null);
+      setActioningId(null);
     }
+  };
+  const cancelOutgoingRequest = async (conversation: Conversation) => {
+    if (!dataSource.cancelMessageRequest) return;
+    try {
+      setActioningId(conversation.id);
+      await dataSource.cancelMessageRequest(conversation.id);
+      await loadConversations("refresh");
+    } catch {
+      Alert.alert("Could not cancel", "Please try again.");
+    } finally {
+      setActioningId(null);
+    }
+  };
+  const archiveConversation = async (conversation: Conversation) => {
+    const action = conversation.isArchived
+      ? dataSource.unarchiveConversation
+      : dataSource.archiveConversation;
+    if (!action) return;
+    try {
+      setActioningId(conversation.id);
+      await action(conversation.id);
+      await loadConversations("refresh");
+    } catch {
+      Alert.alert("Could not update archive", "Please try again.");
+    } finally {
+      setActioningId(null);
+    }
+  };
+  const toggleReadState = async (conversation: Conversation) => {
+    try {
+      setActioningId(conversation.id);
+      if (conversation.unreadCount > 0) await dataSource.markConversationRead(conversation.id);
+      else if (dataSource.markConversationUnread) await dataSource.markConversationUnread(conversation.id);
+      await loadConversations("refresh");
+    } catch {
+      Alert.alert("Could not update read state", "Please try again.");
+    } finally {
+      setActioningId(null);
+    }
+  };
+  const showConversationActions = (conversation: Conversation) => {
+    const buttons: AlertButton[] = [
+      { text: "Open", onPress: () => void openConversation(conversation) },
+    ];
+    if (conversation.requestStatus === "pending_incoming") {
+      buttons.push(
+        { text: "Accept", onPress: () => void acceptIncomingRequest(conversation) },
+        { text: "Reject", style: "destructive", onPress: () => void rejectIncomingRequest(conversation) },
+      );
+    } else if (conversation.requestStatus === "pending_outgoing") {
+      buttons.push({
+        text: "Cancel request",
+        style: "destructive",
+        onPress: () => void cancelOutgoingRequest(conversation),
+      });
+    } else {
+      buttons.push(
+        {
+          text: conversation.unreadCount > 0 ? "Mark as read" : "Mark as unread",
+          onPress: () => void toggleReadState(conversation),
+        },
+        {
+          text: conversation.isArchived ? "Unarchive" : "Archive",
+          onPress: () => void archiveConversation(conversation),
+        },
+      );
+    }
+    buttons.push({ text: "Cancel", style: "cancel" });
+    Alert.alert(conversation.participant.name, "Choose a chat action.", buttons);
   };
 
   if (selected)
@@ -278,11 +462,11 @@ export default function ChatScreen({
           setSelected(accepted);
           return accepted;
         }}
-        onBack={() => {
-          setSelected(null);
-          setError(null);
-          void loadConversations();
-        }}
+	        onBack={() => {
+	          setSelected(null);
+	          setError(null);
+	          void loadConversations("refresh");
+	        }}
       />
     );
   return (
@@ -302,29 +486,21 @@ export default function ChatScreen({
           >
             <Plus color="#ffffff" size={24} />
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Chat settings"
-            onPress={() =>
-              Alert.alert(
-                "Coming soon",
-                "Chat settings are not wired in Phase 1 yet.",
-              )
-            }
-            style={styles.iconButtonMuted}
-          >
+	          <Pressable
+	            accessibilityRole="button"
+	            accessibilityLabel="Chat settings"
+	            disabled
+	            accessibilityState={{ disabled: true }}
+	            style={styles.iconButtonMuted}
+	          >
             <Settings color="#475467" size={20} />
           </Pressable>
           <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`More options${incomingRequests.length ? `, ${incomingRequests.length} request${incomingRequests.length === 1 ? "" : "s"} waiting` : ""}`}
-            onPress={() =>
-              incomingRequests.length > 0
-                ? setRequestsOpen(true)
-                : Alert.alert("No extra actions yet", "More chat tools will be added in the next phase.")
-            }
-            style={styles.iconButtonMuted}
-          >
+	            accessibilityRole="button"
+	            accessibilityLabel={`More options${incomingRequests.length ? `, ${incomingRequests.length} request${incomingRequests.length === 1 ? "" : "s"} waiting` : ""}`}
+	            onPress={() => setToolsOpen(true)}
+	            style={styles.iconButtonMuted}
+	          >
             <Ellipsis color="#475467" size={20} />
             {incomingRequests.length > 0 && (
               <View style={styles.notificationBadge}>
@@ -396,16 +572,49 @@ export default function ChatScreen({
       </View>
       <View style={styles.summaryRow}>
         <Text style={styles.summaryPrimary}>
-          {segment === "personal" ? filtered.length : 0}{" "}
+          {visibleSegmentConversations.length}{" "}
           {segment === "personal" ? "personal chats" : "business chats"}
         </Text>
         <Text style={styles.summarySecondary}>
-          {segment === "personal" ? unreadConversations : 0} active unread
+          {unreadMessages} unread
         </Text>
         <Text style={styles.summarySecondary}>
-          {segment === "personal" ? unreadMessages : 0} unread
+          {incomingRequests.length} requests
         </Text>
       </View>
+      <View style={styles.filterRow}>
+        {([
+          ["all", "All"],
+          ["unread", "Unread"],
+          ["requests", "Requests"],
+          ["archived", "Archived"],
+        ] as const).map(([value, label]) => (
+          <Pressable
+            key={value}
+            accessibilityRole="button"
+            accessibilityState={{ selected: listFilter === value }}
+            onPress={() => setListFilter(value)}
+            style={[
+              styles.filterChip,
+              listFilter === value && styles.filterChipActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.filterChipText,
+                listFilter === value && styles.filterChipTextActive,
+              ]}
+            >
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {isRefreshing && hasLoadedOnce ? (
+        <Text style={styles.refreshHint}>Refreshing chats…</Text>
+      ) : error && hasLoadedOnce ? (
+        <Text style={styles.refreshError}>{error}</Text>
+      ) : null}
       {sharedPost && (
         <View style={styles.shareSelectionBanner}>
           <View style={styles.shareSelectionIcon}>
@@ -429,23 +638,25 @@ export default function ChatScreen({
           onPress={() => setRequestsOpen(true)}
         />
       )}
-      {segment === "business" ? (
-        <BusinessPlaceholder onBusinessSearch={onBusinessSearch} />
-      ) : state === "loading" ? (
+      {state === "loading" && !hasLoadedOnce && conversations.length === 0 ? (
         <Loading />
-      ) : state === "error" ? (
-        <ErrorState message={error} retry={loadConversations} />
+      ) : state === "error" && conversations.length === 0 ? (
+        <ErrorState message={error} retry={() => void loadConversations("initial")} />
+      ) : segment === "business" && filtered.length === 0 ? (
+        <BusinessPlaceholder onBusinessSearch={onBusinessSearch} />
       ) : filtered.length === 0 ? (
         <EmptyState query={query} onStart={() => setNewChatOpen(true)} />
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(item) => `${item.id}:${item.requestStatus ?? "chat"}:${item.updatedAt}`}
+          keyExtractor={(item) => `${item.id}:${item.requestStatus ?? "chat"}`}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => (
             <ConversationRow
               item={item}
+              busy={actioningId === item.id}
               onPress={() => void openConversation(item)}
+              onMore={() => showConversationActions(item)}
             />
           )}
         />
@@ -467,7 +678,22 @@ export default function ChatScreen({
         requests={incomingRequests}
         acceptingId={acceptingId}
         close={() => setRequestsOpen(false)}
-        acceptRequest={acceptIncomingRequest}
+	        acceptRequest={acceptIncomingRequest}
+	        rejectRequest={rejectIncomingRequest}
+	      />
+      <ChatToolsModal
+        visible={toolsOpen}
+        close={() => setToolsOpen(false)}
+        filter={listFilter}
+        setFilter={(next) => {
+          setListFilter(next);
+          setToolsOpen(false);
+        }}
+        requestCount={incomingRequests.length}
+        openRequests={() => {
+          setToolsOpen(false);
+          setRequestsOpen(true);
+        }}
       />
       <CallOverlay
         session={callSession}
@@ -656,6 +882,11 @@ function ConversationView({
       Alert.alert("Could not accept", "Please try again.");
     }
   };
+  const hasDraft = Boolean(draft.trim());
+  const composerLocked = Boolean(
+    conversation.requestStatus && conversation.requestStatus !== "accepted",
+  );
+  const sendDisabled = sending || composerLocked || !hasDraft;
   useEffect(() => {
     list.current?.scrollToEnd({ animated: true });
   }, [messages.length]);
@@ -690,13 +921,9 @@ function ConversationView({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Search this conversation"
-            onPress={() =>
-              Alert.alert(
-                "Coming soon",
-                "Conversation search is not wired in Phase 1 yet.",
-              )
-            }
-            style={styles.callControl}
+            disabled
+            accessibilityState={{ disabled: true }}
+            style={[styles.callControl, styles.disabledAction]}
           >
             <Search color="#475467" size={20} />
           </Pressable>
@@ -711,13 +938,9 @@ function ConversationView({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="More conversation actions"
-            onPress={() =>
-              Alert.alert(
-                "More actions",
-                "Extra conversation actions are coming in the next phase.",
-              )
-            }
-            style={styles.callControl}
+            disabled
+            accessibilityState={{ disabled: true }}
+            style={[styles.callControl, styles.disabledAction]}
           >
             <Ellipsis color="#475467" size={20} />
           </Pressable>
@@ -791,8 +1014,13 @@ function ConversationView({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Choose a sticker"
+            disabled={composerLocked}
+            accessibilityState={{ disabled: composerLocked }}
             onPress={() => setStickersOpen(true)}
-            style={styles.composerAccessory}
+            style={[
+              styles.composerAccessory,
+              composerLocked && styles.disabledAction,
+            ]}
           >
             <Plus color="#667085" size={22} />
           </Pressable>
@@ -818,21 +1046,14 @@ function ConversationView({
               multiline
               maxLength={2000}
               accessibilityLabel={`Message ${conversation.participant.name}`}
-              editable={
-                !conversation.requestStatus ||
-                conversation.requestStatus === "accepted"
-              }
+              editable={!composerLocked}
             />
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Attach camera media"
-              onPress={() =>
-                Alert.alert(
-                  "Coming soon",
-                  "Camera attachments are not wired in Phase 1 yet.",
-                )
-              }
-              style={styles.inputAccessory}
+              disabled
+              accessibilityState={{ disabled: true }}
+              style={[styles.inputAccessory, styles.disabledAction]}
             >
               <Camera color="#667085" size={20} />
             </Pressable>
@@ -840,45 +1061,27 @@ function ConversationView({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open payment actions"
-            onPress={() =>
-              Alert.alert(
-                "Payments later",
-                "Wallet and payment actions stay frontend-only in this phase.",
-              )
-            }
-            style={styles.payButton}
+            disabled
+            accessibilityState={{ disabled: true }}
+            style={[styles.payButton, styles.disabledAction]}
           >
             <Text style={styles.payButtonText}>Pay</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={draft.trim() ? "Send message" : "Voice message"}
-            accessibilityState={{
-              disabled:
-                sending ||
-                (conversation.requestStatus !== undefined &&
-                  conversation.requestStatus !== "accepted"),
-            }}
-            onPress={() =>
-              draft.trim()
-                ? void send()
-                : Alert.alert(
-                    "Coming soon",
-                    "Voice messages are not wired in Phase 1 yet.",
-                  )
-            }
+            accessibilityLabel={hasDraft ? "Send message" : "Voice messages unavailable"}
+            accessibilityState={{ disabled: sendDisabled }}
+            disabled={sendDisabled}
+            onPress={() => void send()}
             style={[
               styles.sendButton,
-              (sending ||
-                (conversation.requestStatus !== undefined &&
-                  conversation.requestStatus !== "accepted")) &&
-                styles.sendDisabled,
+              sendDisabled && styles.sendDisabled,
             ]}
           >
-            {draft.trim() ? (
+            {hasDraft ? (
               <Send color="#fff" size={19} />
             ) : (
-              <Mic color="#fff" size={19} />
+              <MicOff color="#fff" size={19} />
             )}
           </Pressable>
         </View>
@@ -920,10 +1123,14 @@ function ConversationView({
 
 function ConversationRow({
   item,
+  busy,
   onPress,
+  onMore,
 }: {
   item: Conversation;
+  busy: boolean;
   onPress: () => void;
+  onMore: () => void;
 }) {
   return (
     <Pressable
@@ -936,11 +1143,30 @@ function ConversationRow({
         label={item.participant.avatarLabel}
         online={item.participant.isOnline}
       />
-      <View style={styles.rowCopy}>
-        <View style={styles.rowTop}>
-          <Text style={styles.personName}>{item.participant.name}</Text>
-          <Text style={styles.time}>{formatTime(item.updatedAt)}</Text>
-        </View>
+	      <View style={styles.rowCopy}>
+	        <View style={styles.rowTop}>
+	          <Text style={styles.personName}>{item.participant.name}</Text>
+	          <View style={styles.rowMeta}>
+	            <Text style={styles.time}>{formatTime(item.updatedAt)}</Text>
+	            <Pressable
+	              accessibilityRole="button"
+	              accessibilityLabel={`More actions for ${item.participant.name}`}
+	              disabled={busy}
+	              onPress={(event) => {
+	                event.stopPropagation();
+	                onMore();
+	              }}
+	              hitSlop={10}
+	              style={styles.rowMore}
+	            >
+	              {busy ? (
+	                <ActivityIndicator color="#667085" size="small" />
+	              ) : (
+	                <Ellipsis color="#667085" size={18} />
+	              )}
+	            </Pressable>
+	          </View>
+	        </View>
         <View style={styles.rowBottom}>
           <Text
             numberOfLines={1}
@@ -1442,12 +1668,14 @@ function RequestsModal({
   acceptingId,
   close,
   acceptRequest,
+  rejectRequest,
 }: {
   visible: boolean;
   requests: Conversation[];
   acceptingId: string | null;
   close: () => void;
   acceptRequest: (conversation: Conversation) => Promise<void>;
+  rejectRequest: (conversation: Conversation) => Promise<void>;
 }) {
   return (
     <Modal
@@ -1504,27 +1732,103 @@ function RequestsModal({
                       `${item.participant.name} wants to message you.`}
                   </Text>
                 </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Accept request from ${item.participant.name}`}
-                  disabled={acceptingId === item.id}
-                  onPress={() => void acceptRequest(item)}
-                  style={styles.acceptButton}
-                >
-                  {acceptingId === item.id ? (
-                    <ActivityIndicator color="#ffffff" size="small" />
-                  ) : (
-                    <>
-                      <CheckCircle2 color="#ffffff" size={15} />
-                      <Text style={styles.requestButtonText}>Accept</Text>
-                    </>
-                  )}
-                </Pressable>
+	                <View style={styles.requestActions}>
+	                  <Pressable
+	                    accessibilityRole="button"
+	                    accessibilityLabel={`Reject request from ${item.participant.name}`}
+	                    disabled={acceptingId === item.id}
+	                    onPress={() => void rejectRequest(item)}
+	                    style={styles.rejectButton}
+	                  >
+	                    <X color="#b42318" size={15} />
+	                  </Pressable>
+	                  <Pressable
+	                    accessibilityRole="button"
+	                    accessibilityLabel={`Accept request from ${item.participant.name}`}
+	                    disabled={acceptingId === item.id}
+	                    onPress={() => void acceptRequest(item)}
+	                    style={styles.acceptButton}
+	                  >
+	                    {acceptingId === item.id ? (
+	                      <ActivityIndicator color="#ffffff" size="small" />
+	                    ) : (
+	                      <>
+	                        <CheckCircle2 color="#ffffff" size={15} />
+	                        <Text style={styles.requestButtonText}>Accept</Text>
+	                      </>
+	                    )}
+	                  </Pressable>
+	                </View>
               </View>
             )}
           />
         )}
       </SafeAreaView>
+    </Modal>
+	  );
+	}
+function ChatToolsModal({
+  visible,
+  close,
+  filter,
+  setFilter,
+  requestCount,
+  openRequests,
+}: {
+  visible: boolean;
+  close: () => void;
+  filter: ChatListFilter;
+  setFilter: (filter: ChatListFilter) => void;
+  requestCount: number;
+  openRequests: () => void;
+}) {
+  const filters: Array<{ value: ChatListFilter; label: string }> = [
+    { value: "all", label: "Show active chats" },
+    { value: "unread", label: "Show unread chats" },
+    { value: "requests", label: "Show message requests" },
+    { value: "archived", label: "Show archived chats" },
+  ];
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+      <Pressable style={styles.sheetBackdrop} onPress={close}>
+        <Pressable style={styles.actionSheet} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.sheetHeader}>
+            <View>
+              <Text style={styles.sheetTitle}>Chat tools</Text>
+              <Text style={styles.sheetSubtitle}>Filter and review your real conversations</Text>
+            </View>
+            <Pressable accessibilityLabel="Close chat tools" onPress={close} style={styles.sheetClose}>
+              <X color="#172235" size={20} />
+            </Pressable>
+          </View>
+          {filters.map((item) => (
+            <Pressable
+              key={item.value}
+              accessibilityRole="button"
+              accessibilityState={{ selected: filter === item.value }}
+              onPress={() => setFilter(item.value)}
+              style={styles.actionRow}
+            >
+              <CheckCircle2
+                color={filter === item.value ? "#078f4a" : "#98a2b3"}
+                size={19}
+              />
+              <Text style={styles.actionText}>{item.label}</Text>
+            </Pressable>
+          ))}
+          <Pressable
+            accessibilityRole="button"
+            disabled={requestCount === 0}
+            onPress={openRequests}
+            style={[styles.actionRow, requestCount === 0 && styles.disabledAction]}
+          >
+            <Bell color={requestCount ? "#078f4a" : "#98a2b3"} size={19} />
+            <Text style={styles.actionText}>
+              Review requests {requestCount ? `(${requestCount})` : ""}
+            </Text>
+          </Pressable>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -1568,7 +1872,7 @@ function NewChatModal({
         </View>
         <Text style={styles.lookupHelp}>
           Search name, username or phone number, then send a message request.
-          Chats stay on this device until you connect cloud sync.
+          Only real Supabase profiles appear here.
         </Text>
         <View style={styles.searchBox}>
           <Search color="#728096" size={18} />
@@ -1760,6 +2064,38 @@ const styles = StyleSheet.create({
   },
   summaryPrimary: { color: "#101828", fontSize: 16, fontWeight: "800" },
   summarySecondary: { color: "#667085", fontSize: 15, fontWeight: "500" },
+  filterRow: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  filterChip: {
+    minHeight: 32,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f2f4f7",
+  },
+  filterChipActive: { backgroundColor: "#e7f8ee" },
+  filterChipText: { color: "#667085", fontSize: 12, fontWeight: "800" },
+  filterChipTextActive: { color: "#078f4a" },
+  refreshHint: {
+    color: "#667085",
+    fontSize: 12,
+    fontWeight: "700",
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  refreshError: {
+    color: "#b42318",
+    fontSize: 12,
+    fontWeight: "700",
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
   shareSelectionBanner: {
     marginHorizontal: 16,
     marginBottom: 12,
@@ -1873,6 +2209,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
+	  },
+  requestActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  rejectButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 14,
+    backgroundColor: "#fff1f0",
+    borderWidth: 1,
+    borderColor: "#ffccc7",
+    alignItems: "center",
+    justifyContent: "center",
   },
   requestCard: {
     minHeight: 86,
@@ -1927,6 +2278,14 @@ const styles = StyleSheet.create({
   },
   rowCopy: { flex: 1, minWidth: 0, justifyContent: "center", gap: 6 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  rowMeta: { flexDirection: "row", alignItems: "center", gap: 6 },
+  rowMore: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   rowBottom: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 24 },
   personName: { color: "#111111", fontSize: 18, fontWeight: "700" },
   time: { color: "#667085", fontSize: 13, fontWeight: "500" },
@@ -2296,6 +2655,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   actionText: { color: "#172235", fontSize: 16, fontWeight: "600" },
+  disabledAction: { opacity: 0.45 },
   callScreen: { flex: 1, backgroundColor: "#101916" },
   remoteVideo: {
     flex: 1,
