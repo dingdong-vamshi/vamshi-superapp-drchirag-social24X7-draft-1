@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import {
@@ -94,6 +94,13 @@ export default function BillSplitScreen() {
   const selectedSettlements = settlements.filter((settlement) => settlement.groupId === selectedGroup?.id);
   const selectedActivities = activities.filter((activity) => activity.groupId === selectedGroup?.id);
   const myInvitation = invitations.find((item) => item.inviteeId === activeUserId && item.status === "pending");
+
+  useEffect(() => {
+    if (!inviteOpen || inviteeId) return;
+    const firstConnection = connectionsQuery.data?.[0];
+    if (firstConnection) setInviteeId(firstConnection.id);
+  }, [connectionsQuery.data, inviteOpen, inviteeId]);
+
   const balanceMap = useMemo(
     () => calculateBillBalances({ expenses: selectedExpenses, shares: selectedShares, settlements: selectedSettlements }),
     [selectedExpenses, selectedShares, selectedSettlements],
