@@ -12,12 +12,11 @@ import {
 } from "react-native";
 import {
   ArrowLeft,
-  Bookmark,
   Camera,
   Grid3X3,
   Play,
+  Repeat2,
   Share2,
-  Tag,
   Star,
 } from "lucide-react-native";
 import { router } from "expo-router";
@@ -39,7 +38,7 @@ type Props = {
   supabaseClient?: SupabaseClient | null;
 };
 
-type TabKey = "posts" | "reels" | "reviews" | "tagged" | "saved";
+type TabKey = "posts" | "reels" | "reviews" | "reposts";
 
 type ProfileViewModel = {
   id: string;
@@ -181,26 +180,20 @@ export function SocialProfileScreen({
     () => posts.filter((post) => post.mediaType === "video"),
     [posts],
   );
-  const tagged = useMemo(
+  const reposts = useMemo(
     () =>
       posts.filter((post) =>
-        post.caption.toLocaleLowerCase().includes(`@${profile?.handle?.toLocaleLowerCase() || ""}`),
+        post.caption.toLocaleLowerCase().includes("repost"),
       ),
-    [posts, profile?.handle],
-  );
-  const saved = useMemo(
-    () => (isOwnProfile ? posts.filter((post) => post.likedByViewer) : []),
-    [isOwnProfile, posts],
+    [posts],
   );
   const visibleItems = tab === "posts"
     ? posts
     : tab === "reels"
       ? reels
-      : tab === "tagged"
-        ? tagged
-        : tab === "saved"
-          ? saved
-          : [];
+      : tab === "reposts"
+        ? reposts
+        : [];
 
   if (loading) {
     return (
@@ -302,10 +295,7 @@ export function SocialProfileScreen({
           <ProfileTab icon={Grid3X3} label="Posts" active={tab === "posts"} onPress={() => setTab("posts")} />
           <ProfileTab icon={Play} label="Reels" active={tab === "reels"} onPress={() => setTab("reels")} />
           <ProfileTab icon={Star} label="Reviews" active={tab === "reviews"} onPress={() => setTab("reviews")} />
-          <ProfileTab icon={Tag} label="Tagged" active={tab === "tagged"} onPress={() => setTab("tagged")} />
-          {isOwnProfile ? (
-            <ProfileTab icon={Bookmark} label="Saved" active={tab === "saved"} onPress={() => setTab("saved")} />
-          ) : null}
+          <ProfileTab icon={Repeat2} label="Reposts" active={tab === "reposts"} onPress={() => setTab("reposts")} />
         </View>
 
         {tab === "reviews" ? (
@@ -364,10 +354,8 @@ export function SocialProfileScreen({
             title={
               tab === "reels"
                 ? "No reels yet"
-                : tab === "tagged"
-                  ? "No tagged posts yet"
-                  : tab === "saved"
-                    ? "No saved posts yet"
+                : tab === "reposts"
+                  ? "No reposts yet"
                     : "No posts yet"
             }
             body="This section will fill in automatically as content is created and connected."
@@ -509,10 +497,10 @@ const styles = StyleSheet.create({
   highlightEmpty: { backgroundColor: "#f7f8fa", alignItems: "center", justifyContent: "center" },
   highlightPlus: { fontSize: 34, color: "#98a2b3" },
   highlightLabel: { fontSize: 13, fontWeight: "600", color: ink },
-  tabBar: { flexDirection: "row", flexWrap: "wrap", gap: 8, backgroundColor: "#f2f4f7", borderRadius: 18, padding: 6 },
-  tab: { minWidth: 92, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, height: 46, borderRadius: 14, paddingHorizontal: 12 },
+  tabBar: { flexDirection: "row", gap: 6, backgroundColor: "#f2f4f7", borderRadius: 18, padding: 6 },
+  tab: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 46, borderRadius: 14, paddingHorizontal: 6 },
   tabActive: { backgroundColor: "#ffffff" },
-  tabLabel: { fontSize: 16, fontWeight: "700", color: ink },
+  tabLabel: { fontSize: 14, fontWeight: "700", color: ink },
   reviewList: { gap: 14 },
   reviewCard: { borderRadius: 22, borderWidth: 1, borderColor: "#eaecf0", backgroundColor: "#ffffff", padding: 18, gap: 14 },
   reviewHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
