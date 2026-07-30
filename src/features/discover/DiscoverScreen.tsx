@@ -4,6 +4,7 @@ import {
   CircleHelp,
   Gamepad2,
   HeartHandshake,
+  Headphones,
   MessageCircle,
   NotebookPen,
   PiggyBank,
@@ -11,7 +12,6 @@ import {
   ShoppingBag,
   Shuffle,
   SplitSquareVertical,
-  Store,
   UserPlus,
   UtensilsCrossed,
   type LucideIcon,
@@ -49,7 +49,8 @@ const sections: DiscoverSection[] = [
     items: [
       { label: "Food", icon: UtensilsCrossed, color: "#f97316", background: "#fff1e8", action: () => router.push("/food") },
       { label: "Notes", icon: NotebookPen, color: "#d97706", background: "#fff8dc", action: () => router.push("/notes-tasks") },
-      { label: "Nearby\nPeople", icon: UserPlus, color: "#2563eb", background: "#ecf3ff", action: () => comingSoon("Nearby People") },
+      { label: "Nearby\nPeople", icon: UserPlus, color: "#2563eb", background: "#ecf3ff", action: () => router.push("/nearby-people") },
+      { label: "Support", icon: Headphones, color: "#4f46e5", background: "#eef2ff", action: () => router.push("/support-feedback") },
     ],
   },
   {
@@ -58,14 +59,13 @@ const sections: DiscoverSection[] = [
       { label: "Shopping", icon: ShoppingBag, color: "#9333ea", background: "#f5ebff", action: () => router.push("/shop") },
       { label: "Missing\nPerson", icon: Search, color: "#ef4444", background: "#fdecec", action: () => router.push("/missing-persons") },
       { label: "Charity", icon: HeartHandshake, color: "#ec4899", background: "#ffeef6", action: () => router.push("/charity") },
-      { label: "Anonymous\nChat", icon: MessageCircle, color: "#16a34a", background: "#ebfaef", action: () => comingSoon("Anonymous Chat") },
+      { label: "Anonymous\nChat", icon: MessageCircle, color: "#16a34a", background: "#ebfaef", action: () => router.push("/anonymous-chat") },
     ],
   },
   {
     title: "Entertainment",
     items: [
       { label: "Games", icon: Gamepad2, color: "#2563eb", background: "#eaf1ff", action: () => comingSoon("Games") },
-      { label: "Search\nSeller", icon: Store, color: "#16a34a", background: "#ebfaef", action: () => router.push("/business-directory") },
       { label: "Ladder\nShuffle", icon: Shuffle, color: "#f97316", background: "#fff1e8", action: () => comingSoon("Ladder Shuffle") },
     ],
   },
