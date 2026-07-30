@@ -121,6 +121,13 @@ export default function ChitFundScreen() {
     (member) => member.userId === (user && "id" in user ? user.id : ""),
   );
   const details = groupDetailsQuery.data;
+
+  useEffect(() => {
+    if (!inviteOpen || inviteeId) return;
+    const firstConnection = connectionsQuery.data?.[0];
+    if (firstConnection) setInviteeId(firstConnection.id);
+  }, [connectionsQuery.data, inviteOpen, inviteeId]);
+
   const totals = useMemo(
     () =>
       calculateChitTotals({
