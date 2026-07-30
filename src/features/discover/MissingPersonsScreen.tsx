@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import { Alert, Linking, Modal, Pressable, SafeAreaView, ScrollView, Share, StyleSheet, Text, TextInput, View } from "react-native";
-import { ArrowLeft, ChevronDown, Phone, Plus, Search, ShieldAlert, UserRound } from "lucide-react-native";
+import { Alert, Image, Linking, Modal, Pressable, SafeAreaView, ScrollView, Share, StyleSheet, Text, TextInput, View } from "react-native";
+import { ArrowLeft, Camera, Check, ChevronDown, Phone, Plus, Search, ShieldAlert, UserRound } from "lucide-react-native";
 
 import { useAuth } from "../../lib/AuthContext";
 import {
@@ -21,6 +22,11 @@ const blankReport = {
   description: "",
   reporterContact: "",
   status: "missing" as "missing" | "found",
+  urgent: false,
+  rewardInput: "",
+  rewardTerms: "",
+  photoUri: "",
+  consentConfirmed: false,
 };
 
 export default function MissingPersonsScreen() {
@@ -37,7 +43,7 @@ export default function MissingPersonsScreen() {
   const reportsQuery = useQuery({
     queryKey: ["missing-person-reports", user && "id" in user ? user.id : "guest"],
     queryFn: () => listMissingReports(user),
-    enabled: initialized,
+    enabled: initialized && Boolean(user && "id" in user),
   });
 
   const reports = reportsQuery.data ?? [];
@@ -69,6 +75,22 @@ export default function MissingPersonsScreen() {
     },
     onError: (error) => Alert.alert("Could not create report", error instanceof Error ? error.message : "Please try again."),
   });
+
+  const pickPhoto = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Photo permission needed", "Allow photo access to attach a missing-person image.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.75,
+    });
+    if (!result.canceled) {
+      setForm((current) => ({ ...current, photoUri: result.assets[0]?.uri ?? "" }));
+    }
+  };
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "missing" | "found" }) => updateMissingStatus(user, id, status),
     onSuccess: invalidate,
@@ -101,8 +123,9 @@ export default function MissingPersonsScreen() {
         </View>
         <Text style={styles.count}>{filtered.length} results found</Text>
 
-        {reportsQuery.isLoading ? <Centered title="Loading reports" text="Fetching real missing-person reports..." /> : null}
-        {!reportsQuery.isLoading && filtered.length === 0 ? (
+        {!user || !("id" in user) ? <Centered title="Sign in required" text="Use a real Supabase test user to view and create verified reports." /> : null}
+        {user && "id" in user && reportsQuery.isLoading ? <Centered title="Loading reports" text="Fetching real missing-person reports..." /> : null}
+        {user && "id" in user && !reportsQuery.isLoading && filtered.length === 0 ? (
           <Centered title="No reports yet" text="Create the first verified report. Nothing here is seeded from Figma." />
         ) : (
           filtered.map((report) => (
@@ -125,13 +148,27 @@ export default function MissingPersonsScreen() {
         disabled={createMutation.isPending}
       >
         <Text style={styles.helpText}>Only submit accurate, consent-backed information. Reporter contact is used for contact routing and is not shown on cards.</Text>
+        <Pressable onPress={pickPhoto} style={styles.photoPicker}>
+          {form.photoUri ? <Image source={{ uri: form.photoUri }} style={styles.photoPreview} /> : <Camera color="#667085" size={28} />}
+          <Text style={styles.photoText}>{form.photoUri ? "Change photo" : "Add photo"}</Text>
+        </Pressable>
         <Field label="Person's name" value={form.personName} onChangeText={(personName) => setForm((current) => ({ ...current, personName }))} />
         <Field label="Age or range" value={form.ageText} onChangeText={(ageText) => setForm((current) => ({ ...current, ageText }))} />
         <Field label="Last-seen city" value={form.lastSeenCity} onChangeText={(lastSeenCity) => setForm((current) => ({ ...current, lastSeenCity }))} />
         <Field label="Last-seen location" value={form.lastSeenLocation} onChangeText={(lastSeenLocation) => setForm((current) => ({ ...current, lastSeenLocation }))} />
-        <Field label="Last-seen date" value={form.lastSeenDate} onChangeText={(lastSeenDate) => setForm((current) => ({ ...current, lastSeenDate }))} />
+        <Field label="Last-seen date (YYYY-MM-DD)" value={form.lastSeenDate} onChangeText={(lastSeenDate) => setForm((current) => ({ ...current, lastSeenDate }))} />
+        <Field label="Reward amount (optional)" value={form.rewardInput} onChangeText={(rewardInput) => setForm((current) => ({ ...current, rewardInput }))} />
+        <Field label="Reward terms (optional)" value={form.rewardTerms} onChangeText={(rewardTerms) => setForm((current) => ({ ...current, rewardTerms }))} multiline />
         <Field label="Reporter contact" value={form.reporterContact} onChangeText={(reporterContact) => setForm((current) => ({ ...current, reporterContact }))} />
         <Field label="Description" value={form.description} onChangeText={(description) => setForm((current) => ({ ...current, description }))} multiline />
+        <Pressable onPress={() => setForm((current) => ({ ...current, urgent: !current.urgent }))} style={styles.checkRow}>
+          <View style={[styles.checkBox, form.urgent && styles.checked]}>{form.urgent ? <Check color="#fff" size={16} /> : null}</View>
+          <Text style={styles.helpText}>Mark this as urgent</Text>
+        </Pressable>
+        <Pressable onPress={() => setForm((current) => ({ ...current, consentConfirmed: !current.consentConfirmed }))} style={styles.checkRow}>
+          <View style={[styles.checkBox, form.consentConfirmed && styles.checked]}>{form.consentConfirmed ? <Check color="#fff" size={16} /> : null}</View>
+          <Text style={styles.helpText}>I confirm this is accurate and I have consent/guardian authority to report.</Text>
+        </Pressable>
       </FormModal>
     </SafeAreaView>
   );
@@ -140,7 +177,14 @@ export default function MissingPersonsScreen() {
 function ReportCard({ report, owned, onMarkFound }: { report: MissingPersonReport; owned: boolean; onMarkFound: () => void }) {
   const shareReport = async () => {
     await Share.share({
-      message: `${report.personName} is marked ${report.status} on Social 24x7. Last seen: ${report.lastSeenLocation || report.lastSeenCity || "not specified"}.`,
+      message: [
+        `${report.personName} is marked ${report.status} on Social 24x7.`,
+        `Age: ${report.ageText || "Not shared"}.`,
+        `Last seen: ${report.lastSeenLocation || report.lastSeenCity || "not specified"}.`,
+        report.urgent ? "Urgent report." : "",
+        report.rewardMinor > 0n ? `Reward: ₹${Number(report.rewardMinor) / 100}.` : "",
+        `Report ID: ${report.id}`,
+      ].filter(Boolean).join(" "),
     });
   };
   const contact = async () => {
@@ -148,15 +192,17 @@ function ReportCard({ report, owned, onMarkFound }: { report: MissingPersonRepor
   };
   return (
     <View style={styles.card}>
-      <View style={styles.avatar}><UserRound color="#9ca3af" size={36} /></View>
+      <View style={styles.avatar}>{report.photoUrl ? <Image source={{ uri: report.photoUrl }} style={styles.cardImage} /> : <UserRound color="#9ca3af" size={36} />}</View>
       <View style={{ flex: 1 }}>
         <View style={styles.cardHead}>
           <Text style={styles.cardTitle}>{report.personName}</Text>
           <Text style={[styles.status, report.status === "found" && styles.found]}>{report.status === "found" ? "Found" : "Missing"}</Text>
         </View>
+        {report.urgent ? <Text style={styles.urgent}>Urgent</Text> : null}
         <Text style={styles.meta}>Age: {report.ageText || "Not shared"}</Text>
         <Text numberOfLines={1} style={styles.meta}>Last seen: {report.lastSeenLocation || report.lastSeenCity || "Not shared"}</Text>
         <Text style={styles.meta}>Reported: {report.lastSeenDate ?? report.createdAt.slice(0, 10)}</Text>
+        {report.rewardMinor > 0n ? <Text style={styles.reward}>Reward: ₹{(Number(report.rewardMinor) / 100).toLocaleString("en-IN")}</Text> : null}
         <Text numberOfLines={2} style={styles.meta}>{report.description || "No description added."}</Text>
         <View style={styles.actions}>
           <Pressable onPress={contact} style={styles.darkButton}><Phone color="#ffffff" size={17} /><Text style={styles.darkButtonText}>Contact</Text></Pressable>
@@ -217,10 +263,13 @@ const styles = StyleSheet.create({
   count: { marginHorizontal: 14, color: "#475467", fontSize: 16 },
   card: { marginHorizontal: 14, borderRadius: 18, borderWidth: 1, borderColor: "#e1e5eb", backgroundColor: "#ffffff", padding: 14, flexDirection: "row", gap: 14 },
   avatar: { width: 88, height: 88, borderRadius: 14, backgroundColor: "#eef0f4", alignItems: "center", justifyContent: "center" },
+  cardImage: { width: 88, height: 88, borderRadius: 14 },
   cardHead: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
   cardTitle: { flex: 1, color: "#111827", fontSize: 18, fontWeight: "800" },
   status: { color: "#b91c1c", backgroundColor: "#fee2e2", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 12, fontWeight: "900" },
   found: { color: "#15803d", backgroundColor: "#dcfce7" },
+  urgent: { color: "#b45309", fontWeight: "900", marginTop: 2 },
+  reward: { color: "#047857", fontSize: 14, lineHeight: 21, marginTop: 4, fontWeight: "800" },
   meta: { color: "#667085", fontSize: 14, lineHeight: 21, marginTop: 4 },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 },
   darkButton: { minHeight: 44, borderRadius: 12, backgroundColor: "#05051a", paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
@@ -234,8 +283,14 @@ const styles = StyleSheet.create({
   close: { color: "#667085", fontSize: 16, fontWeight: "700" },
   fieldLabel: { color: "#111827", fontSize: 14, fontWeight: "800" },
   helpText: { color: "#667085", fontSize: 14, lineHeight: 20 },
+  photoPicker: { minHeight: 92, borderRadius: 16, borderWidth: 1, borderStyle: "dashed", borderColor: "#cbd5e1", backgroundColor: "#f8fafc", alignItems: "center", justifyContent: "center", gap: 8 },
+  photoPreview: { width: 84, height: 84, borderRadius: 14 },
+  photoText: { color: "#475467", fontSize: 14, fontWeight: "800" },
   input: { minHeight: 56, borderRadius: 16, backgroundColor: "#f3f4f6", paddingHorizontal: 14, color: "#111827", fontSize: 16 },
   multiline: { minHeight: 120, paddingTop: 14 },
+  checkRow: { flexDirection: "row", gap: 12, alignItems: "center" },
+  checkBox: { width: 24, height: 24, borderRadius: 8, borderWidth: 1, borderColor: "#cbd5e1", alignItems: "center", justifyContent: "center" },
+  checked: { backgroundColor: "#16a34a", borderColor: "#16a34a" },
   fullButton: { marginTop: 6 },
   disabled: { opacity: 0.55 },
 });
