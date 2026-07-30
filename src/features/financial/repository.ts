@@ -487,36 +487,19 @@ export async function createChitGroup(
   const startDate = requireValidDate(input.startDate, "Start date");
   const memberLimit = requirePositiveInteger(input.memberLimit, "Member limit");
   const { data, error } = await supabase!
-    .from("chit_groups")
-    .insert({
-      created_by: access.userId,
-      manager_id: access.userId,
-      name,
-      description: input.description.trim(),
-      duration_cycles: durationCycles,
-      contribution_frequency: input.contributionFrequency,
-      contribution_amount_minor: contributionAmountMinor.toString(),
-      interest_bps: interestBps,
-      start_date: startDate,
-      member_limit: memberLimit,
-      status: input.status,
-    })
-    .select("*")
-    .single();
+    .rpc("create_chit_group_atomic", {
+      p_name: name,
+      p_description: input.description.trim(),
+      p_duration_cycles: durationCycles,
+      p_contribution_frequency: input.contributionFrequency,
+      p_contribution_amount_minor: contributionAmountMinor.toString(),
+      p_interest_bps: interestBps,
+      p_start_date: startDate,
+      p_member_limit: memberLimit,
+      p_status: input.status,
+    });
   await ensureNoError(error);
-  const group = mapChitGroup(data);
-  const { error: memberError } = await supabase!.from("chit_group_members").insert({
-    group_id: group.id,
-    user_id: access.userId,
-    role: "manager",
-    contribution_status: "pending",
-  });
-  await ensureNoError(memberError);
-  await addChitActivity(group.id, access.userId, {
-    activityType: "group_created",
-    detail: "Created the chit fund group.",
-  });
-  return group;
+  return mapChitGroup(data);
 }
 
 export async function inviteToChitGroup(
@@ -525,20 +508,11 @@ export async function inviteToChitGroup(
   proposedRole: "accountant" | "member",
 ) {
   const { data, error } = await supabase!
-    .from("chit_group_invitations")
-    .upsert(
-      {
-        group_id: groupId,
-        invitee_id: inviteeId,
-        invited_by: (await supabase!.auth.getUser()).data.user?.id,
-        proposed_role: proposedRole,
-        status: "pending",
-        responded_at: null,
-      },
-      { onConflict: "group_id,invitee_id" },
-    )
-    .select("*")
-    .single();
+    .rpc("add_chit_group_member_atomic", {
+      p_group_id: groupId,
+      p_invitee_id: inviteeId,
+      p_role: proposedRole,
+    });
   await ensureNoError(error);
   return mapChitInvitation(data);
 }
@@ -852,46 +826,22 @@ export async function createBillGroup(
   const name = requireTrimmed(input.name, "Group name");
   const category = input.category.trim() || "General";
   const { data, error } = await supabase!
-    .from("bill_split_groups")
-    .insert({
-      owner_id: access.userId,
-      name,
-      description: input.description.trim(),
-      category,
-      avatar_label: initialsFor(name).slice(0, 2),
-    })
-    .select("*")
-    .single();
+    .rpc("create_bill_split_group_atomic", {
+      p_name: name,
+      p_description: input.description.trim(),
+      p_category: category,
+      p_avatar_label: initialsFor(name).slice(0, 2),
+    });
   await ensureNoError(error);
-  const group = mapBillGroup(data);
-  const { error: memberError } = await supabase!.from("bill_split_members").insert({
-    group_id: group.id,
-    user_id: access.userId,
-  });
-  await ensureNoError(memberError);
-  await addBillActivity(group.id, access.userId, {
-    activityType: "group_created",
-    detail: "Created the bill split group.",
-  });
-  return group;
+  return mapBillGroup(data);
 }
 
 export async function inviteToBillGroup(groupId: string, inviteeId: string) {
-  const actorId = (await supabase!.auth.getUser()).data.user?.id;
   const { data, error } = await supabase!
-    .from("bill_split_invitations")
-    .upsert(
-      {
-        group_id: groupId,
-        invitee_id: inviteeId,
-        invited_by: actorId,
-        status: "pending",
-        responded_at: null,
-      },
-      { onConflict: "group_id,invitee_id" },
-    )
-    .select("*")
-    .single();
+    .rpc("add_bill_split_member_atomic", {
+      p_group_id: groupId,
+      p_invitee_id: inviteeId,
+    });
   await ensureNoError(error);
   return mapBillInvitation(data);
 }
@@ -929,36 +879,25 @@ export async function addBillExpense(input: {
   shares: Array<{ participantUserId: string; shareInput: string }>;
 }) {
   const actorId = (await supabase!.auth.getUser()).data.user?.id;
-  const { data, error } = await supabase!
-    .from("bill_split_expenses")
-    .insert({
-      group_id: input.groupId,
-      created_by: actorId,
-      paid_by_user_id: input.paidByUserId,
-      title: input.title.trim(),
-      total_minor: toMinorUnits(input.totalInput).toString(),
-      expense_date: input.expenseDate,
-      category: input.category.trim() || "Other",
-      notes: input.notes.trim(),
-      split_type: input.splitType,
-    })
-    .select("*")
-    .single();
-  await ensureNoError(error);
-  const participantsPayload = input.shares.map((share) => ({
-    expense_id: data.id,
+  if (!actorId) throw new Error("You need to sign in first.");
+  const totalMinor = toMinorUnits(input.totalInput);
+  const sharesPayload = input.shares.map((share) => ({
     participant_user_id: share.participantUserId,
     share_minor: toMinorUnits(share.shareInput).toString(),
   }));
-  const { error: shareError } = await supabase!
-    .from("bill_split_expense_participants")
-    .insert(participantsPayload);
-  await ensureNoError(shareError);
-  await addBillActivity(input.groupId, actorId ?? null, {
-    activityType: "expense_created",
-    detail: input.title.trim(),
-    amountMinor: toMinorUnits(input.totalInput),
-  });
+  const { data, error } = await supabase!
+    .rpc("add_bill_split_expense_atomic", {
+      p_group_id: input.groupId,
+      p_title: input.title.trim(),
+      p_total_minor: totalMinor.toString(),
+      p_paid_by_user_id: input.paidByUserId,
+      p_expense_date: input.expenseDate,
+      p_category: input.category.trim() || "Other",
+      p_notes: input.notes.trim(),
+      p_split_type: input.splitType,
+      p_shares: sharesPayload,
+    });
+  await ensureNoError(error);
   return mapBillExpense(data);
 }
 
