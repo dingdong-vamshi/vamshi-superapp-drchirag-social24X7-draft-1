@@ -58,3 +58,13 @@ Expected behavior:
 - Button disables while the acceptance request is saving.
 - A repeated click should not create duplicate rows.
 - After acceptance, both users can open the same conversation thread.
+
+## Realtime expectation
+
+Cross-browser testing depends on the same Supabase project and confirmed users.
+
+When user A sends to user B:
+
+- User A should see the outgoing bubble immediately.
+- User B should see the incoming bubble after realtime delivery or a refresh.
+- If realtime is delayed, refreshing `/chats` and reopening the thread should still show the saved message.
