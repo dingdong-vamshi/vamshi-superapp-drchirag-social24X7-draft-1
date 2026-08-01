@@ -26,3 +26,14 @@ Expected behavior:
 - Selecting an emoji closes the picker after the save finishes.
 - The selected reaction remains visible after leaving and reopening the chat.
 - Retapping the same emoji removes the reaction.
+
+## Web nested button check
+
+React Native Web was warning that a button cannot contain another button. The chat retry pass keeps outer rows pressable while moving inner actions into sibling press targets.
+
+Areas covered:
+
+- Conversation rows and their menu buttons
+- Chat message bubbles and reaction controls
+- Sticker picker rows
+- Bottom-sheet dismiss overlays
