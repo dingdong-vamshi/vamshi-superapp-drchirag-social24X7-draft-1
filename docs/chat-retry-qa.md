@@ -48,3 +48,13 @@ Manual check:
 2. Type a short message.
 3. Confirm the paper-plane button becomes active.
 4. Send the message and confirm the composer clears after the row appears.
+
+## Request acceptance path
+
+For pending message requests, accept should be treated as a single in-flight action.
+
+Expected behavior:
+
+- Button disables while the acceptance request is saving.
+- A repeated click should not create duplicate rows.
+- After acceptance, both users can open the same conversation thread.
