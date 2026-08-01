@@ -53,6 +53,7 @@ import {
   type ChatDataSource,
   type ChatMessage,
   type Conversation,
+  type MessageReaction,
   type SharedPost,
 } from "./types";
 
@@ -766,9 +767,9 @@ function ConversationView({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null);
-  const [messageReactions, setMessageReactions] = useState<
-    Record<string, string>
-  >({});
+  const [reactionPendingId, setReactionPendingId] = useState<string | null>(
+    null,
+  );
   const list = useRef<FlatList<ChatMessage>>(null);
   const send = async () => {
     if (conversation.requestStatus && conversation.requestStatus !== "accepted")
@@ -844,13 +845,36 @@ function ConversationView({
     setDraft(`↪ “${quote}”\n`);
     setActionMessage(null);
   };
-  const reactToMessage = (emoji: string) => {
-    if (!actionMessage) return;
-    setMessageReactions((current) => ({
-      ...current,
-      [actionMessage.id]: emoji,
-    }));
-    setActionMessage(null);
+  const hasDraft = Boolean(draft.trim());
+  const composerLocked = Boolean(
+    conversation.requestStatus && conversation.requestStatus !== "accepted",
+  );
+  const sendDisabled = sending || composerLocked || !hasDraft;
+  const visibleActionMessage = actionMessage
+    ? messages.find((message) => message.id === actionMessage.id) ??
+      actionMessage
+    : null;
+  const reactToMessage = async (emoji: string) => {
+    const targetMessage = visibleActionMessage;
+    if (!targetMessage || reactionPendingId) return;
+    const currentReaction = targetMessage.reactions?.find(
+      (reaction) => reaction.reactedByCurrentUser,
+    );
+    const nextReaction = currentReaction?.emoji === emoji ? null : emoji;
+    setReactionPendingId(targetMessage.id);
+    try {
+      await dataSource.setMessageReaction(targetMessage.id, nextReaction);
+      setActionMessage(null);
+    } catch (cause) {
+      Alert.alert(
+        "Reaction not saved",
+        cause instanceof Error
+          ? cause.message
+          : "Please check your connection and try again.",
+      );
+    } finally {
+      setReactionPendingId(null);
+    }
   };
   const startCall = async (kind: CallKind) => {
     if (conversation.requestStatus && conversation.requestStatus !== "accepted") {
@@ -882,11 +906,6 @@ function ConversationView({
       Alert.alert("Could not accept", "Please try again.");
     }
   };
-  const hasDraft = Boolean(draft.trim());
-  const composerLocked = Boolean(
-    conversation.requestStatus && conversation.requestStatus !== "accepted",
-  );
-  const sendDisabled = sending || composerLocked || !hasDraft;
   useEffect(() => {
     list.current?.scrollToEnd({ animated: true });
   }, [messages.length]);
@@ -1002,7 +1021,9 @@ function ConversationView({
               <MessageBubble
                 message={item}
                 onLongPress={() => setActionMessage(item)}
-                reaction={messageReactions[item.id]}
+                onReactPress={() => setActionMessage(item)}
+                reactionPending={reactionPendingId === item.id}
+                reactions={item.reactions ?? []}
               />
             )}
             onContentSizeChange={() =>
@@ -1105,11 +1126,12 @@ function ConversationView({
           select={(sticker) => void sendSticker(sticker)}
         />
         <MessageActions
-          message={actionMessage}
+          message={visibleActionMessage}
+          reacting={Boolean(reactionPendingId)}
           close={() => setActionMessage(null)}
           copy={() => void copyMessage()}
           reply={replyToMessage}
-          react={reactToMessage}
+          react={(emoji) => void reactToMessage(emoji)}
         />
         <CallOverlay
           session={callSession}
@@ -1133,72 +1155,72 @@ function ConversationRow({
   onMore: () => void;
 }) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open conversation with ${item.participant.name}${item.unreadCount ? `, ${item.unreadCount} unread messages` : ""}`}
-      onPress={onPress}
-      style={styles.row}
-    >
-      <Avatar
-        label={item.participant.avatarLabel}
-        online={item.participant.isOnline}
-      />
-	      <View style={styles.rowCopy}>
-	        <View style={styles.rowTop}>
-	          <Text style={styles.personName}>{item.participant.name}</Text>
-	          <View style={styles.rowMeta}>
-	            <Text style={styles.time}>{formatTime(item.updatedAt)}</Text>
-	            <Pressable
-	              accessibilityRole="button"
-	              accessibilityLabel={`More actions for ${item.participant.name}`}
-	              disabled={busy}
-	              onPress={(event) => {
-	                event.stopPropagation();
-	                onMore();
-	              }}
-	              hitSlop={10}
-	              style={styles.rowMore}
-	            >
-	              {busy ? (
-	                <ActivityIndicator color="#667085" size="small" />
-	              ) : (
-	                <Ellipsis color="#667085" size={18} />
-	              )}
-	            </Pressable>
-	          </View>
-	        </View>
-        <View style={styles.rowBottom}>
-          <Text
-            numberOfLines={1}
-            style={[
-              styles.preview,
-              item.unreadCount > 0 && styles.previewUnread,
-            ]}
-          >
-            {preview(item)}
-          </Text>
-          {item.requestStatus && item.requestStatus !== "accepted" && (
-            <View style={styles.requestPill}>
-              <Bell color="#078f4a" size={11} />
-              <Text style={styles.requestPillText}>
-                {item.requestStatus === "pending_outgoing"
-                  ? "Request sent"
-                  : "New request"}
-              </Text>
+    <View style={styles.row}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open conversation with ${item.participant.name}${item.unreadCount ? `, ${item.unreadCount} unread messages` : ""}`}
+        onPress={onPress}
+        style={styles.rowMain}
+      >
+        <Avatar
+          label={item.participant.avatarLabel}
+          online={item.participant.isOnline}
+        />
+        <View style={styles.rowCopy}>
+          <View style={styles.rowTop}>
+            <Text style={styles.personName}>{item.participant.name}</Text>
+            <View style={styles.rowMeta}>
+              <Text style={styles.time}>{formatTime(item.updatedAt)}</Text>
             </View>
-          )}
-          {item.unreadCount > 0 && (
-            <View
-              accessible
-              accessibilityLabel={`${item.unreadCount} unread messages`}
-              style={styles.badge}
+          </View>
+          <View style={styles.rowBottom}>
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.preview,
+                item.unreadCount > 0 && styles.previewUnread,
+              ]}
             >
-              <Text style={styles.badgeText}>{item.unreadCount}</Text>
-            </View>
-          )}
+              {preview(item)}
+            </Text>
+            {item.requestStatus && item.requestStatus !== "accepted" && (
+              <View style={styles.requestPill}>
+                <Bell color="#078f4a" size={11} />
+                <Text style={styles.requestPillText}>
+                  {item.requestStatus === "pending_outgoing"
+                    ? "Request sent"
+                    : "New request"}
+                </Text>
+              </View>
+            )}
+            {item.unreadCount > 0 && (
+              <View
+                accessible
+                accessibilityLabel={`${item.unreadCount} unread messages`}
+                style={styles.badge}
+              >
+                <Text style={styles.badgeText}>{item.unreadCount}</Text>
+              </View>
+            )}
+          </View>
         </View>
-      </View>
-    </Pressable>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`More actions for ${item.participant.name}`}
+        disabled={busy}
+        accessibilityState={{ disabled: busy }}
+        onPress={onMore}
+        hitSlop={10}
+        style={styles.rowMore}
+      >
+        {busy ? (
+          <ActivityIndicator color="#667085" size="small" />
+        ) : (
+          <Ellipsis color="#667085" size={18} />
+        )}
+      </Pressable>
+    </View>
   );
 }
 
@@ -1247,57 +1269,134 @@ function Avatar({ label, online }: { label: string; online?: boolean }) {
 function MessageBubble({
   message,
   onLongPress,
-  reaction,
+  onReactPress,
+  reactionPending,
+  reactions,
 }: {
   message: ChatMessage;
   onLongPress: () => void;
-  reaction?: string;
+  onReactPress: () => void;
+  reactionPending: boolean;
+  reactions: MessageReaction[];
 }) {
   const mine = message.senderId === CURRENT_USER_ID;
+  const webLongPressProps =
+    Platform.OS === "web"
+      ? {
+          onContextMenu: (event: { preventDefault?: () => void }) => {
+            event.preventDefault?.();
+            onLongPress();
+          },
+        }
+      : {};
   return (
     <View style={[styles.messageWrap, mine && styles.mineWrap]}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${mine ? "Your" : "Received"} message. Long press for actions.`}
-        onLongPress={onLongPress}
-        delayLongPress={350}
-        style={[
-          styles.message,
-          message.type === "sticker" && styles.stickerMessage,
-          mine ? styles.mine : styles.theirs,
-          message.type === "sticker" && styles.transparentMessage,
-        ]}
-      >
-        {message.type === "shared_post" && message.post && (
-          <View style={[styles.sharedPost, mine && styles.sharedPostMine]}>
-            <Text style={[styles.sharedBy, mine && styles.mineText]}>
-              Shared post · @{message.post.author}
-            </Text>
-            <Text
-              style={[styles.sharedCaption, mine && styles.mineText]}
-              numberOfLines={3}
-            >
-              {message.post.caption}
-            </Text>
-          </View>
-        )}
-        <Text
+      <View style={[styles.messagePressRow, mine && styles.messagePressRowMine]}>
+        {!mine ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="React to received message"
+            disabled={reactionPending}
+            accessibilityState={{ disabled: reactionPending }}
+            onPress={onReactPress}
+            hitSlop={8}
+            style={[
+              styles.messageReactionTrigger,
+              styles.messageReactionTriggerTheirs,
+              reactionPending && styles.messageReactionTriggerDisabled,
+            ]}
+          >
+            {reactionPending ? (
+              <ActivityIndicator color="#07c160" size="small" />
+            ) : (
+              <>
+                <Text style={styles.messageReactionEmoji}>😊</Text>
+                <Text style={styles.messageReactionPlus}>+</Text>
+              </>
+            )}
+          </Pressable>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${mine ? "Your" : "Received"} message. Long press for actions.`}
+          onLongPress={onLongPress}
+          delayLongPress={350}
+          {...webLongPressProps}
           style={[
-            styles.messageText,
-            message.type === "sticker" && styles.stickerText,
-            mine && styles.mineText,
+            styles.message,
+            message.type === "sticker" && styles.stickerMessage,
+            mine ? styles.mine : styles.theirs,
+            message.type === "sticker" && styles.transparentMessage,
           ]}
         >
-          {message.text}
-        </Text>
-        <Text style={[styles.messageTime, mine && styles.mineTime]}>
-          {formatTime(message.createdAt)}
-          {mine && message.status === "read" ? " · Read" : ""}
-        </Text>
-      </Pressable>
-      {reaction ? (
-        <View style={[styles.reactionPill, mine && styles.reactionPillMine]}>
-          <Text style={styles.reactionPillText}>{reaction}</Text>
+          {message.type === "shared_post" && message.post && (
+            <View style={[styles.sharedPost, mine && styles.sharedPostMine]}>
+              <Text style={[styles.sharedBy, mine && styles.mineText]}>
+                Shared post · @{message.post.author}
+              </Text>
+              <Text
+                style={[styles.sharedCaption, mine && styles.mineText]}
+                numberOfLines={3}
+              >
+                {message.post.caption}
+              </Text>
+            </View>
+          )}
+          <Text
+            style={[
+              styles.messageText,
+              message.type === "sticker" && styles.stickerText,
+              mine && styles.mineText,
+            ]}
+          >
+            {message.text}
+          </Text>
+          <Text style={[styles.messageTime, mine && styles.mineTime]}>
+            {formatTime(message.createdAt)}
+            {mine && message.status === "read" ? " · Read" : ""}
+          </Text>
+        </Pressable>
+        {mine ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="React to your message"
+            disabled={reactionPending}
+            accessibilityState={{ disabled: reactionPending }}
+            onPress={onReactPress}
+            hitSlop={8}
+            style={[
+              styles.messageReactionTrigger,
+              styles.messageReactionTriggerMine,
+              reactionPending && styles.messageReactionTriggerDisabled,
+            ]}
+          >
+            {reactionPending ? (
+              <ActivityIndicator color="#07c160" size="small" />
+            ) : (
+              <>
+                <Text style={styles.messageReactionEmoji}>😊</Text>
+                <Text style={styles.messageReactionPlus}>+</Text>
+              </>
+            )}
+          </Pressable>
+        ) : null}
+      </View>
+      {reactions.length > 0 ? (
+        <View style={[styles.reactionRow, mine && styles.reactionRowMine]}>
+          {reactions.map((reaction) => (
+            <View
+              key={reaction.emoji}
+              style={[
+                styles.reactionPill,
+                reaction.reactedByCurrentUser && styles.reactionPillActive,
+              ]}
+            >
+              <Text style={styles.reactionPillText}>
+                {reaction.emoji}
+                {reaction.count > 1 ? ` ${reaction.count}` : ""}
+              </Text>
+            </View>
+          ))}
         </View>
       ) : null}
     </View>
@@ -1320,8 +1419,14 @@ function StickerPicker({
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.sheetBackdrop} onPress={close}>
-        <Pressable style={styles.stickerSheet} onPress={(event) => event.stopPropagation()}>
+      <View style={styles.sheetBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close stickers"
+          onPress={close}
+          style={styles.sheetDismissArea}
+        />
+        <View style={styles.stickerSheet}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}>
             <View>
@@ -1345,8 +1450,8 @@ function StickerPicker({
               </Pressable>
             ))}
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -1357,25 +1462,49 @@ function MessageActions({
   copy,
   reply,
   react,
+  reacting,
 }: {
   message: ChatMessage | null;
   close: () => void;
   copy: () => void;
   reply: () => void;
   react: (emoji: string) => void;
+  reacting: boolean;
 }) {
+  const currentReaction = message?.reactions?.find(
+    (reaction) => reaction.reactedByCurrentUser,
+  )?.emoji;
   return (
     <Modal visible={Boolean(message)} transparent animationType="fade" onRequestClose={close}>
-      <Pressable style={styles.sheetBackdrop} onPress={close}>
-        <Pressable style={styles.actionSheet} onPress={(event) => event.stopPropagation()}>
+      <View style={styles.sheetBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close message actions"
+          onPress={close}
+          style={styles.sheetDismissArea}
+        />
+        <View style={styles.actionSheet}>
           <View style={styles.reactionTray}>
             {["❤️", "😂", "😮", "😢", "😡", "👍"].map((emoji) => (
               <Pressable
                 key={emoji}
                 accessibilityRole="button"
-                accessibilityLabel={`React with ${emoji}`}
+                accessibilityState={{
+                  disabled: reacting,
+                  selected: currentReaction === emoji,
+                }}
+                accessibilityLabel={
+                  currentReaction === emoji
+                    ? `Remove ${emoji} reaction`
+                    : `React with ${emoji}`
+                }
+                disabled={reacting}
                 onPress={() => react(emoji)}
-                style={styles.reactionOption}
+                style={[
+                  styles.reactionOption,
+                  currentReaction === emoji && styles.reactionOptionActive,
+                  reacting && styles.reactionOptionDisabled,
+                ]}
               >
                 <Text style={styles.reactionOptionText}>{emoji}</Text>
               </Pressable>
@@ -1390,8 +1519,8 @@ function MessageActions({
             <Copy color="#078f4a" size={20} />
             <Text style={styles.actionText}>Copy message</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -1790,8 +1919,14 @@ function ChatToolsModal({
   ];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
-      <Pressable style={styles.sheetBackdrop} onPress={close}>
-        <Pressable style={styles.actionSheet} onPress={(event) => event.stopPropagation()}>
+      <View style={styles.sheetBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close chat tools"
+          onPress={close}
+          style={styles.sheetDismissArea}
+        />
+        <View style={styles.actionSheet}>
           <View style={styles.sheetHeader}>
             <View>
               <Text style={styles.sheetTitle}>Chat tools</Text>
@@ -1827,8 +1962,8 @@ function ChatToolsModal({
               Review requests {requestCount ? `(${requestCount})` : ""}
             </Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -2248,12 +2383,20 @@ const styles = StyleSheet.create({
   row: {
     minHeight: 92,
     flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 12,
     backgroundColor: "#ffffff",
     borderBottomWidth: 1,
     borderColor: "#eef2f6",
+  },
+  rowMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
   avatarWrap: { width: 51, height: 51 },
   avatar: {
@@ -2437,6 +2580,13 @@ const styles = StyleSheet.create({
   messageList: { padding: 16, paddingBottom: 24, gap: 8 },
   messageWrap: { alignItems: "flex-start" },
   mineWrap: { alignItems: "flex-end" },
+  messagePressRow: {
+    maxWidth: "100%",
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  messagePressRowMine: { justifyContent: "flex-end" },
   message: {
     maxWidth: "82%",
     borderRadius: 22,
@@ -2450,6 +2600,32 @@ const styles = StyleSheet.create({
   },
   mine: { backgroundColor: "#12d39b" },
   theirs: { backgroundColor: "#ffffff" },
+  messageReactionTrigger: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginBottom: 2,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  messageReactionTriggerMine: { marginRight: 2 },
+  messageReactionTriggerTheirs: { marginLeft: 2 },
+  messageReactionTriggerDisabled: { opacity: 0.55 },
+  messageReactionEmoji: { fontSize: 13 },
+  messageReactionPlus: {
+    position: "absolute",
+    top: -5,
+    right: -3,
+    color: "#98a2b3",
+    fontSize: 9,
+    fontWeight: "900",
+  },
   messageText: { color: "#111111", fontSize: 16, lineHeight: 24 },
   stickerMessage: { paddingHorizontal: 4, paddingVertical: 2 },
   transparentMessage: { backgroundColor: "transparent" },
@@ -2482,9 +2658,21 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end",
   },
   mineTime: { color: "rgba(255,255,255,0.86)" },
-  reactionPill: {
+  reactionRow: {
     marginTop: 4,
     marginLeft: 10,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    alignSelf: "flex-start",
+  },
+  reactionRowMine: {
+    marginLeft: 0,
+    marginRight: 10,
+    alignSelf: "flex-end",
+    justifyContent: "flex-end",
+  },
+  reactionPill: {
     minWidth: 34,
     paddingHorizontal: 8,
     height: 24,
@@ -2498,7 +2686,11 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  reactionPillMine: { marginLeft: 0, marginRight: 10 },
+  reactionPillActive: {
+    backgroundColor: "#dcfce7",
+    borderWidth: 1,
+    borderColor: "#07c160",
+  },
   reactionPillText: { fontSize: 14 },
   composer: {
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -2566,6 +2758,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "rgba(10, 18, 15, 0.42)",
     justifyContent: "flex-end",
+  },
+  sheetDismissArea: {
+    ...StyleSheet.absoluteFill,
   },
   stickerSheet: {
     backgroundColor: "#ffffff",
@@ -2638,6 +2833,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#f8fafc",
   },
+  reactionOptionActive: {
+    backgroundColor: "#dcfce7",
+    borderWidth: 1,
+    borderColor: "#07c160",
+  },
+  reactionOptionDisabled: { opacity: 0.45 },
   reactionOptionText: { fontSize: 22 },
   actionPreview: {
     color: "#66716b",
