@@ -37,3 +37,14 @@ Areas covered:
 - Chat message bubbles and reaction controls
 - Sticker picker rows
 - Bottom-sheet dismiss overlays
+
+## Composer guard
+
+The send button should only be active when the composer has text and the conversation is allowed to send.
+
+Manual check:
+
+1. Open an accepted chat.
+2. Type a short message.
+3. Confirm the paper-plane button becomes active.
+4. Send the message and confirm the composer clears after the row appears.
