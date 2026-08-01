@@ -113,3 +113,12 @@ git diff --check
 ```
 
 Both commands should remain clean before pushing further chat changes.
+
+## Smoke test steps
+
+1. Sign in as Naveen.
+2. Open Chats and confirm the list renders without the nested button warning.
+3. Open an accepted conversation.
+4. Send a short text message.
+5. Add a reaction to the newest message.
+6. Sign in as the second user and confirm the message and reaction are visible.
