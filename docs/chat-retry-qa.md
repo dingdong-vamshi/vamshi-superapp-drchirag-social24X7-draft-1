@@ -78,3 +78,16 @@ If reactions fail in a deployed environment, check:
 - The user is signed in with a real Supabase Auth account.
 - The conversation membership row exists for both participants.
 - Row-level security allows the current user to update their reaction on visible messages.
+
+## Manual QA users
+
+Use the project test accounts in separate browser profiles or a normal window plus an incognito window.
+
+Recommended checks:
+
+- Naveen to Yogesh
+- Yogesh to Naveen
+- Naveen to Kavya
+- Kavya to Naveen
+
+Each pair should be tested with one sent message and one reaction.
