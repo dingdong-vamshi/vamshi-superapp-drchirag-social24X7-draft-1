@@ -8,3 +8,10 @@ Scope covered:
 - Message reaction picker
 - Web-safe touch targets
 - Supabase-backed message reaction persistence
+
+## What changed
+
+- Message reactions now save through the active chat data source instead of staying only in local UI state.
+- The same emoji can be tapped again to remove a reaction.
+- Failed reaction writes show a visible error instead of silently doing nothing.
+- Each message bubble has an explicit reaction trigger, so testers do not need to depend on long-press behavior.
