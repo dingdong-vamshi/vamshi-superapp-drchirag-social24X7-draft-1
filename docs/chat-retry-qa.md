@@ -122,3 +122,9 @@ Both commands should remain clean before pushing further chat changes.
 4. Send a short text message.
 5. Add a reaction to the newest message.
 6. Sign in as the second user and confirm the message and reaction are visible.
+
+## Handoff summary
+
+The chat retry focused on making the interaction dependable before more visual polish is layered on top. The main implementation change is that reactions now go through the real chat persistence path and the UI avoids invalid nested web buttons.
+
+If a tester still sees missing incoming messages, treat that as a Supabase realtime or membership/RLS issue first, not a local-only reaction UI issue.
