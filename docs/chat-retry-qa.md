@@ -68,3 +68,13 @@ When user A sends to user B:
 - User A should see the outgoing bubble immediately.
 - User B should see the incoming bubble after realtime delivery or a refresh.
 - If realtime is delayed, refreshing `/chats` and reopening the thread should still show the saved message.
+
+## Supabase dependency
+
+The reaction fix assumes the backend exposes the message reaction write path used by the current chat data source.
+
+If reactions fail in a deployed environment, check:
+
+- The user is signed in with a real Supabase Auth account.
+- The conversation membership row exists for both participants.
+- Row-level security allows the current user to update their reaction on visible messages.
