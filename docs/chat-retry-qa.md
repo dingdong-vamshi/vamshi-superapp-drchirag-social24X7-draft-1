@@ -15,3 +15,14 @@ Scope covered:
 - The same emoji can be tapped again to remove a reaction.
 - Failed reaction writes show a visible error instead of silently doing nothing.
 - Each message bubble has an explicit reaction trigger, so testers do not need to depend on long-press behavior.
+
+## Reaction picker checks
+
+Use any accepted one-to-one chat and tap the small reaction control beside a message bubble.
+
+Expected behavior:
+
+- Picker opens with the six standard emoji options.
+- Selecting an emoji closes the picker after the save finishes.
+- The selected reaction remains visible after leaving and reopening the chat.
+- Retapping the same emoji removes the reaction.
