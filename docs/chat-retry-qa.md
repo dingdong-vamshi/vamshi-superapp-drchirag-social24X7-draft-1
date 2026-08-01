@@ -102,3 +102,14 @@ Not included here:
 - Payment flow behavior from the chat composer
 - Audio recording upload pipeline
 - Push notification delivery
+
+## Validation
+
+Commands used for this retry pass:
+
+```sh
+npx tsc --noEmit
+git diff --check
+```
+
+Both commands should remain clean before pushing further chat changes.
