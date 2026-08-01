@@ -91,3 +91,14 @@ Recommended checks:
 - Kavya to Naveen
 
 Each pair should be tested with one sent message and one reaction.
+
+## Known non-goals
+
+This retry pass does not redesign the entire chat surface.
+
+Not included here:
+
+- Full business chat implementation
+- Payment flow behavior from the chat composer
+- Audio recording upload pipeline
+- Push notification delivery
