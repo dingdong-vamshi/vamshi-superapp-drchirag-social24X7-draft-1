@@ -38,7 +38,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts"
+    "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts",
+    "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts"
   },
   "private": true
 }
