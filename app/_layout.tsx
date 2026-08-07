@@ -14,6 +14,8 @@ export default function RootLayout() {
         <Stack.Screen name="seller/index" />
         <Stack.Screen name="business-directory" />
         <Stack.Screen name="business-chat/[id]" />
+        <Stack.Screen name="games/index" />
+        <Stack.Screen name="games/[id]" />
         <Stack.Screen name="store/[slug]" />
         <Stack.Screen name="store/[slug]/product/[productSlug]" />
       </Stack>

@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { Link, type Href } from "expo-router";
 import {
   BadgeDollarSign,
   CircleHelp,
@@ -23,6 +23,7 @@ type DiscoverItem = {
   icon: LucideIcon;
   color: string;
   background: string;
+  href?: Href;
   action?: () => void;
 };
 
@@ -38,34 +39,34 @@ const sections: DiscoverSection[] = [
   {
     title: "Financial Services",
     items: [
-      { label: "Expenses", icon: BadgeDollarSign, color: "#ef4444", background: "#fdecec", action: () => router.push("/expenses") },
-      { label: "Chit Fund", icon: PiggyBank, color: "#16a34a", background: "#eaf9ef", action: () => router.push("/chit-fund") },
-      { label: "Bill Split", icon: SplitSquareVertical, color: "#2563eb", background: "#e9f1ff", action: () => router.push("/bill-split") },
-      { label: "Q&A\nCommunity", icon: CircleHelp, color: "#9333ea", background: "#f5ebff", action: () => router.push("/qa-community") },
+      { label: "Expenses", icon: BadgeDollarSign, color: "#ef4444", background: "#fdecec", href: "/expenses" },
+      { label: "Chit Fund", icon: PiggyBank, color: "#16a34a", background: "#eaf9ef", href: "/chit-fund" },
+      { label: "Bill Split", icon: SplitSquareVertical, color: "#2563eb", background: "#e9f1ff", href: "/bill-split" },
+      { label: "Q&A\nCommunity", icon: CircleHelp, color: "#9333ea", background: "#f5ebff", href: "/qa-community" },
     ],
   },
   {
     title: "Daily Services",
     items: [
-      { label: "Food", icon: UtensilsCrossed, color: "#f97316", background: "#fff1e8", action: () => router.push("/food") },
-      { label: "Notes", icon: NotebookPen, color: "#d97706", background: "#fff8dc", action: () => router.push("/notes-tasks") },
-      { label: "Nearby\nPeople", icon: UserPlus, color: "#2563eb", background: "#ecf3ff", action: () => router.push("/nearby-people") },
-      { label: "Support", icon: Headphones, color: "#4f46e5", background: "#eef2ff", action: () => router.push("/support-feedback") },
+      { label: "Food", icon: UtensilsCrossed, color: "#f97316", background: "#fff1e8", href: "/food" },
+      { label: "Notes", icon: NotebookPen, color: "#d97706", background: "#fff8dc", href: "/notes-tasks" },
+      { label: "Nearby\nPeople", icon: UserPlus, color: "#2563eb", background: "#ecf3ff", href: "/nearby-people" },
+      { label: "Support", icon: Headphones, color: "#4f46e5", background: "#eef2ff", href: "/support-feedback" },
     ],
   },
   {
     title: "Shopping",
     items: [
-      { label: "Shopping", icon: ShoppingBag, color: "#9333ea", background: "#f5ebff", action: () => router.push("/shop") },
-      { label: "Missing\nPerson", icon: Search, color: "#ef4444", background: "#fdecec", action: () => router.push("/missing-persons") },
-      { label: "Charity", icon: HeartHandshake, color: "#ec4899", background: "#ffeef6", action: () => router.push("/charity") },
-      { label: "Anonymous\nChat", icon: MessageCircle, color: "#16a34a", background: "#ebfaef", action: () => router.push("/anonymous-chat") },
+      { label: "Shopping", icon: ShoppingBag, color: "#9333ea", background: "#f5ebff", href: "/shop" },
+      { label: "Missing\nPerson", icon: Search, color: "#ef4444", background: "#fdecec", href: "/missing-persons" },
+      { label: "Charity", icon: HeartHandshake, color: "#ec4899", background: "#ffeef6", href: "/charity" },
+      { label: "Anonymous\nChat", icon: MessageCircle, color: "#16a34a", background: "#ebfaef", href: "/anonymous-chat" },
     ],
   },
   {
     title: "Entertainment",
     items: [
-      { label: "Games", icon: Gamepad2, color: "#2563eb", background: "#eaf1ff", action: () => comingSoon("Games") },
+      { label: "Games", icon: Gamepad2, color: "#2563eb", background: "#eaf1ff", href: "/games" },
       { label: "Ladder\nShuffle", icon: Shuffle, color: "#f97316", background: "#fff1e8", action: () => comingSoon("Ladder Shuffle") },
     ],
   },
@@ -99,7 +100,7 @@ export default function DiscoverScreen() {
 
 function DiscoverTile({ item }: { item: DiscoverItem }) {
   const Icon = item.icon;
-  return (
+  const tile = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={item.label.replace("\n", " ")}
@@ -112,6 +113,16 @@ function DiscoverTile({ item }: { item: DiscoverItem }) {
       <Text style={styles.tileLabel}>{item.label}</Text>
     </Pressable>
   );
+
+  if (item.href) {
+    return (
+      <Link href={item.href} asChild>
+        {tile}
+      </Link>
+    );
+  }
+
+  return tile;
 }
 
 const styles = StyleSheet.create({
