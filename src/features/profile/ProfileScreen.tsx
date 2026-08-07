@@ -21,6 +21,7 @@ import {
   Pencil,
   ReceiptText,
   ShieldCheck,
+  Store,
   UserRound,
 } from "lucide-react-native";
 import {
