@@ -34,6 +34,7 @@ type Props = {
   repository?: ProfileRepository;
   onOpenOrders?: () => void;
   onOpenSaved?: () => void;
+  onOpenCreatorCommerce?: () => void;
   onSignOut?: () => void;
 };
 type Status = "loading" | "ready" | "error";
