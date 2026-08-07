@@ -98,3 +98,12 @@ export default function SellerStudioPage() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  state: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14, padding: 24, backgroundColor: "#ffffff" },
+  title: { color: "#111111", fontSize: 23, fontWeight: "900", textAlign: "center" },
+  stateText: { color: "#51605a", fontSize: 15, lineHeight: 22, textAlign: "center" },
+  errorText: { color: "#b42318", fontSize: 13, lineHeight: 19, textAlign: "center" },
+  primaryButton: { minHeight: 48, borderRadius: 16, backgroundColor: "#08713d", alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  primaryButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "900" },
+});
