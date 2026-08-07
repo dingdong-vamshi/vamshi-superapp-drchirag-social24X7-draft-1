@@ -412,10 +412,12 @@ export function SellerStudioScreen({
       llmSummary: product.llmSummary ?? "",
     });
     setSelectedAssets([]);
+    setProductSaveNotice(null);
     setActiveSection("catalog");
   };
 
   const saveProduct = async () => {
+    setProductSaveNotice(null);
     setBusy(true);
     try {
       const product = await repository.saveProduct({
