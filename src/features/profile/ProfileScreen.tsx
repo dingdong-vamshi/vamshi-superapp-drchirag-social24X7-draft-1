@@ -43,6 +43,7 @@ export function ProfileScreen({
   repository = localProfileRepository,
   onOpenOrders,
   onOpenSaved,
+  onOpenCreatorCommerce,
   onSignOut,
 }: Props) {
   const [status, setStatus] = useState<Status>("loading");
