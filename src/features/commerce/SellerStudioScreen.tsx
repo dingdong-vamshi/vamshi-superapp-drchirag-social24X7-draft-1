@@ -194,6 +194,10 @@ export function SellerStudioScreen({
   const [productDraft, setProductDraft] =
     useState<ProductDraft>(defaultProductDraft);
   const [selectedAssets, setSelectedAssets] = useState<UploadAsset[]>([]);
+  const [productSaveNotice, setProductSaveNotice] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
