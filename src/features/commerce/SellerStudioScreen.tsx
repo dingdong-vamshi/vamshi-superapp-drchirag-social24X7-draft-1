@@ -1055,6 +1055,8 @@ export function SellerStudioScreen({
                   >
                     <Pressable
                       style={styles.mediaPicker}
+                      accessibilityRole="button"
+                      accessibilityLabel="Add product media"
                       onPress={async () => {
                         if (!pickProductImages) {
                           Alert.alert(
