@@ -1,14 +1,19 @@
 import * as ImagePicker from "expo-image-picker";
-import { useMemo } from "react";
-import { Alert } from "react-native";
+import { router } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { SellerStudioScreen } from "../../src/features/commerce/SellerStudioScreen";
 import { createSupabaseShopRepository } from "../../src/features/commerce/supabaseShopRepository";
 import { localShopRepository } from "../../src/features/commerce/shopRepository";
+import { getCreatorCommerceAccess } from "../../src/features/creatorCommerce/accessRepository";
 import { useAuth } from "../../src/lib/AuthContext";
 import { supabase } from "../../src/lib/supabase";
 
 export default function SellerStudioPage() {
   const { user } = useAuth();
+  const [allowed, setAllowed] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const repository = useMemo(() => {
     if (!supabase) return localShopRepository;
     return createSupabaseShopRepository({
