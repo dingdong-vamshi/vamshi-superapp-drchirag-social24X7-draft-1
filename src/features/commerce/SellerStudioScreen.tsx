@@ -1066,7 +1066,10 @@ export function SellerStudioScreen({
                           return;
                         }
                         const assets = await pickProductImages();
-                        if (assets.length) setSelectedAssets(assets);
+                        if (assets.length) {
+                          setSelectedAssets(assets);
+                          setProductSaveNotice(null);
+                        }
                       }}
                     >
                       <Plus size={18} color={green} />
