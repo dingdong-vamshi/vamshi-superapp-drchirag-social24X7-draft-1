@@ -435,15 +435,23 @@ export function SellerStudioScreen({
       }
       setProductDraft(defaultProductDraft);
       setSelectedAssets([]);
+      setProductSaveNotice({
+        tone: "success",
+        message: selectedAssets.length
+          ? `Product and ${selectedAssets.length} media item(s) saved.`
+          : "Product saved.",
+      });
       refresh();
       Alert.alert(
         "Catalog updated",
         `${product.name} is ready inside Social Chat 24/7 Shop.`,
       );
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Please try again.";
+      setProductSaveNotice({ tone: "error", message });
       Alert.alert(
         "Unable to save product",
-        error instanceof Error ? error.message : "Please try again.",
+        message,
       );
     } finally {
       setBusy(false);
