@@ -22,6 +22,52 @@ export default function SellerStudioPage() {
     });
   }, [user]);
 
+  const verifySellerAccess = useCallback(async () => {
+    setChecking(true);
+    setError(null);
+    try {
+      if (!supabase || !user || user.app_metadata?.provider === "demo") {
+        setAllowed(false);
+        return;
+      }
+      const access = await getCreatorCommerceAccess(supabase);
+      setAllowed(access?.sellerStatus === "approved");
+    } catch (cause) {
+      setAllowed(false);
+      setError(cause instanceof Error ? cause.message : "Unable to verify seller access.");
+    } finally {
+      setChecking(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    void verifySellerAccess();
+  }, [verifySellerAccess]);
+
+  if (checking) {
+    return (
+      <View style={styles.state}>
+        <ActivityIndicator color="#08713d" />
+        <Text style={styles.stateText}>Checking seller approval...</Text>
+      </View>
+    );
+  }
+
+  if (!allowed) {
+    return (
+      <View style={styles.state}>
+        <Text style={styles.title}>Seller approval required</Text>
+        <Text style={styles.stateText}>
+          Submit seller onboarding and wait for admin approval before opening seller tools.
+        </Text>
+        {error ? <Text selectable style={styles.errorText}>{error}</Text> : null}
+        <Pressable accessibilityRole="button" onPress={() => router.replace("/commerce/seller-onboarding")} style={styles.primaryButton}>
+          <Text style={styles.primaryButtonText}>Open seller onboarding</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <SellerStudioScreen
       repository={repository}
