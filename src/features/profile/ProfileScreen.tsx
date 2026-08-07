@@ -157,6 +157,12 @@ export function ProfileScreen({
           subtitle="Posts, products and collections"
           onPress={onOpenSaved}
         />
+        <SettingsRow
+          icon={Store}
+          title="Creator Commerce"
+          subtitle="Seller, creator and professional verification"
+          onPress={onOpenCreatorCommerce}
+        />
       </View>
       <Text style={styles.sectionTitle}>Account</Text>
       <View style={styles.sectionCard}>
