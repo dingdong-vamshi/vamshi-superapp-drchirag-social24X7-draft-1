@@ -2193,6 +2193,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   primaryButtonText: { color: "#ffffff", fontWeight: "900", fontSize: 14 },
+  productSaveSuccess: { color: greenDeep, fontSize: 13, fontWeight: "800" },
+  productSaveError: { color: "#b42318", fontSize: 13, fontWeight: "800" },
   tableShell: {
     marginTop: 4,
     borderRadius: 15,
