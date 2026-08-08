@@ -2168,6 +2168,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   mediaPickerText: { color: greenDeep, fontWeight: "800", fontSize: 14 },
+  mediaSelectionText: { color: greenDeep, fontWeight: "800", fontSize: 12 },
   assetRail: { gap: 10, paddingTop: 4 },
   assetCard: {
     width: 96,
