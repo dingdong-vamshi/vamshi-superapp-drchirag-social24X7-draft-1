@@ -1078,17 +1078,22 @@ export function SellerStudioScreen({
                       </Text>
                     </Pressable>
                     {selectedAssets.length ? (
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.assetRail}
-                      >
-                        {selectedAssets.map((asset) => (
-                          <View key={asset.uri} style={styles.assetCard}>
-                            <Image source={{ uri: asset.uri }} style={styles.assetImage} />
-                          </View>
-                        ))}
-                      </ScrollView>
+                      <>
+                        <Text style={styles.mediaSelectionText}>
+                          {selectedAssets.length} media item(s) selected
+                        </Text>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.assetRail}
+                        >
+                          {selectedAssets.map((asset) => (
+                            <View key={asset.uri} style={styles.assetCard}>
+                              <Image source={{ uri: asset.uri }} style={styles.assetImage} />
+                            </View>
+                          ))}
+                        </ScrollView>
+                      </>
                     ) : null}
                   </PreviewCard>
                 </>
