@@ -1107,6 +1107,18 @@ export function SellerStudioScreen({
                 onPress={() => void saveProduct()}
               />
             </ActionBar>
+            {productSaveNotice ? (
+              <Text
+                accessibilityRole="alert"
+                style={
+                  productSaveNotice.tone === "error"
+                    ? styles.productSaveError
+                    : styles.productSaveSuccess
+                }
+              >
+                {productSaveNotice.message}
+              </Text>
+            ) : null}
 
             <View style={styles.tableShell}>
               <Text style={styles.tableTitle}>Catalog inventory</Text>
