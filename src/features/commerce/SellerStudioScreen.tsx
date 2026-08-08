@@ -1133,6 +1133,8 @@ export function SellerStudioScreen({
                 dashboard?.products.map((item) => (
                   <Pressable
                     key={item.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit product ${item.name}`}
                     onPress={() => editProduct(item)}
                     style={styles.tableRow}
                   >
