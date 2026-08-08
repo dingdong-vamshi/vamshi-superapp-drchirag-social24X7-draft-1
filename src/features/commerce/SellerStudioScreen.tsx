@@ -1775,7 +1775,13 @@ function PrimaryButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={styles.primaryButton} disabled={busy} onPress={onPress}>
+    <Pressable
+      style={styles.primaryButton}
+      disabled={busy}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+    >
       {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{label}</Text>}
     </Pressable>
   );
