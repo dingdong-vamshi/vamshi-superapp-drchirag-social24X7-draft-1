@@ -1,0 +1,6 @@
+hi sir just wanted to share a quick update on why creator commerce took a little longer
+we first had to understand and build the complete marketplace flow across sellers creators professionals products approvals promotion checkout orders fulfilment returns and commissions
+after every part i tested the real end to end journey and some issues only appeared when all roles and backend rules worked together
+the latest product media permission issue is fixed and seller upload admin preview and public storefront images are now working correctly
+the internal creator commerce flow is now working end to end while real payment kyc courier refund and bank settlement still need their external providers
+i have also prepared complete client testing and internal learning guides so the product can now be demonstrated and explained clearly
