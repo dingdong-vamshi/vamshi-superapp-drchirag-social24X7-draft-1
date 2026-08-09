@@ -17,9 +17,11 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Alert,
   Pressable,
   SafeAreaView,
@@ -27,6 +29,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewStyle,
 } from "react-native";
 
 import { useAuth } from "../../lib/AuthContext";
@@ -242,14 +245,19 @@ function QuickTicTacToe() {
   const [turn, setTurn] = useState<"X" | "O">("X");
   const [score, setScore] = useState({ you: 0, bot: 0, draws: 0 });
   const [roundOver, setRoundOver] = useState(false);
+  const [lastMove, setLastMove] = useState<number | null>(null);
+  const resultPulse = useRef(new Animated.Value(0)).current;
   const winner = getTicTacToeWinner(cells);
   const isDraw = !winner && cells.every(Boolean);
+  const winningLine = winner?.line ?? [];
 
   const resetBoard = useCallback(() => {
     setCells([...TIC_TAC_TOE_EMPTY_CELLS]);
     setTurn("X");
     setRoundOver(false);
-  }, []);
+    setLastMove(null);
+    resultPulse.setValue(0);
+  }, [resultPulse]);
 
   useEffect(() => {
     if (roundOver) return;
@@ -260,8 +268,22 @@ function QuickTicTacToe() {
         bot: current.bot + (winner?.symbol === "O" ? 1 : 0),
         draws: current.draws + (isDraw ? 1 : 0),
       }));
+      Animated.sequence([
+        Animated.timing(resultPulse, {
+          toValue: 1,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(resultPulse, {
+          toValue: 0,
+          duration: 180,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
     }
-  }, [isDraw, roundOver, winner]);
+  }, [isDraw, resultPulse, roundOver, winner]);
 
   useEffect(() => {
     if (turn !== "O" || winner || isDraw) return undefined;
@@ -271,22 +293,33 @@ function QuickTicTacToe() {
       const next = applyTicTacToeMove({ cells, cellIndex: botMove, symbol: "O", activeSymbol: "O" });
       if (!next) return;
       setCells(next.cells);
+      setLastMove(botMove);
       setTurn("X");
     }, 420);
     return () => clearTimeout(timeout);
   }, [cells, isDraw, turn, winner]);
 
   const status = winner?.symbol === "X" ? "You won this round" : winner?.symbol === "O" ? "Bot won this round" : isDraw ? "Draw game" : turn === "X" ? "Your move" : "Bot is thinking...";
+  const resultScale = resultPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] });
 
   return (
     <>
-      <View style={styles.arcadeHero}>
-        <View>
+      <View style={[styles.arcadeHero, styles.ticHero]}>
+        <View pointerEvents="none" style={[styles.heroGlowOne, styles.ticGlowOne]} />
+        <View pointerEvents="none" style={[styles.heroGlowTwo, styles.ticGlowTwo]} />
+        <View style={styles.heroCopy}>
           <Text style={styles.arcadeEyebrow}>Quick match</Text>
           <Text style={styles.arcadeTitle}>{status}</Text>
           <Text style={styles.arcadeText}>Play X. The bot blocks wins, takes winning moves, and grabs the center.</Text>
         </View>
-        <Sparkles color="#16a34a" size={32} />
+        <View style={styles.heroIconOrb}>
+          <Sparkles color="#86efac" size={32} />
+        </View>
+      </View>
+
+      <View style={styles.playerCardRow}>
+        <QuickPlayerCard title="You" mark="X" active={turn === "X" && !roundOver} score={score.you} color="#16a34a" />
+        <QuickPlayerCard title="Bot" mark="O" active={turn === "O" && !roundOver} score={score.bot} color="#2563eb" />
       </View>
 
       <View style={styles.quickScoreRow}>
@@ -295,8 +328,11 @@ function QuickTicTacToe() {
         <MiniScore label="Draws" value={score.draws} color="#64748b" />
       </View>
 
-      <View style={styles.quickBoardCard}>
-        <View style={styles.ticBoardLarge}>
+      <View style={[styles.quickBoardCard, styles.ticBoardCard]}>
+        <GameParticleLayer active={roundOver && winner?.symbol === "X"} tone="#22c55e" />
+        <View style={styles.ticBoardFrame}>
+          <View pointerEvents="none" style={styles.ticBoardAura} />
+          <View style={styles.ticBoardLarge}>
           {cells.map((value, index) => (
             <Pressable
               key={index}
@@ -307,17 +343,37 @@ function QuickTicTacToe() {
                 const next = applyTicTacToeMove({ cells, cellIndex: index, symbol: "X", activeSymbol: "X" });
                 if (!next) return;
                 setCells(next.cells);
+                setLastMove(index);
                 setTurn("O");
               }}
-              style={[styles.ticCellLarge, value === "X" && styles.ticCellX, value === "O" && styles.ticCellO]}
+              style={({ pressed }) => [
+                styles.ticCellLarge,
+                value && styles.ticCellOccupied,
+                value === "X" && styles.ticCellX,
+                value === "O" && styles.ticCellO,
+                lastMove === index && styles.ticCellLastMove,
+                winningLine.includes(index) && styles.ticCellWinner,
+                pressed && styles.pressedCell,
+              ]}
             >
-              <Text style={[styles.ticTextLarge, value === "O" && styles.ticTextO]}>{value}</Text>
+              <TicMark value={value as "X" | "O" | null} />
             </Pressable>
           ))}
+          </View>
+          <TicWinLine line={winningLine} />
         </View>
+        {roundOver ? (
+          <Animated.View style={[styles.resultCard, { transform: [{ scale: resultScale }] }]}>
+            <Trophy color={winner?.symbol === "O" ? "#2563eb" : "#16a34a"} size={22} />
+            <View style={styles.resultCopy}>
+              <Text style={styles.resultTitle}>{isDraw ? "Clean draw" : winner?.symbol === "X" ? "You took the round" : "Bot took the round"}</Text>
+              <Text style={styles.resultText}>{isDraw ? "Nobody broke through. Run it back." : "Winning cells are highlighted. Tap rematch for a fresh board."}</Text>
+            </View>
+          </Animated.View>
+        ) : null}
         <Pressable accessibilityRole="button" onPress={resetBoard} style={styles.secondaryFullButton}>
           <RotateCcw color="#0f172a" size={18} />
-          <Text style={styles.secondaryFullText}>Reset board</Text>
+          <Text style={styles.secondaryFullText}>{roundOver ? "Rematch" : "Reset board"}</Text>
         </Pressable>
       </View>
     </>
@@ -326,88 +382,176 @@ function QuickTicTacToe() {
 
 function QuickSnakeLadder() {
   const [positions, setPositions] = useState({ you: 1, kai: 1 });
+  const [displayPositions, setDisplayPositions] = useState({ you: 1, kai: 1 });
   const [turn, setTurn] = useState<"you" | "kai">("you");
   const [lastRoll, setLastRoll] = useState<number | null>(null);
   const [log, setLog] = useState("Roll the dice to begin. Exact 100 wins.");
   const [winner, setWinner] = useState<"you" | "kai" | null>(null);
+  const [rolling, setRolling] = useState(false);
+  const [effectSquare, setEffectSquare] = useState<{ from: number; to: number; type: "snake" | "ladder" } | null>(null);
+  const diceAnim = useRef(new Animated.Value(0)).current;
+  const moveTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+
+  const clearMoveTimers = useCallback(() => {
+    moveTimers.current.forEach(clearTimeout);
+    moveTimers.current = [];
+  }, []);
+
+  useEffect(() => clearMoveTimers, [clearMoveTimers]);
 
   const reset = useCallback(() => {
+    clearMoveTimers();
     setPositions({ you: 1, kai: 1 });
+    setDisplayPositions({ you: 1, kai: 1 });
     setTurn("you");
     setLastRoll(null);
     setLog("Roll the dice to begin. Exact 100 wins.");
     setWinner(null);
-  }, []);
+    setRolling(false);
+    setEffectSquare(null);
+    diceAnim.setValue(0);
+  }, [clearMoveTimers, diceAnim]);
 
   const rollFor = useCallback((player: "you" | "kai") => {
-    if (winner) return;
+    if (winner || rolling) return;
+    clearMoveTimers();
+    setRolling(true);
+    setEffectSquare(null);
     const dice = Math.floor(Math.random() * 6) + 1;
+    Animated.sequence([
+      Animated.timing(diceAnim, {
+        toValue: 1,
+        duration: 210,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(diceAnim, {
+        toValue: 0,
+        duration: 210,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
     setLastRoll(dice);
-    setPositions((current) => {
-      const from = current[player];
-      const result = applySnakeLadderRoll(from, dice);
-      const nextPosition = result.to;
-      const label = player === "you" ? "You" : "Kai";
-      let detail = `${label} rolled ${dice}: ${from} → ${nextPosition}.`;
-      if (result.exactWinBlocked) detail = `${label} needs exact 100 and stays on ${from}.`;
-      if (SNAKES[from + dice]) detail = `${label} hit a snake. Ouch.`;
-      if (LADDERS[from + dice]) detail = `${label} climbed a ladder. Nice.`;
-      setLog(detail);
-      if (nextPosition === 100) setWinner(player);
-      return { ...current, [player]: nextPosition };
+    const from = positions[player];
+    const result = applySnakeLadderRoll(from, dice);
+    const nextPosition = result.to;
+    const rawDestination = result.rawTo;
+    const label = player === "you" ? "You" : "Kai";
+    const jumpType = SNAKES[rawDestination] ? "snake" : LADDERS[rawDestination] ? "ladder" : null;
+    let detail = `${label} rolled ${dice}: ${from} → ${nextPosition}.`;
+    if (result.exactWinBlocked) detail = `${label} needs exact 100 and stays on ${from}.`;
+    if (jumpType === "snake") detail = `${label} landed on ${rawDestination}, then slid to ${nextPosition}.`;
+    if (jumpType === "ladder") detail = `${label} landed on ${rawDestination}, then climbed to ${nextPosition}.`;
+    setLog(detail);
+    setPositions((current) => ({ ...current, [player]: nextPosition }));
+
+    if (result.exactWinBlocked || rawDestination === from) {
+      const timer = setTimeout(() => {
+        setRolling(false);
+        setTurn(player === "you" ? "kai" : "you");
+      }, 460);
+      moveTimers.current.push(timer);
+      return;
+    }
+
+    const direction = rawDestination > from ? 1 : -1;
+    const path = Array.from({ length: Math.abs(rawDestination - from) }, (_, index) => from + direction * (index + 1));
+    path.forEach((square, index) => {
+      const timer = setTimeout(() => {
+        setDisplayPositions((current) => ({ ...current, [player]: square }));
+      }, 140 * (index + 1));
+      moveTimers.current.push(timer);
     });
-    setTurn(player === "you" ? "kai" : "you");
-  }, [winner]);
+
+    const jumpTimer = setTimeout(() => {
+      if (jumpType) setEffectSquare({ from: rawDestination, to: nextPosition, type: jumpType });
+      setDisplayPositions((current) => ({ ...current, [player]: nextPosition }));
+    }, 140 * path.length + 280);
+    const finishTimer = setTimeout(() => {
+      if (nextPosition === 100) {
+        setWinner(player);
+      } else {
+        setTurn(player === "you" ? "kai" : "you");
+      }
+      setRolling(false);
+    }, 140 * path.length + 620);
+    moveTimers.current.push(jumpTimer, finishTimer);
+  }, [clearMoveTimers, diceAnim, positions, rolling, winner]);
 
   useEffect(() => {
-    if (turn !== "kai" || winner) return undefined;
+    if (turn !== "kai" || winner || rolling) return undefined;
     const timeout = setTimeout(() => rollFor("kai"), 700);
     return () => clearTimeout(timeout);
-  }, [rollFor, turn, winner]);
+  }, [rollFor, rolling, turn, winner]);
 
   const boardCells = useMemo(() => Array.from({ length: 100 }, (_, index) => 100 - index), []);
+  const diceScale = diceAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
+  const diceRotate = diceAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "16deg"] });
 
   return (
     <>
       <View style={[styles.arcadeHero, styles.orangeHero]}>
-        <View>
+        <View pointerEvents="none" style={[styles.heroGlowOne, styles.orangeGlowOne]} />
+        <View pointerEvents="none" style={[styles.heroGlowTwo, styles.orangeGlowTwo]} />
+        <View style={styles.heroCopy}>
           <Text style={[styles.arcadeEyebrow, styles.orangeText]}>Dice race</Text>
-          <Text style={styles.arcadeTitle}>{winner ? `${winner === "you" ? "You win" : "Kai wins"}!` : turn === "you" ? "Your roll" : "Kai is rolling..."}</Text>
+          <Text style={styles.arcadeTitle}>{winner ? `${winner === "you" ? "You win" : "Kai wins"}!` : rolling ? "Dice in motion..." : turn === "you" ? "Your roll" : "Kai is rolling..."}</Text>
           <Text style={styles.arcadeText}>{log}</Text>
         </View>
-        <Dice6 color="#f97316" size={34} />
+        <Animated.View style={[styles.diceBadge, { transform: [{ scale: diceScale }, { rotate: diceRotate }] }]}>
+          <Text style={styles.diceText}>{lastRoll ?? "🎲"}</Text>
+        </Animated.View>
       </View>
 
       <View style={styles.quickScoreRow}>
-        <MiniScore label="You" value={positions.you} color="#16a34a" />
+        <MiniScore label="You" value={displayPositions.you} color="#16a34a" />
         <MiniScore label="Dice" value={lastRoll ?? "—"} color="#f97316" />
-        <MiniScore label="Kai" value={positions.kai} color="#2563eb" />
+        <MiniScore label="Kai" value={displayPositions.kai} color="#2563eb" />
       </View>
 
-      <View style={styles.quickBoardCard}>
-        <View style={styles.snakeBoard}>
+      <View style={[styles.quickBoardCard, styles.snakeBoardCard]}>
+        <GameParticleLayer active={Boolean(winner)} tone={winner === "kai" ? "#3b82f6" : "#fb923c"} />
+        <View style={styles.snakeBoardShell}>
+          <View pointerEvents="none" style={styles.snakeBoardTrackGlow} />
+          <View style={styles.snakeBoard}>
           {boardCells.map((cell) => {
-            const hasYou = positions.you === cell;
-            const hasKai = positions.kai === cell;
+            const hasYou = displayPositions.you === cell;
+            const hasKai = displayPositions.kai === cell;
             const isSnake = Boolean(SNAKES[cell]);
             const isLadder = Boolean(LADDERS[cell]);
+            const isEffectSquare = effectSquare?.from === cell || effectSquare?.to === cell;
             return (
-              <View key={cell} style={[styles.snakeCell, isSnake && styles.snakeCellTrap, isLadder && styles.snakeCellBoost]}>
+              <View key={cell} style={[styles.snakeCell, cell % 2 === 0 && styles.snakeCellOdd, isSnake && styles.snakeCellTrap, isLadder && styles.snakeCellBoost, isEffectSquare && styles.snakeCellEffect, (hasYou || hasKai) && styles.snakeCellOccupied]}>
                 <Text style={styles.snakeCellText}>{cell}</Text>
+                <SnakeBoardMarker type={isSnake ? "snake" : isLadder ? "ladder" : undefined} />
                 <View style={styles.tokenRow}>
-                  {hasYou ? <Text style={styles.youToken}>Y</Text> : null}
-                  {hasKai ? <Text style={styles.botToken}>K</Text> : null}
+                  {hasYou ? <SnakeToken label="Y" tone="#16a34a" active={turn === "you" && !winner} /> : null}
+                  {hasKai ? <SnakeToken label="K" tone="#2563eb" active={turn === "kai" && !winner} /> : null}
                 </View>
               </View>
             );
           })}
+          </View>
         </View>
         <View style={styles.snakeLegend}>
           <Text style={styles.legendText}>🪜 Ladders boost you</Text>
           <Text style={styles.legendText}>🐍 Snakes pull you down</Text>
         </View>
+        {effectSquare ? (
+          <View style={[styles.eventStrip, effectSquare.type === "snake" ? styles.snakeEvent : styles.ladderEvent]}>
+            <Text style={styles.eventText}>{effectSquare.type === "snake" ? "Snake slide" : "Ladder climb"}: {effectSquare.from} → {effectSquare.to}</Text>
+          </View>
+        ) : null}
+        {winner ? (
+          <GameResultCard
+            title={winner === "you" ? "You reached 100!" : "Kai reached 100"}
+            message="Exact finish complete. Start a rematch when you are ready."
+            accent={winner === "you" ? "#16a34a" : "#2563eb"}
+          />
+        ) : null}
         <View style={styles.actionRow}>
-          <ActionButton label={turn === "you" && !winner ? "Roll dice" : "Waiting"} icon={Dice6} disabled={turn !== "you" || Boolean(winner)} onPress={() => rollFor("you")} />
+          <ActionButton label={turn === "you" && !winner ? (rolling ? "Rolling..." : "Roll dice") : "Waiting"} icon={Dice6} disabled={turn !== "you" || Boolean(winner) || rolling} onPress={() => rollFor("you")} />
           <ActionButton label="Reset" icon={RotateCcw} variant="light" onPress={reset} />
         </View>
       </View>
@@ -435,6 +579,8 @@ function buildMemoryDeck() {
 function QuickMemoryMatch() {
   const [deck, setDeck] = useState<MemoryCard[]>(() => buildMemoryDeck());
   const [flipped, setFlipped] = useState<string[]>([]);
+  const [mismatchIds, setMismatchIds] = useState<string[]>([]);
+  const [locked, setLocked] = useState(false);
   const [moves, setMoves] = useState(0);
   const matchedCount = deck.filter((card) => card.matched).length;
   const completed = matchedCount === deck.length;
@@ -442,32 +588,43 @@ function QuickMemoryMatch() {
   const reset = useCallback(() => {
     setDeck(buildMemoryDeck());
     setFlipped([]);
+    setMismatchIds([]);
+    setLocked(false);
     setMoves(0);
   }, []);
 
   useEffect(() => {
     if (flipped.length !== 2) return undefined;
+    setLocked(true);
     const [firstId, secondId] = flipped;
     const first = deck.find((card) => card.id === firstId);
     const second = deck.find((card) => card.id === secondId);
+    const isMatch = Boolean(first && second && first.symbol === second.symbol);
+    if (!isMatch) setMismatchIds([firstId, secondId]);
     const timeout = setTimeout(() => {
-      if (first && second && first.symbol === second.symbol) {
+      if (isMatch && first && second) {
         setDeck((current) => current.map((card) => (card.id === first.id || card.id === second.id ? { ...card, matched: true } : card)));
       }
+      setMismatchIds([]);
       setFlipped([]);
-    }, 620);
+      setLocked(false);
+    }, isMatch ? 520 : 720);
     return () => clearTimeout(timeout);
   }, [deck, flipped]);
 
   return (
     <>
       <View style={[styles.arcadeHero, styles.purpleHero]}>
-        <View>
+        <View pointerEvents="none" style={[styles.heroGlowOne, styles.purpleGlowOne]} />
+        <View pointerEvents="none" style={[styles.heroGlowTwo, styles.purpleGlowTwo]} />
+        <View style={styles.heroCopy}>
           <Text style={[styles.arcadeEyebrow, styles.purpleText]}>Memory sprint</Text>
           <Text style={styles.arcadeTitle}>{completed ? "Board cleared!" : "Find every pair"}</Text>
           <Text style={styles.arcadeText}>{completed ? `Finished in ${moves} moves. Try a cleaner run.` : "Flip two cards. Matching pairs stay open."}</Text>
         </View>
-        <Brain color="#9333ea" size={34} />
+        <View style={styles.heroIconOrb}>
+          <Brain color="#d8b4fe" size={34} />
+        </View>
       </View>
 
       <View style={styles.quickScoreRow}>
@@ -476,33 +633,214 @@ function QuickMemoryMatch() {
         <MiniScore label="Left" value={(deck.length - matchedCount) / 2} color="#64748b" />
       </View>
 
-      <View style={styles.quickBoardCard}>
-        <View style={styles.memoryGrid}>
+      <View style={[styles.quickBoardCard, styles.memoryBoardCard]}>
+        <GameParticleLayer active={completed} tone="#c084fc" />
+        <View style={styles.memoryTable}>
+          <View pointerEvents="none" style={styles.memoryTableGlow} />
+          <View style={styles.memoryGrid}>
           {deck.map((card) => {
             const visible = card.matched || flipped.includes(card.id);
+            const mismatch = mismatchIds.includes(card.id);
             return (
-              <Pressable
+              <MemoryFlipCard
                 key={card.id}
-                accessibilityRole="button"
-                accessibilityLabel={visible ? `Card ${card.symbol}` : "Hidden memory card"}
-                disabled={visible || flipped.length === 2}
+                card={card}
+                visible={visible}
+                mismatch={mismatch}
+                disabled={visible || locked || flipped.length === 2}
                 onPress={() => {
+                  if (locked || visible || flipped.includes(card.id)) return;
                   setFlipped((current) => [...current, card.id]);
                   if (flipped.length === 1) setMoves((current) => current + 1);
                 }}
-                style={[styles.memoryCard, visible && styles.memoryCardVisible, card.matched && styles.memoryCardMatched]}
-              >
-                <Text style={styles.memoryText}>{visible ? card.symbol : "?"}</Text>
-              </Pressable>
+              />
             );
           })}
+          </View>
         </View>
+        {completed ? (
+          <GameResultCard
+            title="Memory board cleared"
+            message={`You matched all pairs in ${moves} moves. Shuffle for a faster run.`}
+            accent="#9333ea"
+          />
+        ) : null}
         <Pressable accessibilityRole="button" onPress={reset} style={styles.secondaryFullButton}>
           <RotateCcw color="#0f172a" size={18} />
           <Text style={styles.secondaryFullText}>Shuffle again</Text>
         </Pressable>
       </View>
     </>
+  );
+}
+
+function QuickPlayerCard({
+  title,
+  mark,
+  score,
+  active,
+  color,
+}: {
+  title: string;
+  mark: string;
+  score: number;
+  active: boolean;
+  color: string;
+}) {
+  return (
+    <View style={[styles.quickPlayerCard, active && { backgroundColor: `${color}18`, boxShadow: `0px 14px 30px ${color}35` }]}>
+      <View style={[styles.playerMark, { backgroundColor: `${color}18` }]}>
+        <Text style={[styles.playerMarkText, { color }]}>{mark}</Text>
+      </View>
+      <View>
+        <Text style={styles.playerTitle}>{title}</Text>
+        <Text style={styles.playerMeta}>{active ? "turn now" : `${score} wins`}</Text>
+      </View>
+    </View>
+  );
+}
+
+function MemoryFlipCard({
+  card,
+  visible,
+  mismatch,
+  disabled,
+  onPress,
+}: {
+  card: MemoryCard;
+  visible: boolean;
+  mismatch: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const flip = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  const shake = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(flip, {
+      toValue: visible ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [flip, visible]);
+
+  useEffect(() => {
+    if (!mismatch) return;
+    shake.setValue(0);
+    Animated.sequence([
+      Animated.timing(shake, { toValue: 1, duration: 70, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: -1, duration: 90, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 0, duration: 70, useNativeDriver: true }),
+    ]).start();
+  }, [mismatch, shake]);
+
+  const scale = flip.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] });
+  const translateX = shake.interpolate({ inputRange: [-1, 0, 1], outputRange: [-6, 0, 6] });
+  const frontRotate = flip.interpolate({ inputRange: [0, 1], outputRange: ["180deg", "360deg"] });
+  const backRotate = flip.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "180deg"] });
+
+  return (
+    <Animated.View style={[styles.memoryCardShell, { transform: [{ scale }, { translateX }] }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={visible ? `Card ${card.symbol}` : "Hidden memory card"}
+        disabled={disabled}
+        onPress={onPress}
+        style={({ pressed }) => [styles.memoryCardTapTarget, pressed && styles.pressedCell]}
+      >
+        <Animated.View style={[styles.memoryCardFace, styles.memoryCardBack, mismatch && styles.memoryCardMismatch, { transform: [{ rotateY: backRotate }] }]}>
+          <View pointerEvents="none" style={styles.memoryBackOrb} />
+          <Text style={styles.memoryBackGlyph}>?</Text>
+        </Animated.View>
+        <Animated.View style={[styles.memoryCardFace, styles.memoryCardFront, card.matched && styles.memoryCardMatched, mismatch && styles.memoryCardMismatch, { transform: [{ rotateY: frontRotate }] }]}>
+          <Text style={styles.memoryText}>{card.symbol}</Text>
+        </Animated.View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function TicMark({ value }: { value: "X" | "O" | null }) {
+  if (!value) return <View style={styles.emptyMarkSpark} />;
+  if (value === "O") {
+    return (
+      <View style={styles.oMarkOuter}>
+        <View style={styles.oMarkInner} />
+        <View style={styles.oMarkShine} />
+      </View>
+    );
+  }
+  return (
+    <View style={styles.xMarkWrap}>
+      <View style={[styles.xStroke, styles.xStrokeLeft]} />
+      <View style={[styles.xStroke, styles.xStrokeRight]} />
+    </View>
+  );
+}
+
+function TicWinLine({ line }: { line: number[] }) {
+  if (line.length !== 3) return null;
+  const key = line.join("-");
+  return <View pointerEvents="none" style={[styles.ticWinLine, ticWinLineStyles[key] ?? ticWinLineStyles.mid]} />;
+}
+
+const ticWinLineStyles: Record<string, ViewStyle> = {
+  mid: { top: "50%", left: "4%", width: "92%" },
+  "0-1-2": { top: "16.5%", left: "4%", width: "92%" },
+  "3-4-5": { top: "50%", left: "4%", width: "92%" },
+  "6-7-8": { top: "83.5%", left: "4%", width: "92%" },
+  "0-3-6": { left: "16.5%", top: "4%", height: "92%", width: 8 },
+  "1-4-7": { left: "50%", top: "4%", height: "92%", width: 8 },
+  "2-5-8": { left: "83.5%", top: "4%", height: "92%", width: 8 },
+  "0-4-8": { top: "50%", transform: [{ rotate: "45deg" }], width: "132%", left: "-16%" },
+  "2-4-6": { top: "50%", transform: [{ rotate: "-45deg" }], width: "132%", left: "-16%" },
+};
+
+function GameParticleLayer({ active, tone }: { active: boolean; tone: string }) {
+  if (!active) return null;
+  return (
+    <View pointerEvents="none" style={styles.particleLayer}>
+      {[0, 1, 2, 3, 4, 5].map((item) => (
+        <View
+          key={item}
+          style={[
+            styles.particleDot,
+            {
+              backgroundColor: tone,
+              left: `${12 + item * 14}%`,
+              top: `${10 + (item % 3) * 26}%`,
+              opacity: 0.18 + item * 0.06,
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+function SnakeBoardMarker({ type }: { type?: "snake" | "ladder" }) {
+  if (!type) return null;
+  return <Text style={[styles.snakeMarker, type === "snake" ? styles.snakeMarkerTrap : styles.snakeMarkerBoost]}>{type === "snake" ? "🐍" : "🪜"}</Text>;
+}
+
+function SnakeToken({ label, tone, active }: { label: string; tone: string; active: boolean }) {
+  return (
+    <View style={[styles.snakeToken, { backgroundColor: tone, boxShadow: active ? `0px 0px 14px ${tone}` : "0px 4px 10px rgba(15,23,42,0.25)" }]}>
+      <Text style={styles.snakeTokenText}>{label}</Text>
+    </View>
+  );
+}
+
+function GameResultCard({ title, message, accent }: { title: string; message: string; accent: string }) {
+  return (
+    <View style={[styles.resultCard, { borderColor: `${accent}55`, backgroundColor: `${accent}0f` }]}>
+      <Trophy color={accent} size={22} />
+      <View style={styles.resultCopy}>
+        <Text style={styles.resultTitle}>{title}</Text>
+        <Text style={styles.resultText}>{message}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -693,48 +1031,113 @@ function StateCard({ title, message, actionLabel, onAction }: { title: string; m
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f8fafc" },
+  safe: { flex: 1, backgroundColor: "#f6f8fb" },
   content: { padding: 20, paddingBottom: 44, width: "100%", maxWidth: 560, alignSelf: "center" },
-  header: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16 },
-  iconButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-  quickRoomIcon: { width: 46, height: 46, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  header: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 18 },
+  iconButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff", boxShadow: "0px 10px 22px rgba(15,23,42,0.10)" },
+  quickRoomIcon: { width: 46, height: 46, borderRadius: 18, alignItems: "center", justifyContent: "center", boxShadow: "0px 12px 24px rgba(15,23,42,0.10)" },
   headerText: { flex: 1 },
   title: { fontSize: 28, fontWeight: "900", color: "#0f172a" },
   subtitle: { color: "#64748b", fontSize: 14, marginTop: 2, fontWeight: "700" },
-  arcadeHero: { backgroundColor: "#ecfdf3", borderRadius: 28, borderWidth: 1, borderColor: "#bbf7d0", padding: 20, flexDirection: "row", gap: 14, justifyContent: "space-between", marginBottom: 14 },
-  orangeHero: { backgroundColor: "#fff7ed", borderColor: "#fed7aa" },
-  purpleHero: { backgroundColor: "#faf5ff", borderColor: "#e9d5ff" },
-  arcadeEyebrow: { color: "#16a34a", fontSize: 13, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.5 },
-  orangeText: { color: "#f97316" },
-  purpleText: { color: "#9333ea" },
-  arcadeTitle: { color: "#0f172a", fontSize: 26, fontWeight: "900", marginTop: 6 },
-  arcadeText: { color: "#475569", fontSize: 15, lineHeight: 22, fontWeight: "700", marginTop: 8, maxWidth: 390 },
+  arcadeHero: { minHeight: 168, borderRadius: 34, padding: 22, flexDirection: "row", gap: 16, justifyContent: "space-between", marginBottom: 16, overflow: "hidden", backgroundColor: "#082f1f", boxShadow: "0px 24px 52px rgba(15,23,42,0.18)" },
+  ticHero: { backgroundColor: "#061c16" },
+  orangeHero: { backgroundColor: "#321407" },
+  purpleHero: { backgroundColor: "#22103a" },
+  heroGlowOne: { position: "absolute", width: 190, height: 190, borderRadius: 95, top: -72, right: -42, opacity: 0.58 },
+  heroGlowTwo: { position: "absolute", width: 150, height: 150, borderRadius: 75, bottom: -68, left: -36, opacity: 0.38 },
+  ticGlowOne: { backgroundColor: "#22c55e" },
+  ticGlowTwo: { backgroundColor: "#064e3b" },
+  orangeGlowOne: { backgroundColor: "#fb923c" },
+  orangeGlowTwo: { backgroundColor: "#7c2d12" },
+  purpleGlowOne: { backgroundColor: "#a855f7" },
+  purpleGlowTwo: { backgroundColor: "#4c1d95" },
+  heroCopy: { flex: 1, zIndex: 2 },
+  heroIconOrb: { zIndex: 2, width: 72, height: 72, borderRadius: 28, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.13)", boxShadow: "inset 0px 1px 0px rgba(255,255,255,0.35), 0px 18px 34px rgba(0,0,0,0.18)" },
+  arcadeEyebrow: { color: "#bbf7d0", fontSize: 13, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.6 },
+  orangeText: { color: "#fed7aa" },
+  purpleText: { color: "#e9d5ff" },
+  arcadeTitle: { color: "#ffffff", fontSize: 27, fontWeight: "900", marginTop: 6, letterSpacing: -0.4 },
+  arcadeText: { color: "rgba(255,255,255,0.76)", fontSize: 15, lineHeight: 22, fontWeight: "700", marginTop: 8, maxWidth: 390 },
   quickScoreRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
-  miniScore: { flex: 1, backgroundColor: "#ffffff", borderRadius: 22, borderWidth: 1, borderColor: "#e5e7eb", paddingVertical: 16, alignItems: "center" },
-  miniScoreValue: { fontSize: 25, fontWeight: "900" },
+  playerCardRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
+  quickPlayerCard: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 24, backgroundColor: "#ffffff", padding: 13, boxShadow: "0px 14px 30px rgba(15,23,42,0.08)" },
+  playerMark: { width: 44, height: 44, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  playerMarkText: { fontSize: 23, fontWeight: "900" },
+  playerTitle: { color: "#0f172a", fontSize: 15, fontWeight: "900" },
+  playerMeta: { color: "#64748b", fontSize: 12, fontWeight: "800", marginTop: 2 },
+  miniScore: { flex: 1, backgroundColor: "#ffffff", borderRadius: 24, paddingVertical: 17, alignItems: "center", boxShadow: "0px 12px 28px rgba(15,23,42,0.07)" },
+  miniScoreValue: { fontSize: 26, fontWeight: "900" },
   miniScoreLabel: { color: "#64748b", fontSize: 13, fontWeight: "900", marginTop: 2 },
-  quickBoardCard: { backgroundColor: "#ffffff", borderRadius: 28, borderWidth: 1, borderColor: "#e5e7eb", padding: 16, marginBottom: 16 },
-  ticBoardLarge: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 14 },
-  ticCellLarge: { width: "30.8%", aspectRatio: 1, borderRadius: 24, backgroundColor: "#f8fafc", borderWidth: 1, borderColor: "#e2e8f0", alignItems: "center", justifyContent: "center" },
-  ticCellX: { backgroundColor: "#ecfdf3", borderColor: "#86efac" },
-  ticCellO: { backgroundColor: "#eff6ff", borderColor: "#bfdbfe" },
-  ticTextLarge: { color: "#0f172a", fontSize: 48, fontWeight: "900" },
-  secondaryFullButton: { minHeight: 52, borderRadius: 18, backgroundColor: "#f8fafc", borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  quickBoardCard: { position: "relative", backgroundColor: "#ffffff", borderRadius: 32, padding: 16, marginBottom: 16, overflow: "hidden", boxShadow: "0px 24px 50px rgba(15,23,42,0.11)" },
+  ticBoardCard: { backgroundColor: "#051f17", padding: 18 },
+  ticBoardFrame: { position: "relative", borderRadius: 30, padding: 13, backgroundColor: "rgba(255,255,255,0.07)", overflow: "hidden", marginBottom: 14 },
+  ticBoardAura: { position: "absolute", width: 260, height: 260, borderRadius: 130, backgroundColor: "#22c55e", opacity: 0.16, top: -46, right: -56 },
+  ticBoardLarge: { zIndex: 2, flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  ticCellLarge: { width: "30.8%", aspectRatio: 1, borderRadius: 25, backgroundColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center", boxShadow: "inset 0px 1px 0px rgba(255,255,255,0.18), 0px 10px 18px rgba(0,0,0,0.18)" },
+  ticCellOccupied: { backgroundColor: "rgba(255,255,255,0.18)" },
+  ticCellX: { backgroundColor: "rgba(34,197,94,0.22)" },
+  ticCellO: { backgroundColor: "rgba(59,130,246,0.20)" },
+  ticCellLastMove: { boxShadow: "0px 0px 24px rgba(34,197,94,0.45)" },
+  ticCellWinner: { backgroundColor: "rgba(250,204,21,0.25)", boxShadow: "0px 0px 26px rgba(250,204,21,0.55)" },
+  pressedCell: { transform: [{ scale: 0.96 }], opacity: 0.88 },
+  ticTextLarge: { color: "#ffffff", fontSize: 48, fontWeight: "900" },
+  emptyMarkSpark: { width: 8, height: 8, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.18)" },
+  oMarkOuter: { width: 50, height: 50, borderRadius: 25, borderWidth: 8, borderColor: "#60a5fa", alignItems: "center", justifyContent: "center", boxShadow: "0px 0px 18px rgba(96,165,250,0.75)" },
+  oMarkInner: { width: 20, height: 20, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.12)" },
+  oMarkShine: { position: "absolute", width: 10, height: 10, borderRadius: 5, backgroundColor: "#dbeafe", top: 4, right: 8 },
+  xMarkWrap: { width: 56, height: 56, alignItems: "center", justifyContent: "center" },
+  xStroke: { position: "absolute", width: 10, height: 58, borderRadius: 999, backgroundColor: "#86efac", boxShadow: "0px 0px 18px rgba(134,239,172,0.8)" },
+  xStrokeLeft: { transform: [{ rotate: "45deg" }] },
+  xStrokeRight: { transform: [{ rotate: "-45deg" }] },
+  ticWinLine: { position: "absolute", height: 8, borderRadius: 999, backgroundColor: "#facc15", zIndex: 4, boxShadow: "0px 0px 22px rgba(250,204,21,0.8)" },
+  secondaryFullButton: { minHeight: 54, borderRadius: 20, backgroundColor: "#ffffff", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0px 14px 28px rgba(15,23,42,0.10)" },
   secondaryFullText: { color: "#0f172a", fontSize: 16, fontWeight: "900" },
-  snakeBoard: { flexDirection: "row", flexWrap: "wrap", gap: 3, backgroundColor: "#f1f5f9", borderRadius: 20, padding: 8, marginBottom: 12 },
-  snakeCell: { width: "9.1%", aspectRatio: 1, borderRadius: 8, backgroundColor: "#ffffff", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#e2e8f0" },
-  snakeCellTrap: { backgroundColor: "#fef2f2", borderColor: "#fecaca" },
-  snakeCellBoost: { backgroundColor: "#ecfdf3", borderColor: "#bbf7d0" },
-  snakeCellText: { color: "#64748b", fontSize: 9, fontWeight: "900" },
+  resultCard: { borderRadius: 22, backgroundColor: "rgba(255,255,255,0.90)", padding: 14, marginBottom: 14, flexDirection: "row", gap: 10, alignItems: "center", boxShadow: "0px 14px 30px rgba(15,23,42,0.08)" },
+  resultCopy: { flex: 1 },
+  resultTitle: { color: "#0f172a", fontSize: 16, fontWeight: "900" },
+  resultText: { color: "#64748b", fontSize: 13, fontWeight: "800", marginTop: 2, lineHeight: 18 },
+  diceBadge: { zIndex: 2, width: 66, height: 66, borderRadius: 24, backgroundColor: "#fff7ed", alignItems: "center", justifyContent: "center", boxShadow: "0px 18px 30px rgba(251,146,60,0.28)" },
+  diceText: { color: "#f97316", fontSize: 26, fontWeight: "900" },
+  snakeBoardCard: { backgroundColor: "#fff7ed", padding: 14 },
+  snakeBoardShell: { position: "relative", borderRadius: 30, padding: 10, backgroundColor: "#7c2d12", overflow: "hidden", marginBottom: 12 },
+  snakeBoardTrackGlow: { position: "absolute", width: 260, height: 260, borderRadius: 130, backgroundColor: "#facc15", opacity: 0.16, top: -70, left: -60 },
+  snakeBoard: { zIndex: 2, flexDirection: "row", flexWrap: "wrap", gap: 3, borderRadius: 22, padding: 8 },
+  snakeCell: { width: "9.1%", aspectRatio: 1, borderRadius: 9, backgroundColor: "#fffbeb", alignItems: "center", justifyContent: "center", boxShadow: "inset 0px 1px 0px rgba(255,255,255,0.65)" },
+  snakeCellOdd: { backgroundColor: "#fed7aa" },
+  snakeCellTrap: { backgroundColor: "#fee2e2" },
+  snakeCellBoost: { backgroundColor: "#dcfce7" },
+  snakeCellEffect: { boxShadow: "0px 0px 18px rgba(245,158,11,0.9)" },
+  snakeCellOccupied: { transform: [{ scale: 1.04 }] },
+  snakeCellText: { color: "#7c2d12", fontSize: 9, fontWeight: "900" },
+  snakeMarker: { position: "absolute", top: -4, right: -3, fontSize: 12 },
+  snakeMarkerTrap: { color: "#dc2626" },
+  snakeMarkerBoost: { color: "#16a34a" },
   tokenRow: { position: "absolute", bottom: 1, flexDirection: "row", gap: 1 },
+  snakeToken: { width: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  snakeTokenText: { color: "#ffffff", fontSize: 9, fontWeight: "900" },
   youToken: { overflow: "hidden", backgroundColor: "#16a34a", color: "#ffffff", borderRadius: 999, fontSize: 8, fontWeight: "900", paddingHorizontal: 3 },
   botToken: { overflow: "hidden", backgroundColor: "#2563eb", color: "#ffffff", borderRadius: 999, fontSize: 8, fontWeight: "900", paddingHorizontal: 3 },
   snakeLegend: { flexDirection: "row", justifyContent: "space-between", gap: 8, marginBottom: 12 },
-  legendText: { color: "#64748b", fontSize: 12, fontWeight: "800" },
-  memoryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 14 },
-  memoryCard: { width: "30.8%", aspectRatio: 1, borderRadius: 24, backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0", alignItems: "center", justifyContent: "center" },
-  memoryCardVisible: { backgroundColor: "#faf5ff", borderColor: "#d8b4fe" },
-  memoryCardMatched: { backgroundColor: "#ecfdf3", borderColor: "#86efac" },
+  legendText: { color: "#7c2d12", fontSize: 12, fontWeight: "900" },
+  eventStrip: { borderRadius: 16, padding: 12, marginBottom: 12 },
+  snakeEvent: { backgroundColor: "#fee2e2" },
+  ladderEvent: { backgroundColor: "#dcfce7" },
+  eventText: { color: "#0f172a", fontSize: 13, fontWeight: "900" },
+  particleLayer: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 1 },
+  particleDot: { position: "absolute", width: 14, height: 14, borderRadius: 7 },
+  memoryBoardCard: { backgroundColor: "#f5f3ff", padding: 14 },
+  memoryTable: { position: "relative", borderRadius: 32, padding: 14, backgroundColor: "#2e1065", overflow: "hidden", marginBottom: 14 },
+  memoryTableGlow: { position: "absolute", width: 260, height: 260, borderRadius: 130, backgroundColor: "#a855f7", opacity: 0.22, top: -80, right: -60 },
+  memoryGrid: { zIndex: 2, flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  memoryCardShell: { width: "30.8%", aspectRatio: 1 },
+  memoryCardTapTarget: { width: "100%", height: "100%" },
+  memoryCardFace: { position: "absolute", width: "100%", height: "100%", borderRadius: 24, alignItems: "center", justifyContent: "center", overflow: "hidden", backfaceVisibility: "hidden", boxShadow: "0px 14px 26px rgba(46,16,101,0.25)" },
+  memoryCardBack: { backgroundColor: "#7c3aed" },
+  memoryBackOrb: { width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center" },
+  memoryBackGlyph: { color: "#f5f3ff", fontSize: 25, fontWeight: "900" },
+  memoryCardFront: { backgroundColor: "#ffffff" },
+  memoryCardMatched: { backgroundColor: "#dcfce7" },
+  memoryCardMismatch: { backgroundColor: "#ffe4e6" },
   memoryText: { color: "#0f172a", fontSize: 36, fontWeight: "900" },
   roomSummary: { backgroundColor: "#ecfdf3", borderRadius: 26, borderWidth: 1, borderColor: "#bbf7d0", padding: 20, flexDirection: "row", justifyContent: "space-between", marginBottom: 14 },
   summaryLabel: { color: "#15803d", fontSize: 13, fontWeight: "900" },
