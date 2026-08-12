@@ -194,6 +194,10 @@ export function SellerStudioScreen({
   const [productDraft, setProductDraft] =
     useState<ProductDraft>(defaultProductDraft);
   const [selectedAssets, setSelectedAssets] = useState<UploadAsset[]>([]);
+  const [productSaveNotice, setProductSaveNotice] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -408,10 +412,12 @@ export function SellerStudioScreen({
       llmSummary: product.llmSummary ?? "",
     });
     setSelectedAssets([]);
+    setProductSaveNotice(null);
     setActiveSection("catalog");
   };
 
   const saveProduct = async () => {
+    setProductSaveNotice(null);
     setBusy(true);
     try {
       const product = await repository.saveProduct({
@@ -429,15 +435,23 @@ export function SellerStudioScreen({
       }
       setProductDraft(defaultProductDraft);
       setSelectedAssets([]);
+      setProductSaveNotice({
+        tone: "success",
+        message: selectedAssets.length
+          ? `Product and ${selectedAssets.length} media item(s) saved.`
+          : "Product saved.",
+      });
       refresh();
       Alert.alert(
         "Catalog updated",
         `${product.name} is ready inside Social Chat 24/7 Shop.`,
       );
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Please try again.";
+      setProductSaveNotice({ tone: "error", message });
       Alert.alert(
         "Unable to save product",
-        error instanceof Error ? error.message : "Please try again.",
+        message,
       );
     } finally {
       setBusy(false);
@@ -1041,6 +1055,8 @@ export function SellerStudioScreen({
                   >
                     <Pressable
                       style={styles.mediaPicker}
+                      accessibilityRole="button"
+                      accessibilityLabel="Add product media"
                       onPress={async () => {
                         if (!pickProductImages) {
                           Alert.alert(
@@ -1050,7 +1066,10 @@ export function SellerStudioScreen({
                           return;
                         }
                         const assets = await pickProductImages();
-                        if (assets.length) setSelectedAssets(assets);
+                        if (assets.length) {
+                          setSelectedAssets(assets);
+                          setProductSaveNotice(null);
+                        }
                       }}
                     >
                       <Plus size={18} color={green} />
@@ -1059,17 +1078,22 @@ export function SellerStudioScreen({
                       </Text>
                     </Pressable>
                     {selectedAssets.length ? (
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.assetRail}
-                      >
-                        {selectedAssets.map((asset) => (
-                          <View key={asset.uri} style={styles.assetCard}>
-                            <Image source={{ uri: asset.uri }} style={styles.assetImage} />
-                          </View>
-                        ))}
-                      </ScrollView>
+                      <>
+                        <Text style={styles.mediaSelectionText}>
+                          {selectedAssets.length} media item(s) selected
+                        </Text>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.assetRail}
+                        >
+                          {selectedAssets.map((asset) => (
+                            <View key={asset.uri} style={styles.assetCard}>
+                              <Image source={{ uri: asset.uri }} style={styles.assetImage} />
+                            </View>
+                          ))}
+                        </ScrollView>
+                      </>
                     ) : null}
                   </PreviewCard>
                 </>
@@ -1083,6 +1107,18 @@ export function SellerStudioScreen({
                 onPress={() => void saveProduct()}
               />
             </ActionBar>
+            {productSaveNotice ? (
+              <Text
+                accessibilityRole="alert"
+                style={
+                  productSaveNotice.tone === "error"
+                    ? styles.productSaveError
+                    : styles.productSaveSuccess
+                }
+              >
+                {productSaveNotice.message}
+              </Text>
+            ) : null}
 
             <View style={styles.tableShell}>
               <Text style={styles.tableTitle}>Catalog inventory</Text>
@@ -1097,6 +1133,8 @@ export function SellerStudioScreen({
                 dashboard?.products.map((item) => (
                   <Pressable
                     key={item.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit product ${item.name}`}
                     onPress={() => editProduct(item)}
                     style={styles.tableRow}
                   >
@@ -1737,7 +1775,13 @@ function PrimaryButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={styles.primaryButton} disabled={busy} onPress={onPress}>
+    <Pressable
+      style={styles.primaryButton}
+      disabled={busy}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+    >
       {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{label}</Text>}
     </Pressable>
   );
@@ -2124,6 +2168,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   mediaPickerText: { color: greenDeep, fontWeight: "800", fontSize: 14 },
+  mediaSelectionText: { color: greenDeep, fontWeight: "800", fontSize: 12 },
   assetRail: { gap: 10, paddingTop: 4 },
   assetCard: {
     width: 96,
@@ -2148,6 +2193,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   primaryButtonText: { color: "#ffffff", fontWeight: "900", fontSize: 14 },
+  productSaveSuccess: { color: greenDeep, fontSize: 13, fontWeight: "800" },
+  productSaveError: { color: "#b42318", fontSize: 13, fontWeight: "800" },
   tableShell: {
     marginTop: 4,
     borderRadius: 15,

@@ -31,6 +31,7 @@ export default function ProfilePage() {
   return (
     <ProfileScreen
       repository={repository}
+      onOpenCreatorCommerce={() => router.push('/commerce')}
       onSignOut={async () => {
         await signOut();
         router.replace('/login');

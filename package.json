@@ -23,6 +23,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-svg": "15.15.4",
+    "react-native-url-polyfill": "^4.0.0",
     "react-native-web": "^0.21.2",
     "recharts": "^3.7.0",
     "rn-emoji-keyboard": "^1.7.0",
@@ -37,7 +38,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts"
+    "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts",
+    "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts"
   },
   "private": true
 }

@@ -21,6 +21,7 @@ import {
   Pencil,
   ReceiptText,
   ShieldCheck,
+  Store,
   UserRound,
 } from "lucide-react-native";
 import {
@@ -33,6 +34,7 @@ type Props = {
   repository?: ProfileRepository;
   onOpenOrders?: () => void;
   onOpenSaved?: () => void;
+  onOpenCreatorCommerce?: () => void;
   onSignOut?: () => void;
 };
 type Status = "loading" | "ready" | "error";
@@ -41,6 +43,7 @@ export function ProfileScreen({
   repository = localProfileRepository,
   onOpenOrders,
   onOpenSaved,
+  onOpenCreatorCommerce,
   onSignOut,
 }: Props) {
   const [status, setStatus] = useState<Status>("loading");
@@ -153,6 +156,12 @@ export function ProfileScreen({
           title="Saved content"
           subtitle="Posts, products and collections"
           onPress={onOpenSaved}
+        />
+        <SettingsRow
+          icon={Store}
+          title="Creator Commerce"
+          subtitle="Seller, creator and professional verification"
+          onPress={onOpenCreatorCommerce}
         />
       </View>
       <Text style={styles.sectionTitle}>Account</Text>

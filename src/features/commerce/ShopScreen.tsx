@@ -26,7 +26,7 @@ import {
 
 type Props = {
   repository?: ShopRepository;
-  onCheckout?: (lines: CartLine[]) => void;
+  onCheckout?: (lines: CartLine[]) => void | Promise<void>;
   onProductPress?: (product: ShopProduct) => void;
   onStorefrontPress?: (storefront: StorefrontSummary) => void;
 };
@@ -52,6 +52,7 @@ export function ShopScreen({
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<ShopCategory>("All");
   const [isSaving, setSaving] = useState(false);
+  const [isCheckingOut, setCheckingOut] = useState(false);
   const [isCartOpen, setCartOpen] = useState(false);
 
   const load = async () => {
@@ -107,6 +108,36 @@ export function ShopScreen({
       Alert.alert("Cart not saved", "Please try again.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCheckout = async () => {
+    if (isCheckingOut) return;
+    if (!cart.length) {
+      Alert.alert("Your bag is empty", "Add a product before continuing to checkout.");
+      return;
+    }
+    if (!onCheckout) {
+      Alert.alert(
+        "Checkout not wired",
+        "The seller catalog is live. Payment and order settlement can be connected next.",
+      );
+      return;
+    }
+
+    setCheckingOut(true);
+    try {
+      await onCheckout(cart);
+      await repository.saveCart([]);
+      setCart([]);
+      setCartOpen(false);
+    } catch (error) {
+      Alert.alert(
+        "Checkout not started",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setCheckingOut(false);
     }
   };
 
@@ -333,17 +364,13 @@ export function ShopScreen({
               <Text style={styles.totalValue}>{formatInr(cartTotal)}</Text>
             </View>
             <Pressable
-              style={styles.checkout}
-              onPress={() =>
-                onCheckout
-                  ? onCheckout(cart)
-                  : Alert.alert(
-                      "Checkout not wired",
-                      "The seller catalog is live. Payment and order settlement can be connected next.",
-                    )
-              }
+              disabled={isCheckingOut || !cart.length}
+              style={[styles.checkout, (isCheckingOut || !cart.length) && styles.checkoutDisabled]}
+              onPress={() => void handleCheckout()}
             >
-              <Text style={styles.checkoutText}>Continue to checkout</Text>
+              <Text style={styles.checkoutText}>
+                {isCheckingOut ? "Opening checkout..." : "Continue to checkout"}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -722,6 +749,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 15,
   },
+  checkoutDisabled: { opacity: 0.55 },
   checkoutText: { color: "#ffffff", fontWeight: "800", fontSize: 15 },
   emptyText: {
     paddingVertical: 36,

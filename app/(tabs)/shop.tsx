@@ -1,7 +1,7 @@
 import { router } from "expo-router";
-import { Alert } from "react-native";
 import { useMemo } from "react";
 import { ShopScreen } from "../../src/features/commerce/ShopScreen";
+import { addLifecycleCartItem } from "../../src/features/creatorCommerce/lifecycleRepository";
 import { createSupabaseShopRepository } from "../../src/features/commerce/supabaseShopRepository";
 import { localShopRepository } from "../../src/features/commerce/shopRepository";
 import { useAuth } from "../../src/lib/AuthContext";
@@ -20,12 +20,20 @@ export default function ShopPage() {
   return (
     <ShopScreen
       repository={repository}
-      onCheckout={() =>
-        Alert.alert(
-          "Checkout next",
-          "Seller onboarding, storefronts, and product publishing are now connected. Payment settlement can be wired after this.",
-        )
-      }
+      onCheckout={async (lines) => {
+        if (!supabase || !user || !("identities" in user)) {
+          throw new Error("Please sign in before continuing to checkout.");
+        }
+        if (!lines.length) {
+          throw new Error("Add a product before continuing to checkout.");
+        }
+
+        for (const line of lines) {
+          await addLifecycleCartItem(supabase, line.productId, line.quantity, null);
+        }
+
+        router.push("/commerce/buyer");
+      }}
       onStorefrontPress={(storefront) =>
         router.push({ pathname: "/store/[slug]", params: { slug: storefront.slug } })
       }

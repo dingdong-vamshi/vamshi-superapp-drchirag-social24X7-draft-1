@@ -1,0 +1,23 @@
+{
+  "buildCommand": "npx expo export --platform web",
+  "outputDirectory": "dist",
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/store/:slug/product/:productSlug",
+      "destination": "/store/[slug]/product/[productSlug]"
+    },
+    {
+      "source": "/store/:slug",
+      "destination": "/store/[slug]"
+    },
+    {
+      "source": "/business-chat/:id",
+      "destination": "/business-chat/[id]"
+    },
+    {
+      "source": "/games/:id",
+      "destination": "/games/[id]"
+    }
+  ]
+}
