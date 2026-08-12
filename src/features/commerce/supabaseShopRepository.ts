@@ -50,6 +50,7 @@ type ProductRow = {
   slug: string;
   brand: string | null;
   price_minor: number;
+  sale_price_minor: number | null;
   inventory: number;
   category: Exclude<ShopCategory, "All">;
   short_description: string | null;
@@ -181,7 +182,7 @@ const productFromRow = (
     name: row.title,
     slug: row.slug,
     brand: row.brand ?? storefront?.name ?? "Seller",
-    pricePaise: row.price_minor,
+    pricePaise: row.sale_price_minor ?? row.price_minor,
     rating: 4.8,
     reviewCount: 0,
     category: row.category,
@@ -230,7 +231,7 @@ export function createSupabaseShopRepository({
       let query = client
         .from("products")
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
         )
         .eq("status", "active")
         .order("featured", { ascending: false })
@@ -279,7 +280,7 @@ export function createSupabaseShopRepository({
       const { data, error } = await client
         .from("products")
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!inner(id,name,slug),product_media(path,position)",
+          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!inner(id,name,slug),product_media(path,position)",
         )
         .eq("status", "active")
         .eq("slug", productSlug)
@@ -343,7 +344,7 @@ export function createSupabaseShopRepository({
         ? await client
             .from("products")
             .select(
-              "id,storefront_id,title,slug,brand,price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+              "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
             )
             .eq("storefront_id", storefront.id)
             .order("updated_at", { ascending: false })
@@ -696,7 +697,7 @@ export function createSupabaseShopRepository({
         .from("products")
         .upsert(payload, { onConflict: "id" })
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
         )
         .single();
       if (error) throw new Error(error.message);
@@ -769,7 +770,7 @@ export function createSupabaseShopRepository({
       const { data, error } = await client
         .from("products")
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
         )
         .eq("id", productId)
         .single();

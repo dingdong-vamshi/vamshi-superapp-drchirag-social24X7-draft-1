@@ -234,7 +234,9 @@ export const createSupabaseChatRepository = ({
     return (data as RequestRow[] | null) ?? [];
   };
 
-  const fetchPersonalConversationRows = async () => {
+  const fetchConversationRows = async (
+    kinds: ConversationRow['kind'][] = ['personal', 'business'],
+  ) => {
     const { data, error } = await client
       .from('conversations')
       .select(`
@@ -261,13 +263,15 @@ export const createSupabaseChatRepository = ({
           )
         )
       `)
-      .eq('kind', 'personal')
+      .in('kind', kinds)
       .order('updated_at', { ascending: false })
       .limit(100);
 
     if (error) throw new Error(error.message);
     return (data as ConversationRow[] | null) ?? [];
   };
+
+  const fetchPersonalConversationRows = () => fetchConversationRows(['personal']);
 
   const fetchMessagesByConversationIds = async (conversationIds: string[]) => {
     if (!conversationIds.length) return new Map<string, MessageRow[]>();
@@ -350,7 +354,7 @@ export const createSupabaseChatRepository = ({
 
   const resolveConversationId = async (conversationIdOrParticipantId: string) => {
     if (!viewerId) throw new Error('Authentication required.');
-    const rows = await fetchPersonalConversationRows();
+    const rows = await fetchConversationRows();
     const directConversation = rows.find((row) => row.id === conversationIdOrParticipantId);
     if (directConversation) return directConversation.id;
     const ensured = await ensureAcceptedConversation(conversationIdOrParticipantId);
@@ -533,7 +537,7 @@ export const createSupabaseChatRepository = ({
         await ensureAcceptedConversation(participantId);
       }
 
-      const conversationRows = await fetchPersonalConversationRows();
+      const conversationRows = await fetchConversationRows();
       const messagesByConversationId = await fetchMessagesByConversationIds(
         conversationRows.map((row) => row.id),
       );
