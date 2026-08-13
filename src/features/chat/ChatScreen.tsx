@@ -1269,6 +1269,26 @@ function ConversationView({
   useEffect(() => {
     list.current?.scrollToEnd({ animated: true });
   }, [messages.length]);
+  const presenceLabel = conversation.storefront
+    ? conversation.businessRole === "seller"
+      ? `Customer · ${conversation.storefront.name}`
+      : `${conversation.storefront.verificationStatus === "approved" ? "Verified store" : "Store"} · Messages are private`
+    : conversation.participant.isOnline
+      ? "online"
+      : "Messages are private";
+  const canOpenStoreFromHeader = Boolean(
+    conversation.storefront &&
+      onViewStore &&
+      conversation.businessRole !== "seller",
+  );
+  const headerIdentity = (
+    <>
+      <Text accessibilityRole="header" style={styles.personName}>
+        {conversation.participant.name}
+      </Text>
+      <Text style={styles.presence}>{presenceLabel}</Text>
+    </>
+  );
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
@@ -1289,18 +1309,23 @@ function ConversationView({
             label={conversation.participant.avatarLabel}
             online={conversation.participant.isOnline}
           />
-          <View style={styles.headerInfo}>
-            <Text accessibilityRole="header" style={styles.personName}>
-              {conversation.participant.name}
-            </Text>
-            <Text style={styles.presence}>
-              {conversation.storefront
-                ? conversation.businessRole === "seller"
-                  ? `Customer · ${conversation.storefront.name}`
-                  : `${conversation.storefront.verificationStatus === "approved" ? "Verified store" : "Store"} · Messages are private`
-                : conversation.participant.isOnline ? "online" : "Messages are private"}
-            </Text>
-          </View>
+          {canOpenStoreFromHeader ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${conversation.storefront!.name} store catalog`}
+              accessibilityHint="Opens the store and its product listings"
+              onPress={() => onViewStore!(conversation.storefront!.slug)}
+              style={({ pressed }) => [
+                styles.headerInfo,
+                styles.storefrontHeaderLink,
+                pressed && styles.storefrontHeaderLinkPressed,
+              ]}
+            >
+              {headerIdentity}
+            </Pressable>
+          ) : (
+            <View style={styles.headerInfo}>{headerIdentity}</View>
+          )}
           {conversation.storefront && onViewStore ? (
             <Pressable
               accessibilityRole="button"
@@ -3387,6 +3412,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
   },
   headerInfo: { flex: 1, minWidth: 0 },
+  storefrontHeaderLink: {
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 5,
+  },
+  storefrontHeaderLinkPressed: {
+    backgroundColor: "#edf8f1",
+    opacity: 0.82,
+  },
   presence: { color: "#888888", fontSize: 12, marginTop: 2 },
   callControl: {
     width: 36,
