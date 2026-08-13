@@ -1,12 +1,17 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Clipboard from "expo-clipboard";
+import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import EmojiPicker, { type EmojiType } from "rn-emoji-keyboard";
 import {
   ActivityIndicator,
   Alert,
   type AlertButton,
   FlatList,
+  Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -22,6 +27,7 @@ import {
   CheckCircle2,
   Camera,
   Copy,
+  FileText,
   Ellipsis,
   MessageCircle,
   Mic,
@@ -30,6 +36,8 @@ import {
   Phone,
   PhoneOff,
   Plus,
+  ImageIcon,
+  MapPin,
   Reply,
   Search,
   Send,
@@ -37,6 +45,7 @@ import {
   Share2,
   Store,
   UserPlus,
+  UserRound,
   UsersRound,
   Video,
   VideoOff,
@@ -62,10 +71,24 @@ type Props = {
   callAdapter?: CallAdapter;
   onBack?: () => void;
   onBusinessSearch?: () => void;
+  onViewStore?: (slug: string) => void;
+  onViewOrder?: (orderId: string) => void;
+  onViewProfile?: (profileId: string) => void;
+  initialConversationId?: string;
   sharedPost?: SharedPost;
 };
 type LoadState = "loading" | "ready" | "error";
 type ChatListFilter = "all" | "unread" | "requests" | "archived";
+type PendingChatAttachment = {
+  uri: string;
+  filename: string;
+  mimeType: string;
+  size?: number;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  source: "camera_capture" | "gallery" | "document_picker" | "document_scan";
+};
 
 const unavailableChatRepository: ChatDataSource = {
   async listConversations() {
@@ -103,6 +126,12 @@ const formatTime = (date: string) =>
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(date));
+const formatMinor = (value: number, currency = "INR") =>
+  new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(value / 100);
 const preview = (conversation: Conversation) =>
   conversation.lastMessage?.text ||
   conversation.requestMessage ||
@@ -115,6 +144,10 @@ export default function ChatScreen({
   callAdapter = unconfiguredCallAdapter,
   onBack,
   onBusinessSearch,
+  onViewStore,
+  onViewOrder,
+  onViewProfile,
+  initialConversationId,
   sharedPost,
 }: Props) {
   const [selected, setSelected] = useState<Conversation | null>(null);
@@ -142,6 +175,7 @@ export default function ChatScreen({
   const loadSeqRef = useRef(0);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownRequestSignatureRef = useRef<string | null>(null);
+  const initialConversationOpenedRef = useRef(false);
 
   const loadConversations = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
     const loadId = ++loadSeqRef.current;
@@ -160,12 +194,16 @@ export default function ChatScreen({
       hasLoadedOnceRef.current = true;
       setHasLoadedOnce(true);
       setState("ready");
-    } catch {
+    } catch (caughtError) {
+      const detail =
+        caughtError instanceof Error && caughtError.message.trim()
+          ? ` ${caughtError.message}`
+          : "";
       if (!hasLoadedOnceRef.current && conversationsRef.current.length === 0) {
-        setError("Chats could not be loaded from this device. Please try again.");
+        setError(`Chats could not be loaded from this device. Please try again.${detail}`);
         setState("error");
       } else {
-        setError("Chats could not be refreshed. Showing your latest loaded conversations.");
+        setError(`Chats could not be refreshed. Showing your latest loaded conversations.${detail}`);
       }
     } finally {
       if (loadId === loadSeqRef.current) setIsRefreshing(false);
@@ -233,6 +271,25 @@ export default function ChatScreen({
   useEffect(() => {
     void loadConversations("initial");
   }, [loadConversations]);
+  useEffect(() => {
+    if (
+      !initialConversationId
+      || initialConversationOpenedRef.current
+      || !hasLoadedOnce
+    ) return;
+    const initialConversation = conversations.find(
+      (conversation) => conversation.id === initialConversationId,
+    );
+    if (!initialConversation) {
+      setError("This conversation is unavailable or you no longer have access.");
+      setState("error");
+      initialConversationOpenedRef.current = true;
+      return;
+    }
+    initialConversationOpenedRef.current = true;
+    setSegment(initialConversation.kind === "business" ? "business" : "personal");
+    void openConversation(initialConversation);
+  }, [conversations, hasLoadedOnce, initialConversationId, openConversation]);
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
@@ -458,6 +515,9 @@ export default function ChatScreen({
         callAdapter={callAdapter}
         callSession={callSession}
         sharedPost={sharedPost}
+        onViewStore={onViewStore}
+        onViewOrder={onViewOrder}
+        onViewProfile={onViewProfile}
         acceptRequest={async (conversationId) => {
           const accepted = await dataSource.acceptMessageRequest(conversationId);
           setSelected(accepted);
@@ -748,6 +808,9 @@ function ConversationView({
   callAdapter,
   callSession,
   sharedPost,
+  onViewStore,
+  onViewOrder,
+  onViewProfile,
   acceptRequest,
   onBack,
 }: {
@@ -759,6 +822,11 @@ function ConversationView({
   callAdapter: CallAdapter;
   callSession: CallSession | null;
   sharedPost?: SharedPost;
+  onViewStore?: (slug: string) => void;
+  onViewOrder?: (orderId: string) => void;
+  onViewProfile?: (profileId: string) => void;
+  onVotePoll?: (pollId: string, optionId: string) => void;
+  onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
   acceptRequest: (conversationId: string) => Promise<Conversation>;
   onBack: () => void;
 }) {
@@ -770,7 +838,299 @@ function ConversationView({
   const [reactionPendingId, setReactionPendingId] = useState<string | null>(
     null,
   );
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
+  const [attachmentSending, setAttachmentSending] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [contactQuery, setContactQuery] = useState("");
+  const [contactResults, setContactResults] = useState<ChatContact[]>([]);
+  const [contactLoading, setContactLoading] = useState(false);
+  const [pollOpen, setPollOpen] = useState(false);
+  const [eventOpen, setEventOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [structuredPending, setStructuredPending] = useState(false);
+  const [evidenceTarget, setEvidenceTarget] = useState<{ orderId: string; orderItemId: string; title: string } | null>(null);
+  const [returnTarget, setReturnTarget] = useState<{ orderItemId: string; title: string } | null>(null);
+  const [returnReason, setReturnReason] = useState("");
+  const [commerceActionPending, setCommerceActionPending] = useState(false);
   const list = useRef<FlatList<ChatMessage>>(null);
+
+  useEffect(() => {
+    if (!contactOpen || contactQuery.trim().length < 2) {
+      setContactResults([]);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      setContactLoading(true);
+      void dataSource.searchContacts(contactQuery)
+        .then((results) => active && setContactResults(results))
+        .catch(() => active && setContactResults([]))
+        .finally(() => active && setContactLoading(false));
+    }, 250);
+    return () => { active = false; clearTimeout(timer); };
+  }, [contactOpen, contactQuery, dataSource]);
+
+  const captureMedia = async (source: "camera_capture" | "document_scan" = "camera_capture") => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) throw new Error("Camera permission is required.");
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: source === "document_scan" ? ["images"] : ["images", "videos"],
+        allowsEditing: source === "document_scan",
+        quality: 0.84,
+        videoMaxDuration: 60,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      setAttachmentMenuOpen(false);
+      setPendingAttachment({
+        uri: asset.uri,
+        filename: asset.fileName || `${source === "document_scan" ? "scan" : "capture"}-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`,
+        mimeType: asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg"),
+        size: asset.fileSize,
+        width: asset.width,
+        height: asset.height,
+        durationMs: asset.duration ?? undefined,
+        source,
+      });
+    } catch (cause) {
+      Alert.alert("Camera unavailable", cause instanceof Error ? cause.message : "Please try again.");
+    }
+  };
+
+  const pickGallery = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) throw new Error("Photo library permission is required.");
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images", "videos"], quality: 0.84 });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      setAttachmentMenuOpen(false);
+      setPendingAttachment({
+        uri: asset.uri,
+        filename: asset.fileName || `gallery-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`,
+        mimeType: asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg"),
+        size: asset.fileSize,
+        width: asset.width,
+        height: asset.height,
+        durationMs: asset.duration ?? undefined,
+        source: "gallery",
+      });
+    } catch (cause) {
+      Alert.alert("Gallery unavailable", cause instanceof Error ? cause.message : "Please try again.");
+    }
+  };
+
+  const submitUnboxingEvidence = async (source: "live_capture" | "uploaded_file") => {
+    if (!evidenceTarget || !dataSource.submitUnboxingEvidence || commerceActionPending) return;
+    try {
+      const permission = source === "live_capture"
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) throw new Error(source === "live_capture" ? "Camera permission is required." : "Photo library permission is required.");
+      const result = source === "live_capture"
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images", "videos"], quality: 0.84, videoMaxDuration: 60 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images", "videos"], quality: 0.84 });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      const response = await fetch(asset.uri);
+      if (!response.ok) throw new Error("The selected evidence could not be read.");
+      const bytes = await response.arrayBuffer();
+      setCommerceActionPending(true);
+      await dataSource.submitUnboxingEvidence({
+        orderId: evidenceTarget.orderId,
+        orderItemId: evidenceTarget.orderItemId,
+        bytes,
+        filename: asset.fileName || `unboxing-${source === "live_capture" ? "live" : "upload"}-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`,
+        mimeType: asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg"),
+        source,
+      });
+      setEvidenceTarget(null);
+      Alert.alert("Evidence submitted", source === "live_capture" ? "Private live-capture evidence is attached to this order." : "Your private uploaded file is attached to this order.");
+    } catch (cause) {
+      Alert.alert("Evidence not submitted", cause instanceof Error ? cause.message : "Please retry.");
+    } finally {
+      setCommerceActionPending(false);
+    }
+  };
+
+  const submitReturnFromChat = async () => {
+    if (!returnTarget || !dataSource.submitOrderReturn || commerceActionPending) return;
+    if (!returnReason.trim()) {
+      Alert.alert("Return reason required", "Tell the seller and admin why this item is being returned.");
+      return;
+    }
+    setCommerceActionPending(true);
+    try {
+      await dataSource.submitOrderReturn({ orderItemId: returnTarget.orderItemId, reason: returnReason });
+      setReturnTarget(null);
+      setReturnReason("");
+      Alert.alert("Return requested", "The request is now available for admin review.");
+    } catch (cause) {
+      Alert.alert("Return not submitted", cause instanceof Error ? cause.message : "Please retry.");
+    } finally {
+      setCommerceActionPending(false);
+    }
+  };
+
+  const pickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "text/plain", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      setAttachmentMenuOpen(false);
+      setPendingAttachment({
+        uri: asset.uri,
+        filename: asset.name,
+        mimeType: asset.mimeType || "application/pdf",
+        size: asset.size,
+        source: "document_picker",
+      });
+    } catch (cause) {
+      Alert.alert("Document unavailable", cause instanceof Error ? cause.message : "Please try again.");
+    }
+  };
+
+  const sendPendingAttachment = async () => {
+    if (!pendingAttachment || !dataSource.sendAttachment || attachmentSending) return;
+    setAttachmentSending(true);
+    try {
+      const response = await fetch(pendingAttachment.uri);
+      if (!response.ok) throw new Error("The selected file could not be read.");
+      const bytes = await response.arrayBuffer();
+      if (pendingAttachment.size && pendingAttachment.size !== bytes.byteLength) {
+        throw new Error("The selected file changed before upload. Please select it again.");
+      }
+      await dataSource.sendAttachment({
+        conversationId: conversation.id,
+        bytes,
+        filename: pendingAttachment.filename,
+        mimeType: pendingAttachment.mimeType,
+        width: pendingAttachment.width,
+        height: pendingAttachment.height,
+        durationMs: pendingAttachment.durationMs,
+        source: pendingAttachment.source,
+      });
+      setPendingAttachment(null);
+    } catch (cause) {
+      Alert.alert("Attachment not sent", cause instanceof Error ? cause.message : "Retry when your connection is restored.");
+    } finally {
+      setAttachmentSending(false);
+    }
+  };
+
+  const shareLocation = async () => {
+    if (!dataSource.sendLocation) return;
+    try {
+      setAttachmentMenuOpen(false);
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) throw new Error("Foreground location permission is required.");
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const location = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy ?? undefined,
+        capturedAt: new Date(position.timestamp).toISOString(),
+      };
+      Alert.alert(
+        "Share current location?",
+        `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Send", onPress: () => void dataSource.sendLocation?.({ conversationId: conversation.id, location }).catch((cause) => Alert.alert("Location not sent", cause instanceof Error ? cause.message : "Please retry.")) },
+        ],
+      );
+    } catch (cause) {
+      Alert.alert("Location unavailable", cause instanceof Error ? cause.message : "This browser/device does not support current location.");
+    }
+  };
+
+  const shareContact = async (contact: ChatContact) => {
+    if (!dataSource.sendContact) return;
+    try {
+      setContactLoading(true);
+      await dataSource.sendContact({ conversationId: conversation.id, profileId: contact.id });
+      setContactOpen(false);
+      setContactQuery("");
+    } catch (cause) {
+      Alert.alert("Contact not sent", cause instanceof Error ? cause.message : "Please retry.");
+    } finally {
+      setContactLoading(false);
+    }
+  };
+
+  const createPoll = async (question: string, options: string[]) => {
+    if (!dataSource.createPoll) return;
+    setStructuredPending(true);
+    try {
+      await dataSource.createPoll({ conversationId: conversation.id, question, options });
+      setPollOpen(false);
+    } catch (cause) {
+      Alert.alert("Poll not created", cause instanceof Error ? cause.message : "Please retry.");
+    } finally { setStructuredPending(false); }
+  };
+
+  const createEvent = async (input: { title: string; startsAt: string; location?: string; description?: string }) => {
+    if (!dataSource.createEvent) return;
+    setStructuredPending(true);
+    try {
+      await dataSource.createEvent({ conversationId: conversation.id, ...input });
+      setEventOpen(false);
+    } catch (cause) {
+      Alert.alert("Event not created", cause instanceof Error ? cause.message : "Please retry.");
+    } finally { setStructuredPending(false); }
+  };
+
+  const votePoll = async (pollId: string, optionId: string) => {
+    try { await dataSource.votePoll?.(pollId, optionId); }
+    catch (cause) { Alert.alert("Vote not saved", cause instanceof Error ? cause.message : "Please retry."); }
+  };
+
+  const rsvpEvent = async (eventId: string, response: "going" | "maybe" | "declined") => {
+    try { await dataSource.rsvpEvent?.(eventId, response); }
+    catch (cause) { Alert.alert("RSVP not saved", cause instanceof Error ? cause.message : "Please retry."); }
+  };
+
+  const keepMemo = async () => {
+    if (!visibleActionMessage || !dataSource.keepMemo) return;
+    try {
+      await dataSource.keepMemo(visibleActionMessage.id);
+      setActionMessage(null);
+      Alert.alert("Saved to Keep Memo", "This message is now a private note in Notes & Tasks.");
+    } catch (cause) {
+      Alert.alert("Memo not saved", cause instanceof Error ? cause.message : "Please retry.");
+    }
+  };
+
+  const scheduleMessage = async (body: string, sendAt: string) => {
+    if (!dataSource.scheduleMessage) return;
+    setStructuredPending(true);
+    try {
+      await dataSource.scheduleMessage({ conversationId: conversation.id, body, sendAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" });
+      setScheduleOpen(false);
+      Alert.alert("Message scheduled", "The server will deliver it at the selected time, even if this app is closed.");
+    } catch (cause) { Alert.alert("Message not scheduled", cause instanceof Error ? cause.message : "Please retry."); }
+    finally { setStructuredPending(false); }
+  };
+
+  const chooseVanishMode = () => {
+    if (!dataSource.setVanishMode) return;
+    setAttachmentMenuOpen(false);
+    const setMode = (seconds: 86400 | 604800 | 2592000 | null) => void dataSource.setVanishMode?.(conversation.id, seconds)
+      .then(() => Alert.alert("Vanish Mode updated", seconds ? "Eligible user messages will disappear after the chosen duration. Commerce and system records never vanish." : "Vanish Mode is off."))
+      .catch((cause) => Alert.alert("Vanish Mode not updated", cause instanceof Error ? cause.message : "Please retry."));
+    Alert.alert("Vanish Mode", "Screenshots and previously exported content cannot be prevented. Order, payment, fulfillment, return, refund, and system events never vanish.", [
+      { text: "Off", onPress: () => setMode(null) },
+      { text: "24 hours", onPress: () => setMode(86400) },
+      { text: "7 days", onPress: () => setMode(604800) },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
   const send = async () => {
     if (conversation.requestStatus && conversation.requestStatus !== "accepted")
       return;
@@ -934,18 +1294,33 @@ function ConversationView({
               {conversation.participant.name}
             </Text>
             <Text style={styles.presence}>
-              {conversation.participant.isOnline ? "online" : "Messages are private"}
+              {conversation.storefront
+                ? conversation.businessRole === "seller"
+                  ? `Customer · ${conversation.storefront.name}`
+                  : `${conversation.storefront.verificationStatus === "approved" ? "Verified store" : "Store"} · Messages are private`
+                : conversation.participant.isOnline ? "online" : "Messages are private"}
             </Text>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Search this conversation"
-            disabled
-            accessibilityState={{ disabled: true }}
-            style={[styles.callControl, styles.disabledAction]}
-          >
-            <Search color="#475467" size={20} />
-          </Pressable>
+          {conversation.storefront && onViewStore ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`View ${conversation.storefront.name} storefront`}
+              onPress={() => onViewStore(conversation.storefront!.slug)}
+              style={styles.callControl}
+            >
+              <Store color="#078549" size={19} />
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Search this conversation"
+              disabled
+              accessibilityState={{ disabled: true }}
+              style={[styles.callControl, styles.disabledAction]}
+            >
+              <Search color="#475467" size={20} />
+            </Pressable>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Start audio call with ${conversation.participant.name}`}
@@ -1024,6 +1399,12 @@ function ConversationView({
                 onReactPress={() => setActionMessage(item)}
                 reactionPending={reactionPendingId === item.id}
                 reactions={item.reactions ?? []}
+                onViewOrder={onViewOrder}
+                onViewProfile={onViewProfile}
+                onVotePoll={(pollId, optionId) => void votePoll(pollId, optionId)}
+                onRsvpEvent={(eventId, response) => void rsvpEvent(eventId, response)}
+                onAddEvidence={(orderId, orderItemId, title) => setEvidenceTarget({ orderId, orderItemId, title })}
+                onRequestReturn={(orderItemId, title) => { setReturnTarget({ orderItemId, title }); setReturnReason(""); }}
               />
             )}
             onContentSizeChange={() =>
@@ -1034,10 +1415,10 @@ function ConversationView({
         <View style={styles.composer}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Choose a sticker"
+            accessibilityLabel="Open attachment menu"
             disabled={composerLocked}
             accessibilityState={{ disabled: composerLocked }}
-            onPress={() => setStickersOpen(true)}
+            onPress={() => setAttachmentMenuOpen(true)}
             style={[
               styles.composerAccessory,
               composerLocked && styles.disabledAction,
@@ -1072,9 +1453,10 @@ function ConversationView({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Attach camera media"
-              disabled
-              accessibilityState={{ disabled: true }}
-              style={[styles.inputAccessory, styles.disabledAction]}
+              disabled={composerLocked || !dataSource.sendAttachment}
+              accessibilityState={{ disabled: composerLocked || !dataSource.sendAttachment }}
+              onPress={() => void captureMedia()}
+              style={[styles.inputAccessory, (composerLocked || !dataSource.sendAttachment) && styles.disabledAction]}
             >
               <Camera color="#667085" size={20} />
             </Pressable>
@@ -1125,6 +1507,52 @@ function ConversationView({
           close={() => setStickersOpen(false)}
           select={(sticker) => void sendSticker(sticker)}
         />
+        <AttachmentMenu
+          visible={attachmentMenuOpen}
+          close={() => setAttachmentMenuOpen(false)}
+          gallery={() => void pickGallery()}
+          document={() => void pickDocument()}
+          location={() => void shareLocation()}
+          contact={() => { setAttachmentMenuOpen(false); setContactOpen(true); }}
+          sticker={() => { setAttachmentMenuOpen(false); setStickersOpen(true); }}
+          scan={() => void captureMedia("document_scan")}
+          poll={() => { setAttachmentMenuOpen(false); setPollOpen(true); }}
+          event={() => { setAttachmentMenuOpen(false); setEventOpen(true); }}
+          schedule={() => { setAttachmentMenuOpen(false); setScheduleOpen(true); }}
+          vanish={chooseVanishMode}
+        />
+        <AttachmentPreview
+          attachment={pendingAttachment}
+          sending={attachmentSending}
+          cancel={() => !attachmentSending && setPendingAttachment(null)}
+          send={() => void sendPendingAttachment()}
+        />
+        <ContactShareModal
+          visible={contactOpen}
+          query={contactQuery}
+          setQuery={setContactQuery}
+          contacts={contactResults}
+          loading={contactLoading}
+          close={() => { setContactOpen(false); setContactQuery(""); }}
+          share={(contact) => void shareContact(contact)}
+        />
+        <PollComposer visible={pollOpen} pending={structuredPending} close={() => setPollOpen(false)} submit={(question, options) => void createPoll(question, options)} />
+        <EventComposer visible={eventOpen} pending={structuredPending} close={() => setEventOpen(false)} submit={(input) => void createEvent(input)} />
+        <ScheduleComposer visible={scheduleOpen} pending={structuredPending} close={() => setScheduleOpen(false)} submit={(body, sendAt) => void scheduleMessage(body, sendAt)} />
+        <UnboxingEvidenceModal
+          target={evidenceTarget}
+          pending={commerceActionPending}
+          close={() => !commerceActionPending && setEvidenceTarget(null)}
+          choose={(source) => void submitUnboxingEvidence(source)}
+        />
+        <ReturnRequestModal
+          target={returnTarget}
+          reason={returnReason}
+          setReason={setReturnReason}
+          pending={commerceActionPending}
+          close={() => !commerceActionPending && setReturnTarget(null)}
+          submit={() => void submitReturnFromChat()}
+        />
         <MessageActions
           message={visibleActionMessage}
           reacting={Boolean(reactionPendingId)}
@@ -1132,6 +1560,7 @@ function ConversationView({
           copy={() => void copyMessage()}
           reply={replyToMessage}
           react={(emoji) => void reactToMessage(emoji)}
+          keepMemo={() => void keepMemo()}
         />
         <CallOverlay
           session={callSession}
@@ -1272,14 +1701,39 @@ function MessageBubble({
   onReactPress,
   reactionPending,
   reactions,
+  onViewOrder,
+  onViewProfile,
+  onVotePoll,
+  onRsvpEvent,
+  onAddEvidence,
+  onRequestReturn,
 }: {
   message: ChatMessage;
   onLongPress: () => void;
   onReactPress: () => void;
   reactionPending: boolean;
   reactions: MessageReaction[];
+  onViewOrder?: (orderId: string) => void;
+  onViewProfile?: (profileId: string) => void;
+  onVotePoll?: (pollId: string, optionId: string) => void;
+  onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
+  onAddEvidence?: (orderId: string, orderItemId: string, title: string) => void;
+  onRequestReturn?: (orderItemId: string, title: string) => void;
 }) {
-  const mine = message.senderId === CURRENT_USER_ID;
+  const systemEvent = message.type === "order_event";
+  const mine = !systemEvent && message.senderId === CURRENT_USER_ID;
+  const showOrderEvidence = Boolean(
+    message.order && ["order_delivered", "return_requested", "return_approved", "return_rejected"].includes(message.order.eventType),
+  );
+  const openStructured = message.order && onViewOrder
+    ? () => onViewOrder(message.order!.orderId)
+    : message.attachment?.signedUrl
+      ? () => void Linking.openURL(message.attachment!.signedUrl!)
+      : message.location
+        ? () => void Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${message.location!.latitude},${message.location!.longitude}`)
+        : message.contact && onViewProfile
+          ? () => onViewProfile(message.contact!.profileId)
+          : undefined;
   const webLongPressProps =
     Platform.OS === "web"
       ? {
@@ -1290,9 +1744,9 @@ function MessageBubble({
         }
       : {};
   return (
-    <View style={[styles.messageWrap, mine && styles.mineWrap]}>
-      <View style={[styles.messagePressRow, mine && styles.messagePressRowMine]}>
-        {!mine ? (
+    <View style={[styles.messageWrap, mine && styles.mineWrap, systemEvent && styles.systemEventWrap]}>
+      <View style={[styles.messagePressRow, mine && styles.messagePressRowMine, systemEvent && styles.systemEventPressRow]}>
+        {!mine && !systemEvent ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="React to received message"
@@ -1317,15 +1771,17 @@ function MessageBubble({
           </Pressable>
         ) : null}
         <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${mine ? "Your" : "Received"} message. Long press for actions.`}
-          onLongPress={onLongPress}
+          accessibilityRole={systemEvent || message.poll || message.event ? undefined : "button"}
+          accessibilityLabel={systemEvent ? "System order update" : `${mine ? "Your" : "Received"} message. Long press for actions.`}
+          onLongPress={systemEvent ? undefined : onLongPress}
+          onPress={systemEvent || message.poll || message.event ? undefined : openStructured}
           delayLongPress={350}
-          {...webLongPressProps}
+          {...(systemEvent ? {} : webLongPressProps)}
           style={[
             styles.message,
             message.type === "sticker" && styles.stickerMessage,
             mine ? styles.mine : styles.theirs,
+            systemEvent && styles.systemEventMessage,
             message.type === "sticker" && styles.transparentMessage,
           ]}
         >
@@ -1342,10 +1798,154 @@ function MessageBubble({
               </Text>
             </View>
           )}
+          {message.type === "order_event" && message.order ? (
+            <View style={[styles.orderEventCard, mine && styles.orderEventCardMine]}>
+              <View style={styles.orderEventHeader}>
+                <Text style={[styles.orderEventEyebrow, mine && styles.mineText]}>ORDER UPDATE</Text>
+                <Text style={[styles.orderEventStatus, mine && styles.mineText]}>{message.text}</Text>
+              </View>
+              <Text style={[styles.orderEventStore, mine && styles.mineText]}>
+                {message.order.storefrontName} · #{message.order.orderId.slice(0, 8)}
+              </Text>
+              {message.order.items.slice(0, 3).map((item) => (
+                <Text key={item.orderItemId} style={[styles.orderEventItem, mine && styles.mineText]}>
+                  {item.quantity} × {item.title}
+                </Text>
+              ))}
+              <Text style={[styles.orderEventTotal, mine && styles.mineText]}>
+                Total {formatMinor(message.order.totalMinor, message.order.currency)}
+              </Text>
+              {message.order.carrier || message.order.trackingNumber ? (
+                <Text style={[styles.orderEventMeta, mine && styles.mineText]}>
+                  {[message.order.carrier, message.order.trackingNumber].filter(Boolean).join(" · ")}
+                </Text>
+              ) : null}
+              {showOrderEvidence && message.order.unboxingEvidence?.length ? (
+                <View style={styles.orderEvidenceList}>
+                  <Text style={styles.orderEvidenceEyebrow}>PRIVATE UNBOXING EVIDENCE</Text>
+                  {message.order.unboxingEvidence.map((evidence) => {
+                    const item = message.order!.items.find((candidate) => candidate.orderItemId === evidence.orderItemId);
+                    return (
+                      <Pressable accessibilityRole="button" accessibilityLabel={`View private unboxing evidence for ${item?.title ?? evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => evidence.signedUrl ? void Linking.openURL(evidence.signedUrl) : undefined} style={styles.orderEvidenceRow}>
+                        <View style={styles.grow}>
+                          <Text style={styles.orderEvidenceTitle} numberOfLines={1}>{item?.title ?? evidence.filename}</Text>
+                          <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? "Live capture" : "Uploaded file"} · Buyer, seller and admin only</Text>
+                        </View>
+                        {evidence.signedUrl ? <Text style={styles.orderEventAction}>View</Text> : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+              {showOrderEvidence && message.order.canSubmitUnboxingEvidence && onAddEvidence ? (
+                <View style={styles.orderCommerceActions}>
+                  {message.order.items.filter((item) => !message.order!.unboxingEvidence?.some((evidence) => evidence.orderItemId === item.orderItemId)).map((item) => (
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Submit unboxing evidence for ${item.title}`} key={item.orderItemId} onPress={() => onAddEvidence(message.order!.orderId, item.orderItemId, item.title)} style={styles.orderCommerceButton}>
+                      <Camera size={14} color="#087c43" />
+                      <Text style={styles.orderCommerceButtonText}>Submit evidence · {item.title}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+              {showOrderEvidence && message.order.canRequestReturn && onRequestReturn ? (
+                <View style={styles.orderCommerceActions}>
+                  {message.order.items.filter((item) => message.order!.unboxingEvidence?.some((evidence) => evidence.orderItemId === item.orderItemId)).map((item) => (
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Request return for ${item.title}`} key={item.orderItemId} onPress={() => onRequestReturn(item.orderItemId, item.title)} style={[styles.orderCommerceButton, styles.returnCommerceButton]}>
+                      <Text style={[styles.orderCommerceButtonText, styles.returnCommerceButtonText]}>Request return · {item.title}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+              {onViewOrder ? (
+                <Pressable accessibilityRole="button" accessibilityLabel={`View order ${message.order.orderId.slice(0, 8)}`} onPress={() => onViewOrder(message.order!.orderId)}>
+                  <Text style={[styles.orderEventAction, mine && styles.orderEventActionMine]}>View order</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
+          {message.attachment ? (
+            <View style={[styles.attachmentCard, mine && styles.attachmentCardMine]}>
+              {message.attachment.attachmentType === "image" && message.attachment.signedUrl ? (
+                <Image source={{ uri: message.attachment.signedUrl }} style={styles.attachmentImage} resizeMode="cover" />
+              ) : (
+                <View style={styles.attachmentFileIcon}>
+                  {message.attachment.attachmentType === "video" ? <Video color="#087c43" size={24} /> : <FileText color="#087c43" size={24} />}
+                </View>
+              )}
+              <Text style={[styles.attachmentName, mine && styles.mineText]} numberOfLines={2}>{message.attachment.filename}</Text>
+              <Text style={[styles.attachmentMeta, mine && styles.mineText]}>
+                {message.attachment.attachmentType} · {(message.attachment.bytes / 1_048_576).toFixed(1)} MiB
+              </Text>
+              {message.attachment.source === "camera_capture" ? (
+                <Text style={styles.liveCaptureBadge}>Captured Live · app provenance</Text>
+              ) : message.attachment.source === "document_scan" ? (
+                <Text style={styles.scanBadge}>Scanned in app</Text>
+              ) : null}
+              {message.attachment.signedUrl ? <Text style={styles.orderEventAction}>Open attachment</Text> : null}
+            </View>
+          ) : null}
+          {message.location ? (
+            <View style={[styles.structuredCard, mine && styles.attachmentCardMine]}>
+              <MapPin color="#087c43" size={24} />
+              <Text style={[styles.attachmentName, mine && styles.mineText]}>{message.location.label || "Current location"}</Text>
+              <Text style={[styles.attachmentMeta, mine && styles.mineText]}>{message.location.latitude.toFixed(5)}, {message.location.longitude.toFixed(5)}</Text>
+              {message.location.accuracy ? <Text style={[styles.attachmentMeta, mine && styles.mineText]}>Accuracy ±{Math.round(message.location.accuracy)} m</Text> : null}
+              <Text style={styles.orderEventAction}>Open map</Text>
+            </View>
+          ) : null}
+          {message.contact ? (
+            <View style={[styles.structuredCard, mine && styles.attachmentCardMine]}>
+              <UserRound color="#087c43" size={24} />
+              <Text style={[styles.attachmentName, mine && styles.mineText]}>{message.contact.displayName}</Text>
+              <Text style={[styles.attachmentMeta, mine && styles.mineText]}>@{message.contact.username || message.contact.profileId.slice(0, 8)}</Text>
+              {onViewProfile ? <Text style={styles.orderEventAction}>View profile</Text> : null}
+            </View>
+          ) : null}
+          {message.poll ? (
+            <View style={[styles.pollCard, mine && styles.attachmentCardMine]}>
+              <Text style={styles.orderEventEyebrow}>POLL</Text>
+              <Text style={[styles.pollQuestion, mine && styles.mineText]}>{message.poll.question}</Text>
+              {message.poll.options.map((option) => {
+                const ratio = message.poll!.totalVotes ? option.votes / message.poll!.totalVotes : 0;
+                return (
+                  <Pressable
+                    key={option.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Vote ${option.label}`}
+                    disabled={message.poll!.status !== "open" || !onVotePoll}
+                    onPress={() => onVotePoll?.(message.poll!.id, option.id)}
+                    style={[styles.pollOption, option.selectedByCurrentUser && styles.pollOptionSelected]}
+                  >
+                    <View style={[styles.pollOptionFill, { width: `${Math.round(ratio * 100)}%` }]} />
+                    <Text style={styles.pollOptionLabel}>{option.label}</Text>
+                    <Text style={styles.pollOptionVotes}>{option.votes}</Text>
+                  </Pressable>
+                );
+              })}
+              <Text style={styles.attachmentMeta}>{message.poll.totalVotes} vote{message.poll.totalVotes === 1 ? "" : "s"} · single choice</Text>
+            </View>
+          ) : null}
+          {message.event ? (
+            <View style={[styles.eventCard, mine && styles.attachmentCardMine]}>
+              <Text style={styles.orderEventEyebrow}>EVENT</Text>
+              <Text style={[styles.pollQuestion, mine && styles.mineText]}>{message.event.title}</Text>
+              <Text style={[styles.attachmentMeta, mine && styles.mineText]}>{new Date(message.event.startsAt).toLocaleString()}</Text>
+              {message.event.location ? <Text style={[styles.attachmentMeta, mine && styles.mineText]}>📍 {message.event.location}</Text> : null}
+              {message.event.description ? <Text style={[styles.attachmentMeta, mine && styles.mineText]}>{message.event.description}</Text> : null}
+              <View style={styles.rsvpRow}>
+                {(["going", "maybe", "declined"] as const).map((response) => (
+                  <Pressable key={response} accessibilityRole="button" onPress={() => onRsvpEvent?.(message.event!.id, response)} style={[styles.rsvpButton, message.event!.currentUserResponse === response && styles.rsvpButtonActive]}>
+                    <Text style={styles.rsvpText}>{response} {message.event!.rsvpCounts[response]}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
           <Text
             style={[
               styles.messageText,
               message.type === "sticker" && styles.stickerText,
+              (message.type === "order_event" || message.attachment || message.location || message.contact || message.poll || message.event) && styles.hiddenMessageBody,
               mine && styles.mineText,
             ]}
           >
@@ -1356,7 +1956,7 @@ function MessageBubble({
             {mine && message.status === "read" ? " · Read" : ""}
           </Text>
         </Pressable>
-        {mine ? (
+        {mine && !systemEvent ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="React to your message"
@@ -1400,6 +2000,256 @@ function MessageBubble({
         </View>
       ) : null}
     </View>
+  );
+}
+
+function AttachmentMenu({
+  visible,
+  close,
+  gallery,
+  document,
+  location,
+  contact,
+  sticker,
+  scan,
+  poll,
+  event,
+  schedule,
+  vanish,
+}: {
+  visible: boolean;
+  close: () => void;
+  gallery: () => void;
+  document: () => void;
+  location: () => void;
+  contact: () => void;
+  sticker: () => void;
+  scan: () => void;
+  poll: () => void;
+  event: () => void;
+  schedule: () => void;
+  vanish: () => void;
+}) {
+  const actions = [
+    { label: "Gallery", icon: ImageIcon, action: gallery },
+    { label: "Document", icon: FileText, action: document },
+    { label: "Location", icon: MapPin, action: location },
+    { label: "Contact", icon: UserRound, action: contact },
+    { label: "Poll", icon: CheckCircle2, action: poll },
+    { label: "Event", icon: Bell, action: event },
+    { label: "Schedule", icon: Send, action: schedule },
+    { label: "Vanish Mode", icon: X, action: vanish },
+    { label: "Sticker", icon: MessageCircle, action: sticker },
+    { label: "Scan Document", icon: Camera, action: scan },
+  ];
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+      <View style={styles.sheetBackdrop}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close attachment menu" onPress={close} style={styles.sheetDismissArea} />
+        <View style={styles.actionSheet}>
+          <View style={styles.sheetHeader}>
+            <View><Text style={styles.sheetTitle}>Share in chat</Text><Text style={styles.sheetSubtitle}>Private to conversation participants</Text></View>
+            <Pressable accessibilityLabel="Close attachment menu" onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
+          </View>
+          <View style={styles.attachmentActionGrid}>
+            {actions.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Pressable key={item.label} accessibilityRole="button" accessibilityLabel={item.label} onPress={item.action} style={styles.attachmentAction}>
+                  <View style={styles.attachmentActionIcon}><Icon color="#087c43" size={22} /></View>
+                  <Text style={styles.attachmentActionText}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function AttachmentPreview({ attachment, sending, cancel, send }: {
+  attachment: PendingChatAttachment | null;
+  sending: boolean;
+  cancel: () => void;
+  send: () => void;
+}) {
+  return (
+    <Modal visible={Boolean(attachment)} transparent animationType="fade" onRequestClose={cancel}>
+      <View style={styles.previewBackdrop}>
+        <View style={styles.previewCard}>
+          <Text style={styles.sheetTitle}>Preview attachment</Text>
+          {attachment?.mimeType.startsWith("image/") ? <Image source={{ uri: attachment.uri }} style={styles.previewImage} resizeMode="contain" /> : <View style={styles.previewFile}><FileText color="#087c43" size={42} /></View>}
+          <Text style={styles.previewName}>{attachment?.filename}</Text>
+          <Text style={styles.sheetSubtitle}>{attachment?.mimeType}{attachment?.source === "camera_capture" ? " · Captured Live (app provenance)" : ""}</Text>
+          <View style={styles.previewActions}>
+            <Pressable accessibilityRole="button" disabled={sending} onPress={cancel} style={styles.previewCancel}><Text style={styles.previewCancelText}>Cancel</Text></Pressable>
+            <Pressable accessibilityRole="button" disabled={sending} onPress={send} style={styles.previewSend}>{sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Send</Text>}</Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ContactShareModal({ visible, query, setQuery, contacts, loading, close, share }: {
+  visible: boolean;
+  query: string;
+  setQuery: (value: string) => void;
+  contacts: ChatContact[];
+  loading: boolean;
+  close: () => void;
+  share: (contact: ChatContact) => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.sheetHeader}>
+          <View><Text style={styles.sheetTitle}>Share a Social 24x7 contact</Text><Text style={styles.sheetSubtitle}>Only the selected profile is shared</Text></View>
+          <Pressable accessibilityLabel="Close contact picker" onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
+        </View>
+        <View style={styles.searchBox}><Search color="#98a2b3" size={18} /><TextInput value={query} onChangeText={setQuery} placeholder="Search name or username" style={styles.searchInput} /></View>
+        {loading ? <ActivityIndicator color="#087c43" /> : (
+          <FlatList
+            data={contacts}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.modalList}
+            ListEmptyComponent={<Text style={styles.emptyText}>{query.trim().length < 2 ? "Type at least two characters." : "No matching profiles."}</Text>}
+            renderItem={({ item }) => (
+              <Pressable accessibilityRole="button" accessibilityLabel={`Share ${item.name}`} onPress={() => share(item)} style={styles.actionRow}>
+                <Avatar label={item.avatarLabel} />
+                <View style={styles.rowCopy}><Text style={styles.rowName}>{item.name}</Text><Text style={styles.rowPreview}>@{item.username}</Text></View>
+                <Text style={styles.orderEventAction}>Share</Text>
+              </Pressable>
+            )}
+          />
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function PollComposer({ visible, pending, close, submit }: {
+  visible: boolean;
+  pending: boolean;
+  close: () => void;
+  submit: (question: string, options: string[]) => void;
+}) {
+  const [question, setQuestion] = useState("");
+  const [options, setOptions] = useState(["", ""]);
+  const valid = question.trim().length > 0 && options.filter((option) => option.trim()).length >= 2;
+  const resetClose = () => { if (!pending) { setQuestion(""); setOptions(["", ""]); close(); } };
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={resetClose}>
+      <SafeAreaView style={styles.composerSheet}>
+        <View style={styles.sheetHeader}><View><Text style={styles.sheetTitle}>Create poll</Text><Text style={styles.sheetSubtitle}>One choice per participant</Text></View><Pressable accessibilityLabel="Close poll" onPress={resetClose} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable></View>
+        <TextInput value={question} onChangeText={setQuestion} placeholder="Ask a question" maxLength={240} style={styles.structuredInput} />
+        {options.map((option, index) => <TextInput key={index} value={option} onChangeText={(value) => setOptions((current) => current.map((item, itemIndex) => itemIndex === index ? value : item))} placeholder={`Option ${index + 1}`} maxLength={120} style={styles.structuredInput} />)}
+        {options.length < 10 ? <Pressable accessibilityRole="button" onPress={() => setOptions((current) => [...current, ""])} style={styles.addOption}><Plus color="#087c43" size={17} /><Text style={styles.orderEventAction}>Add option</Text></Pressable> : null}
+        <Pressable accessibilityRole="button" disabled={!valid || pending} onPress={() => submit(question.trim(), options.map((option) => option.trim()).filter(Boolean))} style={[styles.structuredSubmit, (!valid || pending) && styles.disabledAction]}>{pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Create poll</Text>}</Pressable>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function EventComposer({ visible, pending, close, submit }: {
+  visible: boolean;
+  pending: boolean;
+  close: () => void;
+  submit: (input: { title: string; startsAt: string; location?: string; description?: string }) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [dateTime, setDateTime] = useState("");
+  const [location, setLocation] = useState("");
+  const [description, setDescription] = useState("");
+  const parsedDate = new Date(dateTime);
+  const valid = title.trim().length > 0 && dateTime.trim().length > 0 && !Number.isNaN(parsedDate.getTime());
+  const resetClose = () => { if (!pending) { setTitle(""); setDateTime(""); setLocation(""); setDescription(""); close(); } };
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={resetClose}>
+      <SafeAreaView style={styles.composerSheet}>
+        <View style={styles.sheetHeader}><View><Text style={styles.sheetTitle}>Create event</Text><Text style={styles.sheetSubtitle}>Example: 2026-08-15 18:30</Text></View><Pressable accessibilityLabel="Close event" onPress={resetClose} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable></View>
+        <TextInput value={title} onChangeText={setTitle} placeholder="Event title" maxLength={160} style={styles.structuredInput} />
+        <TextInput value={dateTime} onChangeText={setDateTime} placeholder="YYYY-MM-DD HH:mm" style={styles.structuredInput} />
+        <TextInput value={location} onChangeText={setLocation} placeholder="Location (optional)" maxLength={240} style={styles.structuredInput} />
+        <TextInput value={description} onChangeText={setDescription} placeholder="Description (optional)" multiline maxLength={1000} style={[styles.structuredInput, styles.structuredMultiline]} />
+        <Pressable accessibilityRole="button" disabled={!valid || pending} onPress={() => submit({ title: title.trim(), startsAt: parsedDate.toISOString(), location: location.trim() || undefined, description: description.trim() || undefined })} style={[styles.structuredSubmit, (!valid || pending) && styles.disabledAction]}>{pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Create event</Text>}</Pressable>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function ScheduleComposer({ visible, pending, close, submit }: {
+  visible: boolean;
+  pending: boolean;
+  close: () => void;
+  submit: (body: string, sendAt: string) => void;
+}) {
+  const [body, setBody] = useState("");
+  const [dateTime, setDateTime] = useState("");
+  const parsedDate = new Date(dateTime);
+  const valid = body.trim().length > 0 && !Number.isNaN(parsedDate.getTime()) && parsedDate.getTime() > Date.now() + 60_000;
+  const resetClose = () => { if (!pending) { setBody(""); setDateTime(""); close(); } };
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={resetClose}>
+      <SafeAreaView style={styles.composerSheet}>
+        <View style={styles.sheetHeader}><View><Text style={styles.sheetTitle}>Schedule message</Text><Text style={styles.sheetSubtitle}>Delivered by the server, 1 minute to 30 days ahead</Text></View><Pressable accessibilityLabel="Close schedule message" onPress={resetClose} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable></View>
+        <TextInput value={body} onChangeText={setBody} placeholder="Message" multiline maxLength={2000} style={[styles.structuredInput, styles.structuredMultiline]} />
+        <TextInput value={dateTime} onChangeText={setDateTime} placeholder="YYYY-MM-DD HH:mm" style={styles.structuredInput} />
+        <Pressable accessibilityRole="button" disabled={!valid || pending} onPress={() => submit(body.trim(), parsedDate.toISOString())} style={[styles.structuredSubmit, (!valid || pending) && styles.disabledAction]}>{pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Schedule</Text>}</Pressable>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function UnboxingEvidenceModal({ target, pending, close, choose }: {
+  target: { orderId: string; orderItemId: string; title: string } | null;
+  pending: boolean;
+  close: () => void;
+  choose: (source: "live_capture" | "uploaded_file") => void;
+}) {
+  return (
+    <Modal visible={Boolean(target)} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView style={styles.composerSheet}>
+        <View style={styles.sheetHeader}>
+          <View style={styles.grow}><Text style={styles.sheetTitle}>Submit unboxing evidence</Text><Text style={styles.sheetSubtitle} numberOfLines={2}>{target?.title} · Private to buyer, seller and admin</Text></View>
+          <Pressable accessibilityLabel="Close unboxing evidence" disabled={pending} onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
+        </View>
+        <Text style={styles.evidenceHelp}>Choose how this evidence was created. The source is stored and shown clearly on the order card.</Text>
+        <Pressable accessibilityRole="button" disabled={pending} onPress={() => choose("live_capture")} style={styles.evidenceChoice}>
+          <View style={styles.evidenceChoiceIcon}><Camera color="#087c43" size={24} /></View>
+          <View style={styles.grow}><Text style={styles.evidenceChoiceTitle}>Use Camera — Live evidence</Text><Text style={styles.evidenceChoiceText}>Capture a new photo or video now. It will be labelled Live capture.</Text></View>
+        </Pressable>
+        <Pressable accessibilityRole="button" disabled={pending} onPress={() => choose("uploaded_file")} style={styles.evidenceChoice}>
+          <View style={styles.evidenceChoiceIcon}><ImageIcon color="#087c43" size={24} /></View>
+          <View style={styles.grow}><Text style={styles.evidenceChoiceTitle}>Upload from Device — Existing evidence</Text><Text style={styles.evidenceChoiceText}>Choose an existing photo or video. It will be labelled Uploaded file.</Text></View>
+        </Pressable>
+        {pending ? <ActivityIndicator color="#087c43" style={{ marginTop: 18 }} /> : null}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function ReturnRequestModal({ target, reason, setReason, pending, close, submit }: {
+  target: { orderItemId: string; title: string } | null;
+  reason: string;
+  setReason: (value: string) => void;
+  pending: boolean;
+  close: () => void;
+  submit: () => void;
+}) {
+  return (
+    <Modal visible={Boolean(target)} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView style={styles.composerSheet}>
+        <View style={styles.sheetHeader}>
+          <View style={styles.grow}><Text style={styles.sheetTitle}>Request a return</Text><Text style={styles.sheetSubtitle} numberOfLines={2}>{target?.title} · Evidence is already attached</Text></View>
+          <Pressable accessibilityLabel="Close return request" disabled={pending} onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
+        </View>
+        <TextInput value={reason} onChangeText={setReason} placeholder="Why are you returning this item?" placeholderTextColor="#8a9690" multiline maxLength={1000} style={[styles.structuredInput, styles.structuredMultiline]} />
+        <Text style={styles.evidenceHelp}>The request will go to Commerce Admin for review. The seller can see its status in this Business Chat.</Text>
+        <Pressable accessibilityRole="button" disabled={pending || !reason.trim()} onPress={submit} style={[styles.structuredSubmit, (pending || !reason.trim()) && styles.disabledAction]}>{pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Submit return request</Text>}</Pressable>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -1463,6 +2313,7 @@ function MessageActions({
   reply,
   react,
   reacting,
+  keepMemo,
 }: {
   message: ChatMessage | null;
   close: () => void;
@@ -1470,6 +2321,7 @@ function MessageActions({
   reply: () => void;
   react: (emoji: string) => void;
   reacting: boolean;
+  keepMemo: () => void;
 }) {
   const currentReaction = message?.reactions?.find(
     (reaction) => reaction.reactedByCurrentUser,
@@ -1518,6 +2370,10 @@ function MessageActions({
           <Pressable accessibilityRole="button" onPress={copy} style={styles.actionRow}>
             <Copy color="#078f4a" size={20} />
             <Text style={styles.actionText}>Copy message</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={keepMemo} style={styles.actionRow}>
+            <FileText color="#078f4a" size={20} />
+            <Text style={styles.actionText}>Keep Memo</Text>
           </Pressable>
         </View>
       </View>
@@ -2579,7 +3435,9 @@ const styles = StyleSheet.create({
   pendingShareButtonText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
   messageList: { padding: 16, paddingBottom: 24, gap: 8 },
   messageWrap: { alignItems: "flex-start" },
+  grow: { flex: 1 },
   mineWrap: { alignItems: "flex-end" },
+  systemEventWrap: { alignItems: "center", width: "100%" },
   messagePressRow: {
     maxWidth: "100%",
     flexDirection: "row",
@@ -2587,6 +3445,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   messagePressRowMine: { justifyContent: "flex-end" },
+  systemEventPressRow: { width: "100%", justifyContent: "center" },
   message: {
     maxWidth: "82%",
     borderRadius: 22,
@@ -2600,6 +3459,7 @@ const styles = StyleSheet.create({
   },
   mine: { backgroundColor: "#12d39b" },
   theirs: { backgroundColor: "#ffffff" },
+  systemEventMessage: { width: "100%", maxWidth: 520, backgroundColor: "transparent", paddingHorizontal: 0, shadowOpacity: 0, elevation: 0 },
   messageReactionTrigger: {
     width: 28,
     height: 28,
@@ -2627,6 +3487,85 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   messageText: { color: "#111111", fontSize: 16, lineHeight: 24 },
+  hiddenMessageBody: { display: "none" },
+  orderEventCard: {
+    minWidth: 238,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#d7eee0",
+    backgroundColor: "#f4fbf7",
+    padding: 13,
+    gap: 5,
+  },
+  orderEventCardMine: { backgroundColor: "rgba(255,255,255,0.66)" },
+  orderEventHeader: { gap: 2, marginBottom: 3 },
+  orderEventEyebrow: { color: "#078f4a", fontSize: 10, fontWeight: "900", letterSpacing: 0.7 },
+  orderEventStatus: { color: "#12251a", fontSize: 16, fontWeight: "900" },
+  orderEventStore: { color: "#52645a", fontSize: 12, fontWeight: "700" },
+  orderEventItem: { color: "#26372e", fontSize: 13 },
+  orderEventTotal: { color: "#12251a", fontSize: 14, fontWeight: "900", marginTop: 4 },
+  orderEventMeta: { color: "#52645a", fontSize: 12 },
+  orderEventAction: { color: "#078f4a", fontSize: 13, fontWeight: "900", marginTop: 5 },
+  orderEventActionMine: { color: "#075c34" },
+  orderEvidenceList: { marginTop: 8, gap: 7, borderTopWidth: 1, borderTopColor: "#d7eee0", paddingTop: 8 },
+  orderEvidenceEyebrow: { color: "#5b6d62", fontSize: 9, fontWeight: "900", letterSpacing: 0.6 },
+  orderEvidenceRow: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 10, backgroundColor: "#ffffff", padding: 9 },
+  orderEvidenceTitle: { color: "#17241c", fontSize: 11, fontWeight: "900" },
+  orderEvidenceSource: { color: "#637269", fontSize: 9, marginTop: 2 },
+  orderCommerceActions: { gap: 6, marginTop: 7 },
+  orderCommerceButton: { minHeight: 38, borderRadius: 11, borderWidth: 1, borderColor: "#bfe6cf", backgroundColor: "#eaf9f0", flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  orderCommerceButtonText: { color: "#087c43", fontSize: 10, fontWeight: "900", flexShrink: 1 },
+  returnCommerceButton: { borderColor: "#f1c7c7", backgroundColor: "#fff3f3" },
+  returnCommerceButtonText: { color: "#a83b3b" },
+  attachmentCard: { minWidth: 220, gap: 5 },
+  attachmentCardMine: { backgroundColor: "rgba(255,255,255,0.2)" },
+  attachmentImage: { width: 230, height: 180, borderRadius: 14, backgroundColor: "#e9f0eb" },
+  attachmentFileIcon: { width: 52, height: 52, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#e9f8ef" },
+  attachmentName: { color: "#17241c", fontSize: 14, fontWeight: "900" },
+  attachmentMeta: { color: "#637269", fontSize: 11 },
+  liveCaptureBadge: { alignSelf: "flex-start", color: "#075c34", fontSize: 10, fontWeight: "900", backgroundColor: "#d9f6e5", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  scanBadge: { alignSelf: "flex-start", color: "#475467", fontSize: 10, fontWeight: "900", backgroundColor: "#edf1ef", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  structuredCard: { minWidth: 220, gap: 5, borderRadius: 14, padding: 10, backgroundColor: "#f4fbf7" },
+  evidenceHelp: { color: "#66766d", fontSize: 13, lineHeight: 19, marginBottom: 4 },
+  evidenceChoice: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 82, borderRadius: 17, borderWidth: 1, borderColor: "#d5e9dc", backgroundColor: "#f5fcf7", padding: 14 },
+  evidenceChoiceIcon: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: "#e3f7eb" },
+  evidenceChoiceTitle: { color: "#17241c", fontSize: 14, fontWeight: "900" },
+  evidenceChoiceText: { color: "#66766d", fontSize: 11, lineHeight: 16, marginTop: 3 },
+  attachmentActionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  attachmentAction: { width: "31%", minWidth: 96, alignItems: "center", gap: 7, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: "#e1eae4", backgroundColor: "#fbfdfb" },
+  attachmentActionIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#eaf8ef" },
+  attachmentActionText: { color: "#26362d", fontSize: 12, fontWeight: "800", textAlign: "center" },
+  previewBackdrop: { flex: 1, padding: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(10,20,14,0.72)" },
+  previewCard: { width: "100%", maxWidth: 520, padding: 18, gap: 12, borderRadius: 22, backgroundColor: "#fff" },
+  previewImage: { width: "100%", height: 320, borderRadius: 16, backgroundColor: "#edf2ee" },
+  previewFile: { height: 180, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#edf8f1" },
+  previewName: { color: "#17241c", fontSize: 16, fontWeight: "900" },
+  previewActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
+  previewCancel: { minHeight: 44, paddingHorizontal: 18, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#edf1ef" },
+  previewCancelText: { color: "#34463c", fontWeight: "800" },
+  previewSend: { minWidth: 100, minHeight: 44, paddingHorizontal: 18, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#07b75b" },
+  previewSendText: { color: "#fff", fontWeight: "900" },
+  modalList: { paddingHorizontal: 18, paddingBottom: 24, gap: 8 },
+  emptyText: { color: "#667085", fontSize: 14, textAlign: "center", padding: 24 },
+  rowName: { color: "#17241c", fontSize: 15, fontWeight: "900" },
+  rowPreview: { color: "#667085", fontSize: 12 },
+  pollCard: { minWidth: 260, gap: 8, borderRadius: 15, padding: 11, backgroundColor: "#f7fcf8" },
+  pollQuestion: { color: "#17241c", fontSize: 16, fontWeight: "900" },
+  pollOption: { minHeight: 40, overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderColor: "#d9e7de", backgroundColor: "#fff" },
+  pollOptionSelected: { borderColor: "#07a952" },
+  pollOptionFill: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: "#e3f7ea" },
+  pollOptionLabel: { flex: 1, color: "#24352b", fontSize: 13, fontWeight: "700" },
+  pollOptionVotes: { color: "#087c43", fontSize: 12, fontWeight: "900" },
+  eventCard: { minWidth: 260, gap: 7, borderRadius: 15, padding: 12, backgroundColor: "#f7fcf8" },
+  rsvpRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
+  rsvpButton: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: 999, backgroundColor: "#edf2ef" },
+  rsvpButtonActive: { backgroundColor: "#d8f4e2", borderWidth: 1, borderColor: "#42ae70" },
+  rsvpText: { color: "#30513e", fontSize: 10, fontWeight: "800", textTransform: "capitalize" },
+  composerSheet: { flex: 1, gap: 12, padding: 18, backgroundColor: "#fbfdfb" },
+  structuredInput: { minHeight: 50, borderRadius: 14, borderWidth: 1, borderColor: "#dce6df", paddingHorizontal: 14, paddingVertical: 12, color: "#17241c", backgroundColor: "#fff" },
+  structuredMultiline: { minHeight: 110, textAlignVertical: "top" },
+  addOption: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", padding: 8 },
+  structuredSubmit: { minHeight: 50, alignItems: "center", justifyContent: "center", borderRadius: 15, backgroundColor: "#07b75b" },
   stickerMessage: { paddingHorizontal: 4, paddingVertical: 2 },
   transparentMessage: { backgroundColor: "transparent" },
   stickerText: {

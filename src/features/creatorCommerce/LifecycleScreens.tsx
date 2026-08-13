@@ -29,6 +29,8 @@ import {
   listSellerLifecycleProducts,
   recordCreatorPromotionClick,
   reviewLifecycleProduct,
+  replaceLifecycleProductMedia,
+  resolveLifecycleProductMediaUrl,
   saveAddressAndCheckout,
   saveSellerLifecycleProduct,
   sellerFulfillmentDecisionsFor,
@@ -36,6 +38,7 @@ import {
   slugifyCommerce,
   submitLifecycleProduct,
   submitLifecycleReturn,
+  uploadLifecycleProductMedia,
   reviewAdminReturn,
   updateLifecycleFulfillment,
   uploadLifecycleOrderEvidence,
@@ -50,6 +53,7 @@ import {
   type CreatorPromotion,
   type LifecycleProduct,
   type LifecycleOrderEvidence,
+  type ProductMediaItem,
   type SellerLifecycleOrder,
 } from './lifecycleRepository';
 
@@ -190,6 +194,60 @@ export function SellerLifecycleScreen() {
     }
   };
 
+  const replaceProductImages = async (product: LifecycleProduct) => {
+    if (!supabase) return;
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Allow media access to add Product images.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
+      quality: 0.88,
+    });
+    if (result.canceled) return;
+    setSaving(true);
+    setFeedback(null);
+    try {
+      await uploadLifecycleProductMedia(supabase, product.id, result.assets);
+      await load();
+      setFeedback({ tone: 'success', message: 'Private Product media saved. The first image is the cover.' });
+    } catch (cause) {
+      const message = messageFor(cause);
+      setFeedback({ tone: 'error', message });
+      Alert.alert('Product media failed', message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const persistMedia = async (product: LifecycleProduct, next: ProductMediaItem[]) => {
+    if (!supabase) return;
+    if (!next.length) {
+      Alert.alert('Cover required', 'A Product must keep at least one image before submission. Replace the media set instead.');
+      return;
+    }
+    if (next.some((item) => item.storageBucket !== 'product-media')) {
+      Alert.alert('Replace legacy media', 'Replace this legacy public media set once before reordering it.');
+      return;
+    }
+    setSaving(true);
+    setFeedback(null);
+    try {
+      await replaceLifecycleProductMedia(supabase, product.id, next);
+      await load();
+      setFeedback({ tone: 'success', message: 'Product cover and media order updated.' });
+    } catch (cause) {
+      const message = messageFor(cause);
+      setFeedback({ tone: 'error', message });
+      Alert.alert('Media update failed', message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateOrder = async (orderId: string, nextStatus: string) => {
     if (!supabase) return;
     setFeedback(null);
@@ -286,8 +344,36 @@ export function SellerLifecycleScreen() {
             </View>
             <View style={styles.actionRow}>
               <SmallButton label="Edit" disabled={saving || !canEditLifecycleProduct(product.approvalStatus)} onPress={() => edit(product)} />
+              <SmallButton label={product.mediaItems.length ? 'Replace images' : 'Add images'} disabled={saving || !canEditLifecycleProduct(product.approvalStatus)} onPress={() => void replaceProductImages(product)} />
               <SmallButton label="Submit for approval" disabled={saving || !canSubmitLifecycleProduct(product.approvalStatus)} onPress={() => void submit(product.id)} />
             </View>
+            {product.mediaItems.length ? (
+              <View style={styles.mediaRow}>
+                {product.mediaItems.map((item, index) => (
+                  <LifecycleProductMediaCard
+                    key={item.path}
+                    item={item}
+                    index={index}
+                    count={product.mediaItems.length}
+                    disabled={saving || !canEditLifecycleProduct(product.approvalStatus)}
+                    onCover={() => void persistMedia(product, [item, ...product.mediaItems.filter((candidate) => candidate.path !== item.path)])}
+                    onEarlier={() => {
+                      if (index < 1) return;
+                      const next = [...product.mediaItems];
+                      [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                      void persistMedia(product, next);
+                    }}
+                    onLater={() => {
+                      if (index >= product.mediaItems.length - 1) return;
+                      const next = [...product.mediaItems];
+                      [next[index + 1], next[index]] = [next[index], next[index + 1]];
+                      void persistMedia(product, next);
+                    }}
+                    onRemove={() => void persistMedia(product, product.mediaItems.filter((candidate) => candidate.path !== item.path))}
+                  />
+                ))}
+              </View>
+            ) : null}
           </View>
         )) : <Text style={styles.emptyText}>No products yet.</Text>}
       </Panel>
@@ -776,12 +862,17 @@ export function AdminProductReviewPanel() {
             </View>
             <StatusPill label={product.approvalStatus} positive={product.approvalStatus === 'approved'} />
           </View>
-          {product.mediaPaths.length ? (
+          {product.mediaItems.length ? (
             <View style={styles.mediaRow}>
-              {product.mediaPaths.map((path) => {
-                const url = supabase?.storage.from('shop-media').getPublicUrl(path).data.publicUrl;
-                return url ? <Pressable key={path} accessibilityRole="button" accessibilityLabel="Open product media" onPress={() => void Linking.openURL(url)}><Image source={{ uri: url }} resizeMode="cover" style={styles.mediaThumb} /></Pressable> : null;
-              })}
+              {product.mediaItems.map((item, index) => (
+                <LifecycleProductMediaCard
+                  key={item.path}
+                  item={item}
+                  index={index}
+                  count={product.mediaItems.length}
+                  disabled
+                />
+              ))}
             </View>
           ) : <Text style={styles.emptyText}>No product media attached. The seller can add it in Advanced Seller Studio.</Text>}
           <Field label="Reason / notes" value={reasonById[product.id] ?? ''} onChangeText={(value) => setReasonById((current) => ({ ...current, [product.id]: value }))} multiline />
@@ -932,6 +1023,58 @@ function EvidencePreview({ evidence, emptyLabel }: { evidence?: LifecycleOrderEv
   );
 }
 
+function LifecycleProductMediaCard({
+  item,
+  index,
+  count,
+  disabled,
+  onCover,
+  onEarlier,
+  onLater,
+  onRemove,
+}: {
+  item: ProductMediaItem;
+  index: number;
+  count: number;
+  disabled?: boolean;
+  onCover?: () => void;
+  onEarlier?: () => void;
+  onLater?: () => void;
+  onRemove?: () => void;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (!supabase) return;
+    void resolveLifecycleProductMediaUrl(supabase, item)
+      .then((next) => active && setUrl(next))
+      .catch(() => active && setUrl(null));
+    return () => { active = false; };
+  }, [item]);
+
+  return (
+    <View style={styles.productMediaCard}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open Product image ${index + 1}`}
+        disabled={!url}
+        onPress={() => url && void Linking.openURL(url)}
+      >
+        {url ? <Image source={{ uri: url }} resizeMode="cover" style={styles.mediaThumb} /> : <View style={[styles.mediaThumb, styles.mediaLoading]}><ActivityIndicator color="#08713d" /></View>}
+      </Pressable>
+      <Text style={styles.mediaCaption}>{index === 0 ? 'Cover' : `Image ${index + 1}`} · {item.storageBucket === 'product-media' ? 'Private moderation' : 'Legacy public'}</Text>
+      {onCover || onEarlier || onLater || onRemove ? (
+        <View style={styles.mediaControls}>
+          {index > 0 ? <SmallButton label="Cover" disabled={disabled} onPress={() => onCover?.()} /> : null}
+          {index > 0 ? <SmallButton label="←" disabled={disabled} onPress={() => onEarlier?.()} /> : null}
+          {index < count - 1 ? <SmallButton label="→" disabled={disabled} onPress={() => onLater?.()} /> : null}
+          <SmallButton label="Remove" destructive disabled={disabled || count <= 1} onPress={() => onRemove?.()} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return <View style={styles.panel}><Text style={styles.panelTitle}>{title}</Text>{children}</View>;
 }
@@ -1010,6 +1153,10 @@ const styles = StyleSheet.create({
   cardCompact: { gap: 4, borderRadius: 16, borderWidth: 1, borderColor: '#e8eeeb', backgroundColor: '#fbfdfc', padding: 12 },
   mediaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   mediaThumb: { width: 88, height: 72, borderRadius: 12, backgroundColor: '#edf5f0' },
+  mediaLoading: { alignItems: 'center', justifyContent: 'center' },
+  productMediaCard: { width: 190, padding: 8, borderRadius: 12, borderWidth: 1, borderColor: '#dce9e1', backgroundColor: '#f8fcf9', gap: 6 },
+  mediaCaption: { color: '#527060', fontSize: 10, lineHeight: 14 },
+  mediaControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
   evidencePreview: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, borderWidth: 1, borderColor: '#dcefe2', backgroundColor: '#f8fbf9', padding: 10 },
   rowBetween: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   cardTitle: { color: '#111111', fontSize: 15, fontWeight: '900' },

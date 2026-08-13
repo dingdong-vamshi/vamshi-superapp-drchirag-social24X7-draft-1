@@ -67,6 +67,7 @@ export function SocialProfileScreen({
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [followers, setFollowers] = useState(0);
   const [following, setFollowing] = useState(0);
+  const [storefront, setStorefront] = useState<{ name: string; slug: string } | null>(null);
 
   const profileUserId = selectedUserId || viewer.id;
   const isOwnProfile = profileUserId === viewer.id;
@@ -155,6 +156,20 @@ export function SocialProfileScreen({
           }),
         );
 
+        let publicStorefront: { name: string; slug: string } | null = null;
+        if (supabaseClient && isUuid(profileUserId)) {
+          const { data: storefrontRows, error: storefrontError } =
+            await supabaseClient.rpc("get_public_storefront_for_profile", {
+              target_user: profileUserId,
+            });
+          if (!storefrontError) {
+            const row = Array.isArray(storefrontRows) ? storefrontRows[0] : storefrontRows;
+            publicStorefront = row
+              ? { name: row.name as string, slug: row.slug as string }
+              : null;
+          }
+        }
+
         if (!mounted) return;
         setProfile(nextProfile);
         setPosts(userPosts);
@@ -162,6 +177,7 @@ export function SocialProfileScreen({
         setFollowers(followerCount);
         setFollowing(followingCount);
         setReviews(commentGroups.flat().slice(0, 8));
+        setStorefront(publicStorefront);
       } catch (cause) {
         if (!mounted) return;
         setError(cause instanceof Error ? cause.message : "Could not load this social profile.");
@@ -267,17 +283,24 @@ export function SocialProfileScreen({
           </Pressable>
         </View>
 
-        <View style={styles.ctaCard}>
-          <View>
-            <Text style={styles.ctaTitle}>{isOwnProfile ? "View All Products" : "Order from Us"}</Text>
-            <Text style={styles.ctaText}>
-              {isOwnProfile ? `${posts.length} posts published • Keep your storefront current` : "Premium wellness products • Free shipping"}
-            </Text>
-          </View>
-          <View style={styles.ctaIcon}>
-            <Camera size={20} color={brand} />
-          </View>
-        </View>
+        {storefront ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Order from ${storefront.name}`}
+            onPress={() =>
+              router.push({ pathname: "/store/[slug]", params: { slug: storefront.slug } })
+            }
+            style={styles.ctaCard}
+          >
+            <View>
+              <Text style={styles.ctaTitle}>Order from Us</Text>
+              <Text style={styles.ctaText}>{storefront.name} · Approved Seller storefront</Text>
+            </View>
+            <View style={styles.ctaIcon}>
+              <Camera size={20} color={brand} />
+            </View>
+          </Pressable>
+        ) : null}
 
         <Text style={styles.sectionTitle}>Highlights</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.highlights}>

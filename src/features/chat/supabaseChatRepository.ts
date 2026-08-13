@@ -9,11 +9,16 @@ import type {
   ChatDataSource,
   ChatMessage,
   ChatReportInput,
+  ChatAttachment,
+  ChatEvent,
+  ChatLocation,
+  ChatPoll,
   Conversation,
   ExportedConversation,
   MessageReaction,
 } from './types';
 import { CURRENT_USER_ID } from './types';
+import { toAttachment, toLocation, toOrderEvent } from './chatContractParsers';
 
 type ProfileRow = {
   id: string;
@@ -46,10 +51,21 @@ type ParticipantRow = {
 type ConversationRow = {
   id: string;
   kind: 'personal' | 'business' | 'group' | 'support';
+  storefront_id: string | null;
+  business_customer_id: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
+  storefronts: StorefrontRow | StorefrontRow[] | null;
   conversation_participants: ParticipantRow[] | null;
+};
+
+type StorefrontRow = {
+  id: string;
+  name: string;
+  slug: string;
+  logo_path: string | null;
+  verification_status: string | null;
 };
 
 type MessageRow = {
@@ -63,6 +79,7 @@ type MessageRow = {
   created_at: string;
   edited_at: string | null;
   deleted_at: string | null;
+  expires_at?: string | null;
 };
 
 type MessageReactionRow = {
@@ -70,6 +87,53 @@ type MessageReactionRow = {
   user_id: string;
   reaction: string;
   updated_at: string;
+};
+
+type AttachmentRow = {
+  id: string;
+  storage_path: string;
+  attachment_type: 'image' | 'video' | 'document';
+  original_filename: string;
+  mime_type: string;
+  bytes: number;
+  width: number | null;
+  height: number | null;
+  duration_ms: number | null;
+  source: ChatAttachment['source'];
+};
+
+type PollRow = {
+  id: string;
+  question: string;
+  status: 'open' | 'closed';
+  chat_poll_options: Array<{ id: string; label: string; position: number }> | null;
+  chat_poll_votes: Array<{ option_id: string; voter_id: string }> | null;
+};
+
+type EventRow = {
+  id: string;
+  title: string;
+  starts_at: string;
+  location: string | null;
+  description: string | null;
+  chat_event_rsvps: Array<{ user_id: string; response: 'going' | 'maybe' | 'declined' }> | null;
+};
+
+type OrderStateRow = {
+  id: string;
+  status: string;
+  customer_id: string;
+};
+
+type OrderEvidenceRow = {
+  id: string;
+  order_id: string;
+  order_item_id: string;
+  storage_path: string;
+  file_name: string | null;
+  mime_type: string | null;
+  evidence_source: 'live_capture' | 'uploaded_file';
+  created_at: string;
 };
 
 const SUPPORTED_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'] as const;
@@ -92,6 +156,8 @@ const firstRelation = <T>(value: T | T[] | null | undefined): T | null =>
   Array.isArray(value) ? value[0] ?? null : value ?? null;
 
 const unique = <T>(values: T[]) => [...new Set(values)];
+
+const stringValue = (value: unknown) => typeof value === 'string' ? value : '';
 
 const toContact = (row: ProfileRow): ChatContact => {
   const name = row.display_name?.trim() || row.username || 'Social 24x7 user';
@@ -151,6 +217,16 @@ const toMessage = (
   const payload = row.payload ?? {};
   const hasSharedPost = row.kind === 'product' && payload && typeof payload === 'object' && 'post' in payload;
   const hasSticker = payload && typeof payload === 'object' && payload.sticker === true;
+  const order = row.kind === 'order' ? toOrderEvent(payload) : undefined;
+  const attachment = ['image', 'video', 'file'].includes(row.kind) ? toAttachment(payload) : undefined;
+  const location = row.kind === 'location' ? toLocation(payload) : undefined;
+  const contact = row.kind === 'contact' && payload.version === 1 && isUuid(stringValue(payload.profile_id))
+    ? {
+        profileId: stringValue(payload.profile_id),
+        displayName: stringValue(payload.display_name) || 'Social 24x7 user',
+        username: stringValue(payload.username),
+      }
+    : undefined;
   return {
     id: row.id,
     conversationId: row.conversation_id,
@@ -158,8 +234,12 @@ const toMessage = (
     text: row.body ?? '',
     createdAt: row.created_at,
     status: 'delivered',
-    type: hasSharedPost ? 'shared_post' : hasSticker ? 'sticker' : 'text',
+    type: order ? 'order_event' : hasSharedPost ? 'shared_post' : hasSticker ? 'sticker' : 'text',
     post: hasSharedPost ? (payload.post as ChatMessage['post']) : undefined,
+    order,
+    attachment,
+    location,
+    contact,
     reactions,
   };
 };
@@ -242,9 +322,18 @@ export const createSupabaseChatRepository = ({
       .select(`
         id,
         kind,
+        storefront_id,
+        business_customer_id,
         created_by,
         created_at,
         updated_at,
+        storefronts!conversations_storefront_id_fkey(
+          id,
+          name,
+          slug,
+          logo_path,
+          verification_status
+        ),
         conversation_participants(
           user_id,
           last_read_at,
@@ -277,7 +366,7 @@ export const createSupabaseChatRepository = ({
     if (!conversationIds.length) return new Map<string, MessageRow[]>();
     const { data, error } = await client
       .from('messages')
-      .select('id,conversation_id,sender_id,kind,body,payload,client_id,created_at,edited_at,deleted_at')
+      .select('id,conversation_id,sender_id,kind,body,payload,client_id,created_at,edited_at,deleted_at,expires_at')
       .in('conversation_id', conversationIds)
       .is('deleted_at', null)
       .order('created_at', { ascending: true });
@@ -306,7 +395,140 @@ export const createSupabaseChatRepository = ({
 
   const attachReactions = async (rows: MessageRow[]) => {
     const reactionMap = await fetchReactionMap(rows.map((row) => row.id));
-    return rows.map((row) => toMessage(row, viewerId, reactionMap.get(row.id) ?? []));
+    const messages = rows.map((row) => toMessage(row, viewerId, reactionMap.get(row.id) ?? []));
+    const attachmentIds = unique(messages.flatMap((message) => message.attachment?.id ? [message.attachment.id] : []));
+    let hydrated = messages;
+    if (attachmentIds.length) {
+      const { data, error } = await client
+        .from('chat_attachments')
+        .select('id,storage_path,attachment_type,original_filename,mime_type,bytes,width,height,duration_ms,source')
+        .in('id', attachmentIds);
+      if (error) throw new Error(error.message);
+      const attachments = (data as AttachmentRow[] | null) ?? [];
+      const signed = await client.storage.from('chat-media').createSignedUrls(attachments.map((attachment) => attachment.storage_path), 3600);
+      if (signed.error) throw new Error(signed.error.message);
+      const byId = new Map(attachments.map((attachment, index) => [attachment.id, {
+        id: attachment.id,
+        attachmentType: attachment.attachment_type,
+        filename: attachment.original_filename,
+        mimeType: attachment.mime_type,
+        bytes: attachment.bytes,
+        width: attachment.width ?? undefined,
+        height: attachment.height ?? undefined,
+        durationMs: attachment.duration_ms ?? undefined,
+        source: attachment.source,
+        signedUrl: signed.data[index]?.signedUrl ?? undefined,
+      } satisfies ChatAttachment]));
+      hydrated = hydrated.map((message) => message.attachment ? { ...message, attachment: byId.get(message.attachment.id) ?? message.attachment } : message);
+    }
+
+    const pollIds = unique(rows.flatMap((row) => row.kind === 'poll' && isUuid(stringValue(row.payload?.poll_id)) ? [stringValue(row.payload?.poll_id)] : []));
+    if (pollIds.length) {
+      const { data, error } = await client.from('chat_polls').select('id,question,status,chat_poll_options(id,label,position),chat_poll_votes(option_id,voter_id)').in('id', pollIds);
+      if (error) throw new Error(error.message);
+      const polls = new Map(((data as PollRow[] | null) ?? []).map((poll) => {
+        const votes = poll.chat_poll_votes ?? [];
+        const value: ChatPoll = {
+          id: poll.id,
+          question: poll.question,
+          status: poll.status,
+          options: (poll.chat_poll_options ?? []).sort((a,b) => a.position-b.position).map((option) => ({
+            id: option.id,
+            label: option.label,
+            position: option.position,
+            votes: votes.filter((vote) => vote.option_id === option.id).length,
+            selectedByCurrentUser: votes.some((vote) => vote.option_id === option.id && vote.voter_id === viewerId),
+          })),
+          totalVotes: votes.length,
+        };
+        return [poll.id, value];
+      }));
+      hydrated = hydrated.map((message, index) => {
+        const pollId = stringValue(rows[index]?.payload?.poll_id);
+        return pollId && polls.has(pollId) ? { ...message, poll: polls.get(pollId) } : message;
+      });
+    }
+
+    const eventIds = unique(rows.flatMap((row) => row.kind === 'event' && isUuid(stringValue(row.payload?.event_id)) ? [stringValue(row.payload?.event_id)] : []));
+    if (eventIds.length) {
+      const { data, error } = await client.from('chat_events').select('id,title,starts_at,location,description,chat_event_rsvps(user_id,response)').in('id', eventIds);
+      if (error) throw new Error(error.message);
+      const events = new Map(((data as EventRow[] | null) ?? []).map((event) => {
+        const rsvps = event.chat_event_rsvps ?? [];
+        const value: ChatEvent = {
+          id: event.id,
+          title: event.title,
+          startsAt: event.starts_at,
+          location: event.location ?? undefined,
+          description: event.description ?? undefined,
+          rsvpCounts: {
+            going: rsvps.filter((rsvp) => rsvp.response === 'going').length,
+            maybe: rsvps.filter((rsvp) => rsvp.response === 'maybe').length,
+            declined: rsvps.filter((rsvp) => rsvp.response === 'declined').length,
+          },
+          currentUserResponse: rsvps.find((rsvp) => rsvp.user_id === viewerId)?.response,
+        };
+        return [event.id, value];
+      }));
+      hydrated = hydrated.map((message, index) => {
+        const eventId = stringValue(rows[index]?.payload?.event_id);
+        return eventId && events.has(eventId) ? { ...message, event: events.get(eventId) } : message;
+      });
+    }
+
+    const orderIds = unique(hydrated.flatMap((message) => message.order?.orderId ? [message.order.orderId] : []));
+    if (orderIds.length) {
+      const [ordersResult, evidenceResult] = await Promise.all([
+        client.from('orders').select('id,status,customer_id').in('id', orderIds),
+        client
+          .from('commerce_order_evidence')
+          .select('id,order_id,order_item_id,storage_path,file_name,mime_type,evidence_source,created_at')
+          .in('order_id', orderIds)
+          .eq('evidence_kind', 'unboxing')
+          .order('created_at', { ascending: false }),
+      ]);
+      if (ordersResult.error) throw new Error(ordersResult.error.message);
+      if (evidenceResult.error) throw new Error(evidenceResult.error.message);
+      const orderStates = new Map(((ordersResult.data as OrderStateRow[] | null) ?? []).map((order) => [order.id, order]));
+      const evidenceRows = (evidenceResult.data as OrderEvidenceRow[] | null) ?? [];
+      const signed = evidenceRows.length
+        ? await client.storage.from('creator-commerce-private').createSignedUrls(evidenceRows.map((evidence) => evidence.storage_path), 3600)
+        : { data: [], error: null };
+      if (signed.error) throw new Error(signed.error.message);
+      const evidenceByOrder = new Map<string, NonNullable<ChatMessage['order']>['unboxingEvidence']>();
+      evidenceRows.forEach((evidence, index) => {
+        const next = evidenceByOrder.get(evidence.order_id) ?? [];
+        next.push({
+          id: evidence.id,
+          orderItemId: evidence.order_item_id,
+          filename: evidence.file_name || 'Unboxing evidence',
+          mimeType: evidence.mime_type || 'application/octet-stream',
+          source: evidence.evidence_source,
+          createdAt: evidence.created_at,
+          signedUrl: signed.data?.[index]?.signedUrl ?? undefined,
+        });
+        evidenceByOrder.set(evidence.order_id, next);
+      });
+      hydrated = hydrated.map((message) => {
+        if (!message.order) return message;
+        const live = orderStates.get(message.order.orderId);
+        const evidence = evidenceByOrder.get(message.order.orderId) ?? [];
+        const viewerRole = live?.customer_id === viewerId ? 'buyer' : 'seller';
+        const liveStatus = live?.status ?? message.order.orderStatus;
+        return {
+          ...message,
+          order: {
+            ...message.order,
+            liveOrderStatus: liveStatus,
+            viewerRole,
+            unboxingEvidence: evidence,
+            canSubmitUnboxingEvidence: viewerRole === 'buyer' && liveStatus === 'delivered',
+            canRequestReturn: viewerRole === 'buyer' && liveStatus === 'delivered' && evidence.length > 0,
+          },
+        };
+      });
+    }
+    return hydrated;
   };
 
   const findConversationForParticipant = (
@@ -380,13 +602,25 @@ export const createSupabaseChatRepository = ({
       (participant) => participant.user_id !== viewerProfileId,
     );
     const profile = firstRelation(otherParticipant?.profiles);
-    const contact = profile ? toContact(profile) : {
+    const personContact = profile ? toContact(profile) : {
       id: otherParticipant?.user_id ?? row.created_by,
       name: 'Social 24x7 user',
       avatarLabel: 'S',
       username: (otherParticipant?.user_id ?? row.created_by).slice(0, 8),
       isOnline: false,
     };
+    const storefront = firstRelation(row.storefronts);
+    const businessRole = row.kind === 'business'
+      ? row.business_customer_id === viewerProfileId ? 'customer' : 'seller'
+      : undefined;
+    const contact = row.kind === 'business' && storefront && businessRole === 'customer'
+      ? {
+          ...personContact,
+          name: storefront.name,
+          avatarLabel: initialsFor(storefront.name),
+          username: storefront.slug,
+        }
+      : personContact;
 
     const viewerParticipant = (row.conversation_participants ?? []).find(
       (participant) => participant.user_id === viewerProfileId,
@@ -421,14 +655,27 @@ export const createSupabaseChatRepository = ({
       clearedAt,
       requestStatus,
       requestMessage,
+      businessRole,
+      storefront: storefront
+        ? {
+            id: storefront.id,
+            name: storefront.name,
+            slug: storefront.slug,
+            logoPath: storefront.logo_path ?? undefined,
+            verificationStatus: storefront.verification_status ?? undefined,
+          }
+        : undefined,
     };
   };
 
   const ensureLiveSync = () => {
     if (!viewerId || channel) return;
 
+    // Route transitions can briefly keep the inbox and detail repositories
+    // mounted together. A unique topic avoids mutating an already-subscribed
+    // Supabase channel while both screens hand off their listeners.
     channel = client
-      .channel(`personal-chat:${viewerId}`)
+      .channel(`chat:${viewerId}:${createClientMessageId()}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'connection_requests' },
@@ -459,6 +706,8 @@ export const createSupabaseChatRepository = ({
         { event: '*', schema: 'public', table: 'chat_notifications' },
         notify,
       )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_poll_votes' }, notify)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_event_rsvps' }, notify)
       .subscribe();
 
   };
@@ -498,7 +747,7 @@ export const createSupabaseChatRepository = ({
     const clearedAt = (participantState as { cleared_at?: string | null } | null)?.cleared_at ?? null;
     let query = client
       .from('messages')
-      .select('id,conversation_id,sender_id,kind,body,payload,client_id,created_at,edited_at,deleted_at')
+      .select('id,conversation_id,sender_id,kind,body,payload,client_id,created_at,edited_at,deleted_at,expires_at')
       .eq('conversation_id', resolvedConversationId)
       .is('deleted_at', null);
 
@@ -640,6 +889,188 @@ export const createSupabaseChatRepository = ({
       if (error) throw new Error(error.message);
       notify();
       return toMessage(data as MessageRow, viewerId);
+    },
+
+    async sendAttachment(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(input.conversationId);
+      if (input.bytes.byteLength < 1 || input.bytes.byteLength > 26_214_400) {
+        throw new Error('Attachment must be 25 MiB or smaller.');
+      }
+      const extension = input.filename.toLowerCase().match(/\.([a-z0-9]{1,8})$/)?.[1]
+        ?? input.mimeType.split('/')[1]?.replace('jpeg', 'jpg')
+        ?? 'bin';
+      const storagePath = `${resolvedConversationId}/${viewerId}/${createClientMessageId()}.${extension}`;
+      const upload = await client.storage.from('chat-media').upload(storagePath, input.bytes, {
+        contentType: input.mimeType,
+        upsert: false,
+      });
+      if (upload.error) throw new Error(upload.error.message);
+
+      const { data, error } = await client.rpc('send_chat_attachment', {
+        target_conversation: resolvedConversationId,
+        target_storage_path: storagePath,
+        target_filename: input.filename,
+        target_mime_type: input.mimeType,
+        target_bytes: input.bytes.byteLength,
+        target_width: input.width ?? null,
+        target_height: input.height ?? null,
+        target_duration_ms: input.durationMs ?? null,
+        target_source: input.source,
+      });
+      if (error) {
+        await client.storage.from('chat-media').remove([storagePath]);
+        throw new Error(error.message);
+      }
+      notify();
+      return toMessage(data as MessageRow, viewerId);
+    },
+
+    async submitUnboxingEvidence(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      if (!isUuid(input.orderId) || !isUuid(input.orderItemId)) throw new Error('Invalid order evidence target.');
+      if (input.bytes.byteLength < 1 || input.bytes.byteLength > 26_214_400) {
+        throw new Error('Unboxing evidence must be 25 MiB or smaller.');
+      }
+      const extension = input.filename.toLowerCase().match(/\.([a-z0-9]{1,8})$/)?.[1]
+        ?? input.mimeType.split('/')[1]?.replace('jpeg', 'jpg')
+        ?? 'bin';
+      const storagePath = `${viewerId}/orders/${input.orderId}/unboxing/${createClientMessageId()}.${extension}`;
+      const upload = await client.storage.from('creator-commerce-private').upload(storagePath, input.bytes, {
+        contentType: input.mimeType,
+        upsert: false,
+      });
+      if (upload.error) throw new Error(upload.error.message);
+      const { error } = await client.from('commerce_order_evidence').insert({
+        owner_id: viewerId,
+        order_id: input.orderId,
+        order_item_id: input.orderItemId,
+        evidence_kind: 'unboxing',
+        evidence_source: input.source,
+        storage_path: storagePath,
+        file_name: input.filename,
+        mime_type: input.mimeType,
+        file_size: input.bytes.byteLength,
+      });
+      if (error) {
+        await client.storage.from('creator-commerce-private').remove([storagePath]);
+        throw new Error(error.message);
+      }
+      notify();
+    },
+
+    async submitOrderReturn(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      if (!input.reason.trim()) throw new Error('Add a reason for the return.');
+      const { error } = await client.rpc('submit_creator_commerce_return', {
+        p_order_item_id: input.orderItemId,
+        p_reason: input.reason.trim(),
+      });
+      if (error) throw new Error(error.message);
+      notify();
+    },
+
+    async sendLocation(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(input.conversationId);
+      const { data, error } = await client.rpc('send_structured_chat_message', {
+        target_conversation: resolvedConversationId,
+        target_kind: 'location',
+        target_payload: {
+          latitude: input.location.latitude,
+          longitude: input.location.longitude,
+          accuracy: input.location.accuracy ?? null,
+          label: input.location.label ?? null,
+          captured_at: input.location.capturedAt,
+        },
+      });
+      if (error) throw new Error(error.message);
+      notify();
+      return toMessage(data as MessageRow, viewerId);
+    },
+
+    async sendContact(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(input.conversationId);
+      const { data, error } = await client.rpc('send_structured_chat_message', {
+        target_conversation: resolvedConversationId,
+        target_kind: 'contact',
+        target_payload: { profile_id: input.profileId },
+      });
+      if (error) throw new Error(error.message);
+      notify();
+      return toMessage(data as MessageRow, viewerId);
+    },
+
+    async createPoll(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(input.conversationId);
+      const { data, error } = await client.rpc('create_chat_poll', {
+        target_conversation: resolvedConversationId,
+        target_question: input.question,
+        target_options: input.options,
+      });
+      if (error) throw new Error(error.message);
+      notify();
+      return toMessage(data as MessageRow, viewerId);
+    },
+
+    async votePoll(pollId, optionId) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const { error } = await client.rpc('vote_chat_poll', { target_poll: pollId, target_option: optionId });
+      if (error) throw new Error(error.message);
+      notify();
+    },
+
+    async createEvent(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(input.conversationId);
+      const { data, error } = await client.rpc('create_chat_event', {
+        target_conversation: resolvedConversationId,
+        target_title: input.title,
+        target_starts_at: input.startsAt,
+        target_location: input.location ?? null,
+        target_description: input.description ?? null,
+      });
+      if (error) throw new Error(error.message);
+      notify();
+      return toMessage(data as MessageRow, viewerId);
+    },
+
+    async rsvpEvent(eventId, response) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const { error } = await client.rpc('rsvp_chat_event', { target_event: eventId, target_response: response });
+      if (error) throw new Error(error.message);
+      notify();
+    },
+
+    async keepMemo(messageId) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const { error } = await client.rpc('keep_chat_message_memo', { target_message: messageId });
+      if (error) throw new Error(error.message);
+    },
+
+    async scheduleMessage(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(input.conversationId);
+      const { error } = await client.rpc('schedule_chat_message', {
+        target_conversation: resolvedConversationId,
+        target_body: input.body,
+        target_send_at: input.sendAt,
+        target_timezone: input.timezone,
+        target_idempotency_key: createClientMessageId(),
+      });
+      if (error) throw new Error(error.message);
+    },
+
+    async setVanishMode(conversationId, seconds) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(conversationId);
+      const { error } = await client.rpc('set_chat_vanish_mode', {
+        target_conversation: resolvedConversationId,
+        target_seconds: seconds,
+      });
+      if (error) throw new Error(error.message);
     },
 
     async markConversationRead(conversationId) {

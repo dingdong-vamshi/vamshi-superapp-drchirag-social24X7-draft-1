@@ -21,9 +21,16 @@ export type UploadAsset = {
 export type UploadedMedia = {
   path: string;
   url: string;
+  storageBucket?: "shop-media" | "product-media";
   mediaType: "image" | "video";
   altText?: string;
   position: number;
+  isPrimary?: boolean;
+  originalFilename?: string | null;
+  mimeType?: string | null;
+  bytes?: number;
+  width?: number | null;
+  height?: number | null;
 };
 
 export type StorefrontSummary = {

@@ -29,13 +29,18 @@ export default function ProductPage() {
   );
   const [loading, setLoading] = useState(true);
   const [product, setProduct] = useState<ShopProduct | null>(null);
+  const [quantity, setQuantity] = useState(0);
+  const [savingCart, setSavingCart] = useState(false);
 
   useEffect(() => {
     if (!repository || !slug || !productSlug) return;
     void (async () => {
       setLoading(true);
       try {
-        setProduct(await repository.getProductBySlug(slug, productSlug));
+        const nextProduct = await repository.getProductBySlug(slug, productSlug);
+        setProduct(nextProduct);
+        const cart = await repository.getCart();
+        setQuantity(cart.find((item) => item.productId === nextProduct?.id)?.quantity ?? 0);
       } finally {
         setLoading(false);
       }
@@ -65,6 +70,23 @@ export default function ProductPage() {
         },
       })
     : null;
+
+  const addToCart = async () => {
+    if (!repository || !product || savingCart || !product.inStock) return;
+    setSavingCart(true);
+    try {
+      const cart = await repository.getCart();
+      const existing = cart.find((item) => item.productId === product.id);
+      const nextQuantity = Math.min(product.inventory, (existing?.quantity ?? 0) + 1);
+      const next = existing
+        ? cart.map((item) => item.productId === product.id ? { ...item, quantity: nextQuantity } : item)
+        : [...cart, { productId: product.id, quantity: 1 }];
+      await repository.saveCart(next);
+      setQuantity(nextQuantity);
+    } finally {
+      setSavingCart(false);
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -127,12 +149,20 @@ export default function ProductPage() {
               ) : null}
 
               <Pressable
-                style={styles.primary}
-                onPress={() => router.push("/shop")}
+                disabled={savingCart || !product.inStock}
+                style={[styles.primary, (!product.inStock || savingCart) && styles.primaryDisabled]}
+                onPress={() => void addToCart()}
               >
                 <ShoppingBag size={16} color="#ffffff" />
-                <Text style={styles.primaryText}>Open in Shop</Text>
+                <Text style={styles.primaryText}>
+                  {savingCart ? "Adding…" : product.inStock ? quantity ? `Add another · ${quantity} in bag` : "Add to bag" : "Out of stock"}
+                </Text>
               </Pressable>
+              {quantity ? (
+                <Pressable onPress={() => router.push("/cart")} style={styles.secondary}>
+                  <Text style={styles.secondaryText}>Open bag and continue to checkout</Text>
+                </Pressable>
+              ) : null}
             </View>
           </>
         )}
@@ -227,4 +257,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryText: { color: "#ffffff", fontWeight: "800", fontSize: 15 },
+  primaryDisabled: { opacity: 0.55 },
+  secondary: { marginTop: 10, borderRadius: 16, borderWidth: 1, borderColor: "#cfe5d7", paddingVertical: 13, alignItems: "center" },
+  secondaryText: { color: "#087d45", fontWeight: "800", fontSize: 14 },
 });

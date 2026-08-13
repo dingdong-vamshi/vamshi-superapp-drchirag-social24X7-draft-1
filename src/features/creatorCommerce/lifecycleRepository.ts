@@ -33,6 +33,27 @@ export type LifecycleProduct = {
   reviewNote: string | null;
   updatedAt: string;
   mediaPaths: string[];
+  mediaItems: ProductMediaItem[];
+};
+
+export type ProductMediaItem = {
+  path: string;
+  storageBucket: 'shop-media' | 'product-media';
+  position: number;
+  isPrimary: boolean;
+  originalFilename: string | null;
+  mimeType: string | null;
+  bytes: number | null;
+  width: number | null;
+  height: number | null;
+};
+
+export type ProductMediaAsset = {
+  uri: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+  width?: number;
+  height?: number;
 };
 
 export type ProductDraftInput = {
@@ -70,6 +91,17 @@ export type CartLine = {
   quantity: number;
   unitPriceMinor: number;
   promotionCode: string | null;
+};
+
+export type BuyerDeliveryAddress = {
+  id: string;
+  recipientName: string;
+  phone: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  stateCode: string;
+  postalCode: string;
 };
 
 export type CheckoutSummary = {
@@ -172,16 +204,39 @@ type ProductRow = {
   review_note: string | null;
   updated_at: string;
   storefronts?: { id: string; name: string; owner_id: string } | { id: string; name: string; owner_id: string }[] | null;
-  product_media?: Array<{ path: string; position: number | null }> | null;
+  product_media?: Array<{
+    path: string;
+    position: number | null;
+    is_primary: boolean | null;
+    storage_bucket: 'shop-media' | 'product-media' | null;
+    original_filename: string | null;
+    mime_type: string | null;
+    bytes: number | null;
+    width: number | null;
+    height: number | null;
+  }> | null;
 };
 
 const productSelect =
-  'id,storefront_id,title,slug,category,short_description,description,price_minor,sale_price_minor,inventory,inventory_reserved,sku,status,product_approval_status,creator_promotion_enabled,creator_commission_bps,return_window_days,review_note,updated_at,storefronts!products_storefront_id_fkey(id,name,owner_id),product_media(path,position)';
+  'id,storefront_id,title,slug,category,short_description,description,price_minor,sale_price_minor,inventory,inventory_reserved,sku,status,product_approval_status,creator_promotion_enabled,creator_commission_bps,return_window_days,review_note,updated_at,storefronts!products_storefront_id_fkey(id,name,owner_id),product_media(path,position,is_primary,storage_bucket,original_filename,mime_type,bytes,width,height)';
 
 const first = <T,>(value: T | T[] | null | undefined) => Array.isArray(value) ? value[0] : value ?? null;
 
 const productFromRow = (row: ProductRow): LifecycleProduct => {
   const storefront = first(row.storefronts);
+  const mediaItems = [...(row.product_media ?? [])]
+    .sort((left, right) => (left.position ?? 0) - (right.position ?? 0))
+    .map((media, index) => ({
+      path: media.path,
+      storageBucket: media.storage_bucket ?? 'shop-media',
+      position: media.position ?? index,
+      isPrimary: media.is_primary ?? index === 0,
+      originalFilename: media.original_filename,
+      mimeType: media.mime_type,
+      bytes: media.bytes,
+      width: media.width,
+      height: media.height,
+    } satisfies ProductMediaItem));
   return {
     id: row.id,
     storefrontId: row.storefront_id,
@@ -204,9 +259,8 @@ const productFromRow = (row: ProductRow): LifecycleProduct => {
     returnWindowDays: row.return_window_days,
     reviewNote: row.review_note,
     updatedAt: row.updated_at,
-    mediaPaths: [...(row.product_media ?? [])]
-      .sort((left, right) => (left.position ?? 0) - (right.position ?? 0))
-      .map((media) => media.path),
+    mediaPaths: mediaItems.map((media) => media.path),
+    mediaItems,
   };
 };
 
@@ -398,6 +452,95 @@ export async function submitLifecycleProduct(client: SupabaseClient, productId: 
   return productFromRow(data as ProductRow);
 }
 
+const productMediaPayload = (items: ProductMediaItem[]) =>
+  items.map((item, index) => ({
+    path: item.path,
+    media_type: 'image',
+    alt_text: '',
+    position: index,
+    is_primary: index === 0,
+    original_filename: item.originalFilename,
+    mime_type: item.mimeType ?? 'image/jpeg',
+    bytes: item.bytes ?? 1,
+    width: item.width,
+    height: item.height,
+  }));
+
+export async function replaceLifecycleProductMedia(
+  client: SupabaseClient,
+  productId: string,
+  items: ProductMediaItem[],
+) {
+  const { error } = await client.rpc('replace_creator_commerce_product_media', {
+    p_product_id: productId,
+    p_media: productMediaPayload(items),
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function uploadLifecycleProductMedia(
+  client: SupabaseClient,
+  productId: string,
+  assets: ProductMediaAsset[],
+) {
+  const userId = await requireSupabaseUserId(client);
+  if (assets.length < 1 || assets.length > 10) {
+    throw new Error('Select between 1 and 10 Product images.');
+  }
+  const uploaded: ProductMediaItem[] = [];
+  try {
+    for (const [index, asset] of assets.entries()) {
+      const response = await fetch(asset.uri);
+      const bytes = await response.arrayBuffer();
+      const mimeType = asset.mimeType ?? 'image/jpeg';
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+        throw new Error('Product media supports JPEG, PNG, and WebP images only.');
+      }
+      if (bytes.byteLength < 1 || bytes.byteLength > 10 * 1024 * 1024) {
+        throw new Error('Each Product image must be no larger than 10 MiB.');
+      }
+      const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+      const path = `${userId}/products/${productId}/${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${index}`}.${extension}`;
+      const upload = await client.storage.from('product-media').upload(path, bytes, {
+        contentType: mimeType,
+        cacheControl: '3600',
+        upsert: false,
+      });
+      if (upload.error) throw new Error(upload.error.message);
+      uploaded.push({
+        path,
+        storageBucket: 'product-media',
+        position: index,
+        isPrimary: index === 0,
+        originalFilename: asset.fileName ?? null,
+        mimeType,
+        bytes: bytes.byteLength,
+        width: asset.width ?? null,
+        height: asset.height ?? null,
+      });
+    }
+    await replaceLifecycleProductMedia(client, productId, uploaded);
+    return uploaded;
+  } catch (cause) {
+    if (uploaded.length) {
+      await client.storage.from('product-media').remove(uploaded.map((item) => item.path));
+    }
+    throw cause;
+  }
+}
+
+export async function resolveLifecycleProductMediaUrl(
+  client: SupabaseClient,
+  item: ProductMediaItem,
+) {
+  if (item.storageBucket === 'shop-media') {
+    return client.storage.from('shop-media').getPublicUrl(item.path).data.publicUrl;
+  }
+  const { data, error } = await client.storage.from('product-media').createSignedUrl(item.path, 60 * 30);
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
+}
+
 export async function listAdminProductQueue(client: SupabaseClient) {
   const { data, error } = await client
     .from('products')
@@ -505,6 +648,48 @@ export async function listLifecycleCart(client: SupabaseClient): Promise<CartLin
       promotionCode: first(row.creator_product_promotions)?.tracking_code ?? row.creator_product_promotions?.tracking_code ?? null,
     };
   });
+}
+
+export async function replaceLifecycleCart(
+  client: SupabaseClient,
+  lines: Array<{ productId: string; quantity: number }>,
+) {
+  const current = await listLifecycleCart(client);
+  const desired = new Map(lines.map((line) => [line.productId, line.quantity]));
+  await Promise.all(
+    current
+      .filter((line) => !desired.has(line.productId))
+      .map((line) => addLifecycleCartItem(client, line.productId, 0, null)),
+  );
+  for (const line of lines) {
+    await addLifecycleCartItem(client, line.productId, line.quantity, null);
+  }
+}
+
+export async function getLatestBuyerDeliveryAddress(
+  client: SupabaseClient,
+): Promise<BuyerDeliveryAddress | null> {
+  const userId = await requireSupabaseUserId(client);
+  const { data, error } = await client
+    .from('buyer_delivery_addresses')
+    .select('id,recipient_name,phone,address_line1,address_line2,city,state_code,postal_code')
+    .eq('buyer_id', userId)
+    .order('is_default', { ascending: false })
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return {
+    id: data.id,
+    recipientName: data.recipient_name,
+    phone: data.phone,
+    addressLine1: data.address_line1,
+    addressLine2: data.address_line2,
+    city: data.city,
+    stateCode: data.state_code,
+    postalCode: data.postal_code,
+  };
 }
 
 export async function saveAddressAndCheckout(client: SupabaseClient, input: {

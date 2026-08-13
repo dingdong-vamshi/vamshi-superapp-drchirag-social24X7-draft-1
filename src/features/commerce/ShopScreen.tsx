@@ -26,6 +26,7 @@ import {
 
 type Props = {
   repository?: ShopRepository;
+  onCartPress?: () => void;
   onCheckout?: (lines: CartLine[]) => void | Promise<void>;
   onProductPress?: (product: ShopProduct) => void;
   onStorefrontPress?: (storefront: StorefrontSummary) => void;
@@ -41,6 +42,7 @@ const green = "#0ab35f";
 
 export function ShopScreen({
   repository = localShopRepository,
+  onCartPress,
   onCheckout,
   onProductPress,
   onStorefrontPress,
@@ -180,7 +182,8 @@ export function ShopScreen({
               </View>
               <Pressable
                 accessibilityRole="button"
-                onPress={() => setCartOpen(true)}
+                accessibilityLabel={`Open bag with ${cartCount} item${cartCount === 1 ? "" : "s"}`}
+                onPress={() => (onCartPress ? onCartPress() : setCartOpen(true))}
                 style={styles.cartButton}
               >
                 <ShoppingBag color={ink} size={20} />
@@ -392,7 +395,7 @@ function ProductCard({
 }) {
   return (
     <View style={styles.product}>
-      <Pressable onPress={onPress} style={styles.productArt}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`View ${item.name}`} onPress={onPress} style={styles.productArt}>
         {item.coverUrl ? (
           <Image source={{ uri: item.coverUrl }} style={styles.productImage} />
         ) : (
@@ -413,7 +416,7 @@ function ProductCard({
             SKU {item.sku || "NA"} · {item.inventory} left
           </Text>
         </View>
-        <Pressable style={styles.addButton} onPress={onAdd}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Add ${item.name} to bag`} style={styles.addButton} onPress={onAdd}>
           <Text style={styles.addButtonText}>{quantity ? `+${quantity}` : "+"}</Text>
         </Pressable>
       </View>

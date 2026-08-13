@@ -21,5 +21,5 @@ export default function ChatsPage() {
   }, [user]);
   const callAdapter = useMemo(() => createWebRtcCallAdapter(), [user]);
 
-  return <ChatScreen dataSource={repository} callAdapter={callAdapter} sharedPost={sharedPost} onBusinessSearch={() => router.push('/business-directory')} />;
+  return <ChatScreen dataSource={repository} callAdapter={callAdapter} sharedPost={sharedPost} onBusinessSearch={() => router.push('/business-directory')} onViewStore={(slug) => router.push({ pathname: '/store/[slug]', params: { slug } })} onViewOrder={(orderId) => router.push({ pathname: '/commerce/order/[id]', params: { id: orderId } })} onViewProfile={(userId) => router.push({ pathname: '/social-profile', params: { userId } })} />;
 }

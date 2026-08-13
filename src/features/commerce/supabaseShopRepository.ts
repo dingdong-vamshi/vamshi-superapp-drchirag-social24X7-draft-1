@@ -24,6 +24,9 @@ import {
 
 const cartKey = "social24x7:commerce-cart:v2";
 const mediaBucket = "shop-media";
+const privateProductMediaBucket = "product-media";
+const productSelect =
+  "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position,storage_bucket)";
 
 type StorefrontRow = {
   id: string;
@@ -75,7 +78,11 @@ type ProductRow = {
         slug: string;
       }[]
     | null;
-  product_media?: Array<{ path: string; position: number | null }> | null;
+  product_media?: Array<{
+    path: string;
+    position: number | null;
+    storage_bucket: "shop-media" | "product-media" | null;
+  }> | null;
 };
 
 type SellerApplicationRow = {
@@ -166,6 +173,7 @@ const storefrontFromRow = (
 const productFromRow = (
   client: SupabaseClient,
   row: ProductRow,
+  resolvedMediaUrls = new Map<string, string>(),
 ): ShopProduct => {
   const storefront = Array.isArray(row.storefronts)
     ? row.storefronts[0]
@@ -192,14 +200,39 @@ const productFromRow = (
     inStock: row.inventory > 0 && row.status === "active",
     inventory: row.inventory,
     sku: row.sku ?? "",
-    coverUrl: toPublicUrl(client, coverPath),
-    mediaUrls: media.map((item) => toPublicUrl(client, item.path) ?? item.path),
+    coverUrl: coverPath
+      ? resolvedMediaUrls.get(coverPath) ?? toPublicUrl(client, coverPath)
+      : null,
+    mediaUrls: media.map(
+      (item) => resolvedMediaUrls.get(item.path) ?? toPublicUrl(client, item.path) ?? item.path,
+    ),
     tags: row.tags ?? [],
     keywords: row.search_keywords ?? [],
     seoTitle: row.seo_title,
     seoDescription: row.seo_description,
     llmSummary: row.llm_summary,
   };
+};
+
+const productFromRowWithMedia = async (
+  client: SupabaseClient,
+  row: ProductRow,
+) => {
+  const privatePaths = (row.product_media ?? [])
+    .filter((item) => item.storage_bucket === privateProductMediaBucket)
+    .map((item) => item.path);
+  const resolved = new Map<string, string>();
+  if (privatePaths.length) {
+    const { data, error } = await client.storage
+      .from(privateProductMediaBucket)
+      .createSignedUrls(privatePaths, 60 * 60);
+    if (!error) {
+      (data ?? []).forEach((item, index) => {
+        if (item.signedUrl) resolved.set(privatePaths[index], item.signedUrl);
+      });
+    }
+  }
+  return productFromRow(client, row, resolved);
 };
 
 const normalizeCategory = (
@@ -231,7 +264,7 @@ export function createSupabaseShopRepository({
       let query = client
         .from("products")
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+          productSelect,
         )
         .eq("status", "active")
         .order("featured", { ascending: false })
@@ -246,7 +279,7 @@ export function createSupabaseShopRepository({
 
       const { data, error } = await query;
       if (error) throw new Error(error.message);
-      return (data as ProductRow[]).map((row) => productFromRow(client, row));
+      return Promise.all((data as ProductRow[]).map((row) => productFromRowWithMedia(client, row)));
     },
 
     async listStorefronts() {
@@ -280,14 +313,14 @@ export function createSupabaseShopRepository({
       const { data, error } = await client
         .from("products")
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!inner(id,name,slug),product_media(path,position)",
+          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!inner(id,name,slug),product_media(path,position,storage_bucket)",
         )
         .eq("status", "active")
         .eq("slug", productSlug)
         .eq("storefronts.slug", storefrontSlug)
         .maybeSingle();
       if (error) throw new Error(error.message);
-      return data ? productFromRow(client, data as ProductRow) : null;
+      return data ? productFromRowWithMedia(client, data as ProductRow) : null;
     },
 
     async getCart() {
@@ -344,7 +377,7 @@ export function createSupabaseShopRepository({
         ? await client
             .from("products")
             .select(
-              "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+              productSelect,
             )
             .eq("storefront_id", storefront.id)
             .order("updated_at", { ascending: false })
@@ -355,8 +388,10 @@ export function createSupabaseShopRepository({
       return {
         storefront,
         applicationStatus: (appData as SellerApplicationRow | null)?.status ?? "none",
-        products: ((products.data as ProductRow[] | null) ?? []).map((row) =>
-          productFromRow(client, row),
+        products: await Promise.all(
+          ((products.data as ProductRow[] | null) ?? []).map((row) =>
+            productFromRowWithMedia(client, row),
+          ),
         ),
       } satisfies SellerDashboard;
     },
@@ -697,43 +732,53 @@ export function createSupabaseShopRepository({
         .from("products")
         .upsert(payload, { onConflict: "id" })
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+          productSelect,
         )
         .single();
       if (error) throw new Error(error.message);
-      return productFromRow(client, data as ProductRow);
+      return productFromRowWithMedia(client, data as ProductRow);
     },
 
-    async uploadProductMedia(storefrontId, productId, assets) {
-      requireUser();
+    async uploadProductMedia(_storefrontId, productId, assets) {
+      const authUser = requireUser();
       const uploads: UploadedMedia[] = [];
       for (const [index, asset] of assets.entries()) {
         const response = await fetch(asset.uri);
         const bytes = await response.arrayBuffer();
+        const mimeType = asset.mimeType ?? "image/jpeg";
+        if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+          throw new Error("Product media supports JPEG, PNG, and WebP images only.");
+        }
+        if (bytes.byteLength < 1 || bytes.byteLength > 10 * 1024 * 1024) {
+          throw new Error("Each Product image must be no larger than 10 MiB.");
+        }
         const fallbackExtension = asset.mimeType?.includes("png")
           ? "png"
           : asset.mimeType?.includes("webp")
             ? "webp"
-            : asset.mimeType?.includes("gif")
-              ? "gif"
-              : "jpg";
+            : "jpg";
         const rawExtension = asset.fileName?.split(".").pop()?.toLowerCase();
         const extension =
           rawExtension && /^[a-z0-9]{2,5}$/.test(rawExtension)
             ? rawExtension
             : fallbackExtension;
-        const path = `${storefrontId}/products/${productId}/${Date.now()}-${index}.${extension}`;
-        const { error } = await client.storage.from(mediaBucket).upload(path, bytes, {
-          contentType: asset.mimeType ?? "image/jpeg",
+        const path = `${authUser.id}/products/${productId}/${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${index}`}.${extension}`;
+        const { error } = await client.storage.from(privateProductMediaBucket).upload(path, bytes, {
+          contentType: mimeType,
           upsert: false,
-          cacheControl: "31536000",
+          cacheControl: "3600",
         });
         if (error) throw new Error(error.message);
         uploads.push({
           path,
-          url: toPublicUrl(client, path) ?? path,
+          url: asset.uri,
+          storageBucket: privateProductMediaBucket,
           mediaType: "image",
           position: index,
+          isPrimary: index === 0,
+          originalFilename: asset.fileName ?? null,
+          mimeType,
+          bytes: bytes.byteLength,
         });
       }
       return uploads;
@@ -741,41 +786,58 @@ export function createSupabaseShopRepository({
 
     async replaceProductMedia(productId, media) {
       requireUser();
-      const { error: deleteError } = await client
+      const { data: previousMedia } = await client
         .from("product_media")
-        .delete()
+        .select("path,storage_bucket")
         .eq("product_id", productId);
-      if (deleteError) throw new Error(deleteError.message);
-
-      if (media.length) {
-        const { error: insertError } = await client.from("product_media").insert(
-          media.map((item) => ({
-            product_id: productId,
+      const { error: replaceError } = await client.rpc(
+        "replace_creator_commerce_product_media",
+        {
+          p_product_id: productId,
+          p_media: media.map((item, index) => ({
             path: item.path,
-            media_type: item.mediaType,
+            media_type: "image",
             alt_text: item.altText ?? "",
-            position: item.position,
-            is_primary: item.position === 0,
+            position: index,
+            is_primary: index === 0,
+            original_filename: item.originalFilename ?? null,
+            mime_type: item.mimeType ?? "image/jpeg",
+            bytes: item.bytes ?? 1,
+            width: item.width ?? null,
+            height: item.height ?? null,
           })),
-        );
-        if (insertError) throw new Error(insertError.message);
+        },
+      );
+      if (replaceError) {
+        await client.storage
+          .from(privateProductMediaBucket)
+          .remove(media.map((item) => item.path));
+        throw new Error(replaceError.message);
       }
 
-      const { error: productUpdateError } = await client
-        .from("products")
-        .update({ cover_path: media[0]?.path ?? null })
-        .eq("id", productId);
-      if (productUpdateError) throw new Error(productUpdateError.message);
+      const stalePrivatePaths = (previousMedia ?? [])
+        .filter(
+          (item) => item.storage_bucket === privateProductMediaBucket
+            && !media.some((next) => next.path === item.path),
+        )
+        .map((item) => item.path);
+      if (stalePrivatePaths.length) {
+        await client.storage.from(privateProductMediaBucket).remove(stalePrivatePaths);
+      }
 
       const { data, error } = await client
         .from("products")
         .select(
-          "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position)",
+          productSelect,
         )
         .eq("id", productId)
         .single();
       if (error) throw new Error(error.message);
-      return productFromRow(client, data as ProductRow);
+      return {
+        ...(await productFromRowWithMedia(client, data as ProductRow)),
+        coverUrl: media[0]?.url ?? null,
+        mediaUrls: media.map((item) => item.url),
+      };
     },
   };
 }

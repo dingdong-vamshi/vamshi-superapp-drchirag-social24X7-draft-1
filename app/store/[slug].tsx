@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { ArrowLeft, Heart, MapPin, Search, ShoppingBag, Star, Store } from "lucide-react-native";
-import { ShopProduct, StorefrontSummary, formatInr } from "../../src/features/commerce/shopRepository";
+import { CartLine, ShopProduct, StorefrontSummary, formatInr } from "../../src/features/commerce/shopRepository";
 import { createSupabaseShopRepository } from "../../src/features/commerce/supabaseShopRepository";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/lib/AuthContext";
@@ -30,6 +30,8 @@ export default function StorefrontPage() {
   const [storefront, setStorefront] = useState<StorefrontSummary | null>(null);
   const [products, setProducts] = useState<ShopProduct[]>([]);
   const [search, setSearch] = useState("");
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [savingCart, setSavingCart] = useState(false);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -43,6 +45,7 @@ export default function StorefrontPage() {
         ]);
         setStorefront(store);
         setProducts(allProducts.filter((item) => item.storefrontSlug === slug));
+        setCart(await repository.getCart());
       } finally {
         setLoading(false);
       }
@@ -75,6 +78,27 @@ export default function StorefrontPage() {
       })
     : null;
   const visibleProducts = products.filter((product) => `${product.name} ${product.shortDescription} ${product.tags.join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
+  const updateCart = async (productId: string, delta: number) => {
+    if (!repository || savingCart) return;
+    const currentLine = cart.find((item) => item.productId === productId);
+    const quantity = Math.max(0, (currentLine?.quantity ?? 0) + delta);
+    const next = quantity === 0
+      ? cart.filter((item) => item.productId !== productId)
+      : currentLine
+        ? cart.map((item) => item.productId === productId ? { ...item, quantity } : item)
+        : [...cart, { productId, quantity }];
+    const previous = cart;
+    setCart(next);
+    setSavingCart(true);
+    try {
+      await repository.saveCart(next);
+    } catch {
+      setCart(previous);
+    } finally {
+      setSavingCart(false);
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -110,7 +134,18 @@ export default function StorefrontPage() {
           <>
             <View style={styles.marketNav}>
               <Text style={styles.marketBrand}>Social Chat 24/7 Shop</Text>
-              <View style={styles.marketActions}><Heart size={19} color="#27332c" /><ShoppingBag size={19} color="#27332c" /></View>
+              <View style={styles.marketActions}>
+                <Heart size={19} color="#27332c" />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open bag with ${cartCount} items`}
+                  onPress={() => router.push("/cart")}
+                  style={styles.bagButton}
+                >
+                  <ShoppingBag size={19} color="#27332c" />
+                  {cartCount ? <View style={styles.bagBadge}><Text style={styles.bagBadgeText}>{cartCount}</Text></View> : null}
+                </Pressable>
+              </View>
             </View>
             <View style={styles.hero}>
               <View style={styles.heroCover} />
@@ -137,17 +172,20 @@ export default function StorefrontPage() {
             <View style={styles.listingHeader}><View><Text style={styles.sectionTitle}>Shop all listings</Text><Text style={styles.listingSub}>{visibleProducts.length} handcrafted and ready-to-ship items</Text></View><View style={styles.sortChip}><Text style={styles.sortText}>Most relevant</Text></View></View>
             <View style={styles.searchBar}><Search size={19} color="#718078" /><TextInput value={search} onChangeText={setSearch} placeholder="Search this shop" placeholderTextColor="#829188" style={styles.searchInput}/></View>
             <View style={styles.grid}>
-              {visibleProducts.map((product) => (
-                <Pressable
-                  key={product.id}
-                  style={styles.card}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/store/[slug]/product/[productSlug]",
-                      params: { slug: storefront.slug, productSlug: product.slug },
-                    })
-                  }
-                >
+              {visibleProducts.map((product) => {
+                const quantity = cart.find((item) => item.productId === product.id)?.quantity ?? 0;
+                return (
+                <View key={product.id} style={styles.card}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`View ${product.name}`}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/store/[slug]/product/[productSlug]",
+                        params: { slug: storefront.slug, productSlug: product.slug },
+                      })
+                    }
+                  >
                   {product.coverUrl ? (
                     <Image source={{ uri: product.coverUrl }} style={styles.cardImage} />
                   ) : (
@@ -161,8 +199,15 @@ export default function StorefrontPage() {
                   <Text style={styles.cardMeta} numberOfLines={2}>
                     {product.shortDescription}
                   </Text>
-                </Pressable>
-              ))}
+                  </Pressable>
+                  <View style={styles.cartActions}>
+                    <Pressable disabled={savingCart || !product.inStock} onPress={() => void updateCart(product.id, 1)} style={styles.addButton}>
+                      <Text style={styles.addButtonText}>{quantity ? `Add one · ${quantity} in bag` : product.inStock ? "Add to bag" : "Out of stock"}</Text>
+                    </Pressable>
+                    {quantity ? <Pressable disabled={savingCart} onPress={() => void updateCart(product.id, -1)}><Text style={styles.removeOne}>Remove one</Text></Pressable> : null}
+                  </View>
+                </View>
+              );})}
             </View>
           </>
         )}
@@ -202,6 +247,9 @@ const styles = StyleSheet.create({
   marketNav: { paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#e8eee9", flexDirection:"row", alignItems:"center", justifyContent:"space-between" },
   marketBrand: { color:"#18231c", fontSize:15, fontWeight:"900" },
   marketActions: { flexDirection:"row", gap:16 },
+  bagButton: { position: "relative" },
+  bagBadge: { position: "absolute", top: -10, right: -10, minWidth: 17, height: 17, borderRadius: 9, paddingHorizontal: 4, backgroundColor: "#d44e4e", alignItems: "center", justifyContent: "center" },
+  bagBadgeText: { color: "#ffffff", fontSize: 9, fontWeight: "900" },
   hero: {
     marginHorizontal: 16,
     marginTop: 18,
@@ -280,6 +328,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     padding: 9,
   },
+  cartActions: { marginTop: 10, gap: 7 },
+  addButton: { minHeight: 36, borderRadius: 10, backgroundColor: "#0a9f57", alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
+  addButtonText: { color: "#ffffff", fontSize: 11, fontWeight: "900" },
+  removeOne: { color: "#9b2f2f", fontSize: 10, fontWeight: "800", textAlign: "center" },
   cardImage: {
     width: "100%",
     aspectRatio: 1,

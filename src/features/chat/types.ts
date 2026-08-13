@@ -33,6 +33,119 @@ export type MessageReaction = {
   reactedByCurrentUser: boolean;
 };
 
+export type OrderChatEventType =
+  | 'order_confirmed'
+  | 'order_processing'
+  | 'order_shipped'
+  | 'order_out_for_delivery'
+  | 'order_delivered'
+  | 'order_cancelled'
+  | 'return_requested'
+  | 'return_approved'
+  | 'return_rejected'
+  | 'order_refunded';
+
+export type OrderChatItem = {
+  orderItemId: string;
+  productId?: string;
+  title: string;
+  slug: string;
+  quantity: number;
+  unitPriceMinor: number;
+  subtotalMinor: number;
+};
+
+export type OrderChatEvidence = {
+  id: string;
+  orderItemId: string;
+  filename: string;
+  mimeType: string;
+  source: 'live_capture' | 'uploaded_file';
+  createdAt: string;
+  signedUrl?: string;
+};
+
+export type OrderChatEvent = {
+  version: 1;
+  eventType: OrderChatEventType;
+  orderId: string;
+  orderStatus: string;
+  storefrontId: string;
+  storefrontName: string;
+  storefrontSlug: string;
+  currency: string;
+  subtotalMinor: number;
+  totalMinor: number;
+  paymentMethod: string;
+  paymentStatus: string;
+  placedAt: string;
+  items: OrderChatItem[];
+  carrier?: string;
+  trackingNumber?: string;
+  packageReference?: string;
+  customerNote?: string;
+  liveOrderStatus?: string;
+  viewerRole?: 'buyer' | 'seller';
+  unboxingEvidence?: OrderChatEvidence[];
+  canSubmitUnboxingEvidence?: boolean;
+  canRequestReturn?: boolean;
+};
+
+export type ChatAttachmentSource = 'camera_capture' | 'gallery' | 'document_picker' | 'document_scan';
+
+export type ChatAttachment = {
+  id: string;
+  attachmentType: 'image' | 'video' | 'document';
+  filename: string;
+  mimeType: string;
+  bytes: number;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  source: ChatAttachmentSource;
+  signedUrl?: string;
+};
+
+export type ChatLocation = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  label?: string;
+  capturedAt: string;
+};
+
+export type SharedContact = {
+  profileId: string;
+  displayName: string;
+  username: string;
+};
+
+export type ChatPollOption = {
+  id: string;
+  label: string;
+  position: number;
+  votes: number;
+  selectedByCurrentUser: boolean;
+};
+
+export type ChatPoll = {
+  id: string;
+  question: string;
+  status: 'open' | 'closed';
+  options: ChatPollOption[];
+  totalVotes: number;
+};
+
+export type ChatEvent = {
+  id: string;
+  title: string;
+  startsAt: string;
+  location?: string;
+  description?: string;
+  rsvpCounts: { going: number; maybe: number; declined: number };
+  currentUserResponse?: 'going' | 'maybe' | 'declined';
+};
+
 export type ChatMessage = {
   id: string;
   conversationId: string;
@@ -40,9 +153,23 @@ export type ChatMessage = {
   text: string;
   createdAt: string;
   status: MessageStatus;
-  type?: 'text' | 'shared_post' | 'sticker';
+  type?: 'text' | 'shared_post' | 'sticker' | 'order_event';
   post?: SharedPost;
+  order?: OrderChatEvent;
+  attachment?: ChatAttachment;
+  location?: ChatLocation;
+  contact?: SharedContact;
+  poll?: ChatPoll;
+  event?: ChatEvent;
   reactions?: MessageReaction[];
+};
+
+export type BusinessStorefrontIdentity = {
+  id: string;
+  name: string;
+  slug: string;
+  logoPath?: string;
+  verificationStatus?: string;
 };
 
 export type SendMessageInput = Pick<ChatMessage, 'conversationId' | 'text'> & Pick<ChatMessage, 'type' | 'post'>;
@@ -72,12 +199,42 @@ export type Conversation = {
   clearedAt?: string | null;
   requestStatus?: 'pending_outgoing' | 'pending_incoming' | 'accepted';
   requestMessage?: string;
+  storefront?: BusinessStorefrontIdentity;
+  businessRole?: 'customer' | 'seller';
 };
 
 export type ChatDataSource = {
   listConversations(): Promise<Conversation[]>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
   sendMessage(input: SendMessageInput): Promise<ChatMessage>;
+  sendAttachment?(input: {
+    conversationId: string;
+    bytes: ArrayBuffer;
+    filename: string;
+    mimeType: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+    source: ChatAttachmentSource;
+  }): Promise<ChatMessage>;
+  submitUnboxingEvidence?(input: {
+    orderId: string;
+    orderItemId: string;
+    bytes: ArrayBuffer;
+    filename: string;
+    mimeType: string;
+    source: 'live_capture' | 'uploaded_file';
+  }): Promise<void>;
+  submitOrderReturn?(input: { orderItemId: string; reason: string }): Promise<void>;
+  sendLocation?(input: { conversationId: string; location: ChatLocation }): Promise<ChatMessage>;
+  sendContact?(input: { conversationId: string; profileId: string }): Promise<ChatMessage>;
+  createPoll?(input: { conversationId: string; question: string; options: string[] }): Promise<ChatMessage>;
+  votePoll?(pollId: string, optionId: string): Promise<void>;
+  createEvent?(input: { conversationId: string; title: string; startsAt: string; location?: string; description?: string }): Promise<ChatMessage>;
+  rsvpEvent?(eventId: string, response: 'going' | 'maybe' | 'declined'): Promise<void>;
+  keepMemo?(messageId: string): Promise<void>;
+  scheduleMessage?(input: { conversationId: string; body: string; sendAt: string; timezone: string }): Promise<void>;
+  setVanishMode?(conversationId: string, seconds: 86400 | 604800 | 2592000 | null): Promise<void>;
   markConversationRead(conversationId: string): Promise<void>;
   searchContacts(query: string): Promise<ChatContact[]>;
   openDirectConversation(contactId: string): Promise<Conversation>;

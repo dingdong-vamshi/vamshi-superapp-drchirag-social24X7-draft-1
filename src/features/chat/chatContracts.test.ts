@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+import {
+  toAttachment,
+  toLocation,
+  toOrderEvent,
+} from "./chatContractParsers.ts";
+
+const orderId = "11111111-1111-4111-8111-111111111111";
+const orderItemId = "22222222-2222-4222-8222-222222222222";
+
+test("accepts a versioned server order event and rejects forged shapes", () => {
+  const parsed = toOrderEvent({
+    version: 1,
+    event_type: "order_confirmed",
+    order_id: orderId,
+    order_status: "placed",
+    storefront_id: "33333333-3333-4333-8333-333333333333",
+    storefront_name: "Test Store",
+    storefront_slug: "test-store",
+    currency: "INR",
+    subtotal_minor: 90000,
+    total_minor: 90500,
+    payment_method: "cod",
+    payment_status: "pending",
+    placed_at: "2026-08-12T10:00:00.000Z",
+    items: [{
+      order_item_id: orderItemId,
+      title: "Product A",
+      slug: "product-a",
+      quantity: 1,
+      unit_price_minor: 90000,
+      subtotal_minor: 90000,
+    }],
+  });
+
+  assert.equal(parsed?.eventType, "order_confirmed");
+  assert.equal(parsed?.items[0]?.orderItemId, orderItemId);
+  assert.equal(toOrderEvent({ version: 1, event_type: "paid", order_id: orderId }), undefined);
+  assert.equal(toOrderEvent({ version: 2, event_type: "order_confirmed", order_id: orderId }), undefined);
+});
+
+test("keeps capture provenance distinct from gallery uploads", () => {
+  const attachmentId = "44444444-4444-4444-8444-444444444444";
+  assert.equal(toAttachment({
+    attachment_id: attachmentId,
+    attachment_type: "image",
+    source: "camera_capture",
+    filename: "camera.jpg",
+    mime_type: "image/jpeg",
+    bytes: 2048,
+  })?.source, "camera_capture");
+  assert.equal(toAttachment({
+    attachment_id: attachmentId,
+    attachment_type: "image",
+    source: "gallery",
+    filename: "gallery.png",
+    mime_type: "image/png",
+    bytes: 1024,
+  })?.source, "gallery");
+  assert.equal(toAttachment({
+    attachment_id: attachmentId,
+    attachment_type: "image",
+    source: "forensic_proof",
+  }), undefined);
+});
+
+test("validates location bounds", () => {
+  assert.deepEqual(toLocation({
+    version: 1,
+    latitude: 17.385,
+    longitude: 78.4867,
+    captured_at: "2026-08-12T10:00:00.000Z",
+  }), {
+    latitude: 17.385,
+    longitude: 78.4867,
+    accuracy: undefined,
+    label: undefined,
+    capturedAt: "2026-08-12T10:00:00.000Z",
+  });
+  assert.equal(toLocation({ version: 1, latitude: 91, longitude: 78 }), undefined);
+});
+
+test("migrations keep authoritative events and private media behind RLS", () => {
+  const orderMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260812144700_business_chat_order_events.sql", import.meta.url),
+    "utf8",
+  );
+  const attachmentMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260812152000_private_chat_attachments.sql", import.meta.url),
+    "utf8",
+  );
+  const vanishMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260812161000_scheduled_messages_vanish_mode.sql", import.meta.url),
+    "utf8",
+  );
+  const evidenceMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260813103148_business_chat_unboxing_evidence_source.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(orderMigration, /revoke\s+all\s+on\s+table\s+public\.commerce_order_chat_events/i);
+  assert.match(orderMigration, /unique\s*\(order_id,\s*event_type\)/i);
+  assert.match(attachmentMigration, /on\s+conflict\s*\(id\)\s+do\s+update\s+set[\s\S]*public\s*=\s*false/i);
+  assert.match(attachmentMigration, /private\.can_read_chat_media_path/i);
+  assert.match(vanishMigration, /messages_authoritative_never_expire_check[\s\S]*kind\s+not\s+in[\s\S]*expires_at\s+is\s+null/i);
+  assert.match(vanishMigration, /for\s+update\s+skip\s+locked/i);
+  assert.match(evidenceMigration, /evidence_source\s+in\s*\('live_capture',\s*'uploaded_file'\)/i);
+  assert.match(evidenceMigration, /evidence_order\.status\s+in\s*\('delivered',\s*'return_requested'/i);
+  assert.match(evidenceMigration, /evidence_item\.buyer_id\s*=\s*\(select auth\.uid\(\)\)/i);
+});

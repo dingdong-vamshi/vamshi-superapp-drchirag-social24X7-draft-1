@@ -76,7 +76,7 @@ export default function BusinessDirectoryPage() {
         target_storefront: storefront.id,
       });
       if (error) throw error;
-      router.replace({ pathname: "/business-chat/[id]", params: { id: String(data), store: storefront.name } });
+      router.replace({ pathname: "/business-chat/[id]", params: { id: String(data) } });
     } catch (error) {
       Alert.alert("Could not open chat", error instanceof Error ? error.message : "Please try again.");
     } finally {
