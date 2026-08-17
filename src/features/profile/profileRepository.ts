@@ -18,6 +18,8 @@ export type UserProfile = {
   email: string;
   phone: string;
   avatarInitials: string;
+  avatarPath?: string | null;
+  avatarUrl?: string | null;
   /** Allow the account to appear in Nearby People. */
   discoverable: boolean;
   /** Let other people find this account by @username. Never exposes email or phone. */
@@ -29,6 +31,12 @@ export type UserProfile = {
 export interface ProfileRepository {
   getProfile(): Promise<UserProfile>;
   updateProfile(profile: UserProfile): Promise<UserProfile>;
+  updateAvatar(input: {
+    uri: string;
+    bytes?: ArrayBuffer;
+    mimeType?: string | null;
+    extension?: string | null;
+  }): Promise<UserProfile>;
 }
 
 type ProfileAuthHints = {
@@ -64,6 +72,8 @@ const localDefaultProfile: UserProfile = {
   email: '',
   phone: '',
   avatarInitials: 'K',
+  avatarPath: null,
+  avatarUrl: null,
   discoverable: true,
   usernameDiscoverable: true,
   phoneDiscoverable: false,
@@ -99,6 +109,7 @@ const toDirectoryEntry = (profile: UserProfile): DirectoryProfile => ({
   id: profile.id,
   name: profile.displayName,
   avatarLabel: profile.avatarInitials,
+  avatarUrl: profile.avatarUrl,
   username: profile.handle,
   phone: normalizePhone(profile.phone),
   discoverable: profile.discoverable,
@@ -173,6 +184,13 @@ export const createLocalProfileRepository = (hints?: ProfileAuthHints): ProfileR
       await syncProfileDirectory(profile);
       return profile;
     },
+    async updateAvatar(input) {
+      const current = await this.getProfile();
+      const updated = { ...current, avatarPath: input.uri, avatarUrl: input.uri };
+      await AsyncStorage.setItem(storageKey, JSON.stringify(updated));
+      await syncProfileDirectory(updated);
+      return updated;
+    },
   };
 };
 
@@ -190,7 +208,11 @@ type SupabaseProfileRow = {
   avatar_path: string | null;
 };
 
-const remoteToProfile = (row: SupabaseProfileRow, authUser: IdentityLike): UserProfile => ({
+const remoteToProfile = (
+  row: SupabaseProfileRow,
+  authUser: IdentityLike,
+  avatarUrl?: string | null,
+): UserProfile => ({
   id: row.id,
   displayName: row.display_name?.trim() || authUser.user_metadata?.name || 'User',
   handle: row.username?.trim() || authUser.user_metadata?.preferred_username || authUser.email?.split('@')[0] || 'user',
@@ -198,6 +220,8 @@ const remoteToProfile = (row: SupabaseProfileRow, authUser: IdentityLike): UserP
   email: authUser.email ?? '',
   phone: row.phone ?? authUser.phone ?? '',
   avatarInitials: initialsFor(row.display_name?.trim() || authUser.user_metadata?.name || (authUser.email?.slice(0, 1) ?? '?')),
+  avatarPath: row.avatar_path,
+  avatarUrl: avatarUrl || null,
   discoverable: !row.is_private,
   usernameDiscoverable: row.username_discoverable ?? true,
   phoneDiscoverable: row.phone_discoverable ?? false,
@@ -247,7 +271,11 @@ export const createSupabaseProfileRepository = (authUser: User | null): ProfileR
           authUser as IdentityLike,
         );
       }
-      return remoteToProfile(data as SupabaseProfileRow, authUser as IdentityLike);
+      const row = data as SupabaseProfileRow;
+      const signed = row.avatar_path
+        ? await client.storage.from('profile-media').createSignedUrl(row.avatar_path, 3600)
+        : { data: null };
+      return remoteToProfile(row, authUser as IdentityLike, signed.data?.signedUrl || null);
     },
     async updateProfile(profile) {
       const payload = {
@@ -273,6 +301,27 @@ export const createSupabaseProfileRepository = (authUser: User | null): ProfileR
       };
       await syncProfileDirectory(updated);
       return updated;
+    },
+    async updateAvatar(input) {
+      if (!input.bytes) throw new Error('The selected profile image could not be read.');
+      const safeExtension = input.extension?.match(/^[a-z0-9]{2,5}$/i)?.[0].toLowerCase() || 'jpg';
+      const path = `${authUser.id}/avatar-${Date.now()}.${safeExtension}`;
+      const { error: uploadError } = await client.storage.from('profile-media').upload(path, input.bytes, {
+        contentType: input.mimeType || 'image/jpeg',
+        cacheControl: '3600',
+        upsert: false,
+      });
+      if (uploadError) throw new Error(uploadError.message);
+      const { error: updateError } = await client
+        .from('profiles')
+        .update({ avatar_path: path })
+        .eq('id', authUser.id);
+      if (updateError) {
+        await client.storage.from('profile-media').remove([path]);
+        throw new Error(updateError.message);
+      }
+      const current = await this.getProfile();
+      return { ...current, avatarPath: path, avatarUrl: input.uri };
     },
   };
 };

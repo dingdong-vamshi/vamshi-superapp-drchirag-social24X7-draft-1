@@ -60,7 +60,7 @@ export default function LoginScreen() {
           username: cleanedUsername,
           displayName: displayName.trim() || "You",
         });
-        router.replace("/social");
+        router.replace("/chats");
         return;
       }
 
@@ -88,7 +88,7 @@ export default function LoginScreen() {
         Alert.alert("No active session", "Unable to start session right now.");
         return;
       }
-      router.replace("/social");
+      router.replace("/chats");
     } catch (error) {
       Alert.alert(
         "Sign in failed",

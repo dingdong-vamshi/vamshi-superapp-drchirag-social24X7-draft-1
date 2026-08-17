@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import * as ImagePicker from "expo-image-picker";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -51,6 +53,7 @@ export function ProfileScreen({
   const [isEditorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState<UserProfile | null>(null);
   const [isSaving, setSaving] = useState(false);
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
   const load = async () => {
     setStatus("loading");
     try {
@@ -84,6 +87,37 @@ export function ProfileScreen({
         "Changes not saved",
         "Please try again when you have a connection.",
       );
+    } finally {
+      setSaving(false);
+    }
+  };
+  const changePhoto = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Photo access needed", "Allow photo access to choose a profile picture.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.82,
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    setSaving(true);
+    try {
+      const bytes = await (await fetch(asset.uri)).arrayBuffer();
+      const updated = await repository.updateAvatar({
+        uri: asset.uri,
+        bytes,
+        mimeType: asset.mimeType,
+        extension: asset.fileName?.split(".").pop() || null,
+      });
+      setProfile(updated);
+      setDraft((current) => current ? { ...current, ...updated } : current);
+    } catch {
+      Alert.alert("Photo not updated", "Please check your connection and try again.");
     } finally {
       setSaving(false);
     }
@@ -122,9 +156,18 @@ export function ProfileScreen({
         </Pressable>
       </View>
       <View style={styles.hero}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{profile.avatarInitials}</Text>
-        </View>
+        <Pressable
+          accessibilityRole="imagebutton"
+          accessibilityLabel="Open profile picture"
+          onPress={() => profile.avatarUrl ? setAvatarPreviewOpen(true) : void changePhoto()}
+          style={styles.avatar}
+        >
+          {profile.avatarUrl ? (
+            <Image source={{ uri: profile.avatarUrl }} style={styles.avatarImage} />
+          ) : (
+            <Text style={styles.avatarText}>{profile.avatarInitials}</Text>
+          )}
+        </Pressable>
         <View style={styles.identity}>
           <Text style={styles.name}>{profile.displayName}</Text>
           <View style={styles.idPill}>
@@ -251,11 +294,16 @@ export function ProfileScreen({
           </View>
           {draft && (
             <>
-              <View style={styles.editorAvatar}>
-                <Text style={styles.avatarText}>
-                  {draft.displayName.slice(0, 1).toUpperCase() || "?"}
-                </Text>
-              </View>
+              <Pressable style={styles.editorAvatarBlock} onPress={() => void changePhoto()}>
+                <View style={styles.editorAvatar}>
+                  {draft.avatarUrl ? (
+                    <Image source={{ uri: draft.avatarUrl }} style={styles.editorAvatarImage} />
+                  ) : (
+                    <Text style={styles.avatarText}>{draft.displayName.slice(0, 1).toUpperCase() || "?"}</Text>
+                  )}
+                </View>
+                <Text style={styles.changePhoto}>Change profile photo</Text>
+              </Pressable>
               <Field
                 label="Name"
                 value={draft.displayName}
@@ -277,20 +325,7 @@ export function ProfileScreen({
                 onChangeText={(bio) => setDraft({ ...draft, bio })}
                 multiline
               />
-              <Field
-                label="Email"
-                value={draft.email}
-                onChangeText={(email) => setDraft({ ...draft, email })}
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-              <Field
-                label="Phone"
-                value={draft.phone}
-                onChangeText={(phone) => setDraft({ ...draft, phone })}
-                keyboardType="phone-pad"
-              />
-              <Text style={styles.privacyHeading}>Discovery & contact</Text>
+              <Text style={styles.privacyHeading}>Profile visibility</Text>
               <PrivacySwitch
                 title="Appear in Nearby People"
                 body="People can only contact you after approval."
@@ -307,22 +342,14 @@ export function ProfileScreen({
                   setDraft({ ...draft, usernameDiscoverable })
                 }
               />
-              <PrivacySwitch
-                title="Find me by phone number"
-                body={
-                  draft.phone
-                    ? "Only people who already have this number can find you."
-                    : "Add a phone number before turning this on."
-                }
-                value={draft.phoneDiscoverable}
-                disabled={!draft.phone.trim()}
-                onChange={(phoneDiscoverable) =>
-                  setDraft({ ...draft, phoneDiscoverable })
-                }
-              />
             </>
           )}
         </ScrollView>
+      </Modal>
+      <Modal visible={avatarPreviewOpen} transparent animationType="fade" onRequestClose={() => setAvatarPreviewOpen(false)}>
+        <Pressable style={styles.avatarLightbox} onPress={() => setAvatarPreviewOpen(false)}>
+          {profile.avatarUrl ? <Image source={{ uri: profile.avatarUrl }} style={styles.avatarLightboxImage} resizeMode="contain" /> : null}
+        </Pressable>
       </Modal>
     </ScrollView>
   );
@@ -482,7 +509,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#07c160",
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
+  avatarImage: { width: "100%", height: "100%" },
   avatarText: { fontSize: 28, fontWeight: "700", color: "#fff" },
   identity: { flex: 1 },
   name: { fontSize: 20, fontWeight: "600", color: "#111111" },
@@ -594,8 +623,19 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 28,
+    overflow: "hidden",
   },
+  editorAvatarBlock: { alignItems: "center", gap: 9, marginBottom: 28 },
+  editorAvatarImage: { width: "100%", height: "100%" },
+  changePhoto: { color: "#08713d", fontWeight: "800", fontSize: 13 },
+  avatarLightbox: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  avatarLightboxImage: { width: "100%", height: "82%" },
   field: { marginBottom: 18 },
   fieldLabel: {
     fontSize: 13,

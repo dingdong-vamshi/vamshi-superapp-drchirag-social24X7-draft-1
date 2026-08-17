@@ -69,7 +69,7 @@ export default function SignupScreen() {
           username: cleanUsername,
           displayName: cleanName,
         });
-        router.replace("/social");
+        router.replace("/chats");
         return;
       }
 
@@ -118,7 +118,7 @@ export default function SignupScreen() {
       }
 
       if (result.data.session) {
-        router.replace("/social");
+        router.replace("/chats");
       } else {
         Alert.alert(
           "Account created",

@@ -27,6 +27,7 @@ function RootNavigator() {
         <Stack.Screen name="cart" />
         <Stack.Screen name="checkout/index" />
         <Stack.Screen name="checkout/success" />
+        <Stack.Screen name="profile-qr" />
         <Stack.Screen name="games/index" />
         <Stack.Screen name="games/[id]" />
       </Stack.Protected>

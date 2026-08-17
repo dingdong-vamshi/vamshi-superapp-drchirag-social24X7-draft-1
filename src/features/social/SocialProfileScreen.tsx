@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   ActivityIndicator,
   Image,
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -68,6 +69,8 @@ export function SocialProfileScreen({
   const [followers, setFollowers] = useState(0);
   const [following, setFollowing] = useState(0);
   const [storefront, setStorefront] = useState<{ name: string; slug: string } | null>(null);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
 
   const profileUserId = selectedUserId || viewer.id;
   const isOwnProfile = profileUserId === viewer.id;
@@ -91,14 +94,16 @@ export function SocialProfileScreen({
             displayName: own.displayName,
             handle: own.handle,
             bio: own.bio,
-            avatarUrl: viewer.avatarUrl,
+            avatarUrl: own.avatarUrl || viewer.avatarUrl,
           };
         } else if (supabaseClient && isUuid(profileUserId)) {
-          const { data } = await supabaseClient
-            .from("profiles")
-            .select("id,username,display_name,bio,avatar_path")
-            .eq("id", profileUserId)
-            .maybeSingle();
+          const { data: profileRows } = await supabaseClient.rpc("get_public_social_profiles", {
+            target_ids: [profileUserId],
+          });
+          const data = Array.isArray(profileRows) ? profileRows[0] : profileRows;
+          const signedAvatar = data?.avatar_path
+            ? await supabaseClient.storage.from("profile-media").createSignedUrl(data.avatar_path, 3600)
+            : { data: null };
           nextProfile = {
             id: profileUserId,
             displayName:
@@ -113,6 +118,7 @@ export function SocialProfileScreen({
               "user",
             bio: data?.bio || "",
             avatarUrl:
+              signedAvatar.data?.signedUrl ||
               absoluteUrl(data?.avatar_path) ||
               fallbackUser?.avatarUrl ||
               fallbackAuthor?.avatarUrl ||
@@ -178,6 +184,7 @@ export function SocialProfileScreen({
         setFollowing(followingCount);
         setReviews(commentGroups.flat().slice(0, 8));
         setStorefront(publicStorefront);
+        setIsFollowing(Boolean(fallbackAuthor?.following));
       } catch (cause) {
         if (!mounted) return;
         setError(cause instanceof Error ? cause.message : "Could not load this social profile.");
@@ -246,7 +253,13 @@ export function SocialProfileScreen({
         </View>
 
         <View style={styles.topRow}>
-          <Avatar name={profile.displayName} avatarUrl={profile.avatarUrl} size={108} />
+          <Pressable
+            accessibilityRole="imagebutton"
+            accessibilityLabel="Open profile picture"
+            onPress={() => profile.avatarUrl && setAvatarPreviewOpen(true)}
+          >
+            <Avatar name={profile.displayName} avatarUrl={profile.avatarUrl} size={108} />
+          </Pressable>
           <View style={styles.stat}>
             <Text style={styles.statValue}>{posts.length}</Text>
             <Text style={styles.statLabel}>Posts</Text>
@@ -267,10 +280,22 @@ export function SocialProfileScreen({
 
         <View style={styles.actionRow}>
           <Pressable
-            onPress={() => (isOwnProfile ? router.push("/profile") : undefined)}
+            onPress={() => {
+              if (isOwnProfile) {
+                router.push("/profile");
+                return;
+              }
+              const next = !isFollowing;
+              setIsFollowing(next);
+              setFollowers((current) => Math.max(0, current + (next ? 1 : -1)));
+              repository.setFollowing(profile.id, next).catch(() => {
+                setIsFollowing(!next);
+                setFollowers((current) => Math.max(0, current + (next ? -1 : 1)));
+              });
+            }}
             style={[styles.primaryButton, isOwnProfile ? styles.primaryButton : styles.primaryButton]}
           >
-            <Text style={styles.primaryButtonText}>{isOwnProfile ? "Edit profile" : "Follow"}</Text>
+            <Text style={styles.primaryButtonText}>{isOwnProfile ? "Edit profile" : isFollowing ? "Following" : "Follow"}</Text>
           </Pressable>
           <Pressable
             onPress={() => router.push("/chats")}
@@ -385,6 +410,11 @@ export function SocialProfileScreen({
           />
         )}
       </ScrollView>
+      <Modal visible={avatarPreviewOpen} transparent animationType="fade" onRequestClose={() => setAvatarPreviewOpen(false)}>
+        <Pressable style={styles.avatarLightbox} onPress={() => setAvatarPreviewOpen(false)}>
+          {profile.avatarUrl ? <Image source={{ uri: profile.avatarUrl }} style={styles.avatarLightboxImage} resizeMode="contain" /> : null}
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -496,6 +526,8 @@ const styles = StyleSheet.create({
   topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   avatarFallback: { backgroundColor: "#eef0f5", alignItems: "center", justifyContent: "center" },
   avatarText: { fontSize: 34, fontWeight: "700", color: ink },
+  avatarLightbox: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center", padding: 20 },
+  avatarLightboxImage: { width: "100%", height: "82%" },
   stat: { flex: 1, alignItems: "center" },
   statValue: { fontSize: 18, fontWeight: "800", color: ink },
   statLabel: { marginTop: 4, fontSize: 14, color: muted, fontWeight: "600" },

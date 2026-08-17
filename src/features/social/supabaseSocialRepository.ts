@@ -6,6 +6,7 @@ import type {
   SocialComment,
   SocialPost,
   SocialRepository,
+  SocialSearchResult,
   SocialStory,
   SocialUser,
 } from './types';
@@ -15,6 +16,7 @@ type ProfileRow = {
   username: string;
   display_name: string;
   avatar_path?: string | null;
+  verified_professional?: boolean | null;
 };
 
 type FeedRow = {
@@ -37,9 +39,6 @@ type FeedRow = {
 };
 
 const asCount = (value: number | string | null | undefined) => Number(value || 0);
-const absoluteAvatar = (path?: string | null) =>
-  path?.startsWith('http://') || path?.startsWith('https://') ? path : null;
-
 export function createSupabaseSocialRepository({
   client,
   user,
@@ -50,14 +49,30 @@ export function createSupabaseSocialRepository({
   const postUrl = (path?: string | null) =>
     path ? client.storage.from('social-posts').getPublicUrl(path).data.publicUrl : null;
 
-  const toPost = (row: FeedRow): SocialPost => ({
+  const profileUrl = async (path?: string | null) => {
+    if (!path) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    const { data, error } = await client.storage
+      .from('profile-media')
+      .createSignedUrl(path, 3600);
+    if (error) return null;
+    return data.signedUrl;
+  };
+
+  const toPost = (
+    row: FeedRow,
+    profiles: Map<string, ProfileRow & { avatar_url?: string | null }>,
+  ): SocialPost => {
+    const profile = profiles.get(row.author_id);
+    return ({
     id: row.id,
     author: {
       id: row.author_id,
       handle: row.author_username,
       displayName: row.author_display_name,
-      avatarUrl: absoluteAvatar(row.author_avatar_path),
+      avatarUrl: profile?.avatar_url || null,
       following: Boolean(row.following_author),
+      verifiedProfessional: Boolean(profile?.verified_professional),
     },
     caption: row.body || '',
     mediaPath: row.media_paths?.[0] || null,
@@ -71,14 +86,34 @@ export function createSupabaseSocialRepository({
     commentCount: asCount(row.comment_count),
     likedByViewer: Boolean(row.liked_by_viewer),
     rankingScore: row.ranking_score || 0,
-  });
+    });
+  };
 
-  const profileToUser = (profile: ProfileRow): SocialUser => ({
+  const profileToUser = (
+    profile: ProfileRow & { avatar_url?: string | null },
+  ): SocialUser => ({
     id: profile.id,
     handle: profile.username,
     displayName: profile.display_name,
-    avatarUrl: absoluteAvatar(profile.avatar_path),
+    avatarUrl: profile.avatar_url || null,
+    verifiedProfessional: Boolean(profile.verified_professional),
   });
+
+  const loadProfiles = async (ids: string[]) => {
+    const uniqueIds = [...new Set(ids.filter(Boolean))];
+    if (!uniqueIds.length) return new Map<string, ProfileRow & { avatar_url?: string | null }>();
+    const { data, error } = await client.rpc('get_public_social_profiles', {
+      target_ids: uniqueIds,
+    });
+    if (error) throw error;
+    const resolved = await Promise.all(
+      ((data || []) as ProfileRow[]).map(async (profile) => ({
+        ...profile,
+        avatar_url: await profileUrl(profile.avatar_path),
+      })),
+    );
+    return new Map(resolved.map((profile) => [profile.id, profile]));
+  };
 
   const signedStoryUrl = async (path: string, expiresAt: string) => {
     const remainingSeconds = Math.max(
@@ -100,7 +135,7 @@ export function createSupabaseSocialRepository({
           client
             .from('stories')
             .select(
-              'id,author_id,media_path,media_type,thumbnail_path,created_at,expires_at,story_views(viewer_id),profiles!stories_author_id_fkey(id,username,display_name,avatar_path)',
+              'id,author_id,content_type,media_path,media_type,thumbnail_path,text_content,background_style,created_at,expires_at,story_views(viewer_id),profiles!stories_author_id_fkey(id,username,display_name,avatar_path)',
             )
             .gt('expires_at', new Date().toISOString())
             .order('created_at', { ascending: false })
@@ -109,20 +144,36 @@ export function createSupabaseSocialRepository({
       if (feedError) throw feedError;
       if (storyError) throw storyError;
 
-      const stories = await Promise.all(
-        (storyRows || []).map(async (row: any): Promise<SocialStory> => {
-          const profileValue = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
-          const profile = profileValue as ProfileRow;
-          const mediaUrl = await signedStoryUrl(row.media_path, row.expires_at);
-          const thumbnailUrl = row.thumbnail_path
-            ? await signedStoryUrl(row.thumbnail_path, row.expires_at)
-            : mediaUrl;
+      const profiles = await loadProfiles([
+        ...((feed || []) as FeedRow[]).map((row) => row.author_id),
+        ...(storyRows || []).map((row: any) => row.author_id),
+      ]);
+      const resolvedStories = await Promise.all(
+        (storyRows || []).map(async (row: any): Promise<SocialStory | null> => {
+          const fallbackProfileValue = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+          const profile = profiles.get(row.author_id) || (fallbackProfileValue as ProfileRow);
+          let mediaUrl: string | null = null;
+          let thumbnailUrl: string | null = null;
+          try {
+            mediaUrl = row.media_path
+              ? await signedStoryUrl(row.media_path, row.expires_at)
+              : null;
+            thumbnailUrl = row.thumbnail_path
+              ? await signedStoryUrl(row.thumbnail_path, row.expires_at)
+              : mediaUrl;
+          } catch {
+            // A deleted/expired private object must not take the entire Social feed offline.
+            if (row.content_type === 'media') return null;
+          }
           return {
             id: row.id,
             author: profileToUser(profile),
             mediaPath: row.media_path,
             mediaUrl,
-            mediaType: row.media_type,
+            contentType: row.content_type || 'media',
+            mediaType: row.media_type || null,
+            textContent: row.text_content || null,
+            backgroundStyle: row.background_style || null,
             thumbnailUrl,
             createdAt: row.created_at,
             expiresAt: row.expires_at,
@@ -132,7 +183,11 @@ export function createSupabaseSocialRepository({
           };
         }),
       );
-      return { posts: ((feed || []) as FeedRow[]).map(toPost), stories };
+      const stories = resolvedStories.filter((story): story is SocialStory => story !== null);
+      return {
+        posts: ((feed || []) as FeedRow[]).map((row) => toPost(row, profiles)),
+        stories,
+      };
     },
 
     async createPost(input: NewSocialPost) {
@@ -177,20 +232,28 @@ export function createSupabaseSocialRepository({
     },
 
     async createStory(input: NewSocialStory) {
-      if (!input.mediaPath) throw new Error('The story upload path is missing.');
+      if (input.contentType === 'media' && !input.mediaPath)
+        throw new Error('The story upload path is missing.');
+      if (input.contentType === 'text' && !input.textContent?.trim())
+        throw new Error('Enter text for the story.');
       const { data, error } = await client
         .from('stories')
         .insert({
           author_id: user.id,
-          media_path: input.mediaPath,
-          media_type: input.mediaType,
+          content_type: input.contentType,
+          media_path: input.mediaPath || null,
+          media_type: input.mediaType || null,
           thumbnail_path: input.thumbnailPath || null,
+          text_content: input.textContent?.trim() || null,
+          background_style: input.backgroundStyle || null,
           visibility: 'public',
         })
-        .select('id,media_path,media_type,thumbnail_path,created_at,expires_at')
+        .select('id,content_type,media_path,media_type,thumbnail_path,text_content,background_style,created_at,expires_at')
         .single();
       if (error) throw error;
-      const mediaUrl = await signedStoryUrl(data.media_path, data.expires_at);
+      const mediaUrl = data.media_path
+        ? await signedStoryUrl(data.media_path, data.expires_at)
+        : null;
       const thumbnailUrl = data.thumbnail_path
         ? await signedStoryUrl(data.thumbnail_path, data.expires_at)
         : mediaUrl;
@@ -207,7 +270,10 @@ export function createSupabaseSocialRepository({
         },
         mediaPath: data.media_path,
         mediaUrl,
+        contentType: data.content_type,
         mediaType: data.media_type,
+        textContent: data.text_content,
+        backgroundStyle: data.background_style,
         thumbnailUrl,
         thumbnailPath: data.thumbnail_path || null,
         createdAt: data.created_at,
@@ -248,6 +314,45 @@ export function createSupabaseSocialRepository({
       if (error) throw error;
     },
 
+    async search(query) {
+      const trimmed = query.trim();
+      if (!trimmed) return [];
+      const { data, error } = await client.rpc('search_social_entities', {
+        search_text: trimmed,
+        result_limit: 24,
+      });
+      if (error) throw error;
+      const rows = (data || []) as Array<{
+        entity_kind: 'profile' | 'post';
+        entity_id: string;
+        author_id: string;
+        username: string;
+        display_name: string;
+        avatar_path?: string | null;
+        verified_professional?: boolean | null;
+        body?: string | null;
+        created_at?: string | null;
+      }>;
+      const avatars = new Map(
+        await Promise.all(
+          rows.map(async (row) => [row.author_id, await profileUrl(row.avatar_path)] as const),
+        ),
+      );
+      return rows.map((row): SocialSearchResult => ({
+        kind: row.entity_kind,
+        id: row.entity_id,
+        author: {
+          id: row.author_id,
+          handle: row.username,
+          displayName: row.display_name,
+          avatarUrl: avatars.get(row.author_id) || null,
+          verifiedProfessional: Boolean(row.verified_professional),
+        },
+        body: row.body || null,
+        createdAt: row.created_at || null,
+      }));
+    },
+
     async getComments(postId) {
       const { data, error } = await client
         .from('post_comments')
@@ -257,16 +362,17 @@ export function createSupabaseSocialRepository({
         .eq('post_id', postId)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return (data || []).map((row: any): SocialComment => {
+      return Promise.all((data || []).map(async (row: any): Promise<SocialComment> => {
         const profileValue = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+        const profile = profileValue as ProfileRow;
         return {
           id: row.id,
           postId: row.post_id,
-          author: profileToUser(profileValue as ProfileRow),
+          author: profileToUser({ ...profile, avatar_url: await profileUrl(profile.avatar_path) }),
           body: row.body,
           createdAt: row.created_at,
         };
-      });
+      }));
     },
 
     async createComment(postId, body) {

@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import * as VideoThumbnails from 'expo-video-thumbnails';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { router } from 'expo-router';
 import { useAuth } from '../../src/lib/AuthContext';
 import { SocialScreen } from '../../src/features/social/SocialScreen';
@@ -8,6 +8,7 @@ import { createAsyncStorageSocialRepository } from '../../src/features/social/as
 import { createSupabaseSocialRepository } from '../../src/features/social/supabaseSocialRepository';
 import type { SocialUser } from '../../src/features/social/types';
 import { supabase } from '../../src/lib/supabase';
+import { createLocalProfileRepository, createSupabaseProfileRepository } from '../../src/features/profile/profileRepository';
 
 export default function SocialPage() {
   const { user } = useAuth();
@@ -17,7 +18,7 @@ export default function SocialPage() {
     [user?.email, user?.user_metadata?.preferred_username, user?.user_metadata?.name],
   );
 
-  const viewer = useMemo<SocialUser>(
+  const fallbackViewer = useMemo<SocialUser>(
     () => ({
       id: user?.id || 'local-user',
       handle,
@@ -31,9 +32,25 @@ export default function SocialPage() {
     () =>
       isSupabaseUser && supabase && user && 'identities' in user
         ? createSupabaseSocialRepository({ client: supabase, user })
-        : createAsyncStorageSocialRepository(viewer),
-    [isSupabaseUser, user, viewer.id, viewer.handle, viewer.displayName],
+        : createAsyncStorageSocialRepository(fallbackViewer),
+    [isSupabaseUser, user, fallbackViewer.id, fallbackViewer.handle, fallbackViewer.displayName],
   );
+  const [viewer, setViewer] = useState(fallbackViewer);
+  useEffect(() => {
+    setViewer(fallbackViewer);
+    if (!user) return;
+    const profiles = isSupabaseUser
+      ? createSupabaseProfileRepository(user)
+      : createLocalProfileRepository(user);
+    profiles.getProfile().then((profile) => {
+      setViewer({
+        id: profile.id,
+        handle: profile.handle,
+        displayName: profile.displayName,
+        avatarUrl: profile.avatarUrl,
+      });
+    }).catch(() => undefined);
+  }, [fallbackViewer, isSupabaseUser, user]);
 
   return (
     <SocialScreen
