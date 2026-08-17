@@ -24,6 +24,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
+    "react-native-qrcode-svg": "^6.3.21",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-svg": "15.15.4",
@@ -44,7 +45,8 @@
     "web": "expo start --web",
     "test:chat": "node --test --experimental-strip-types src/features/chat/chatContracts.test.ts",
     "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts",
-    "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts"
+    "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts",
+    "test:social-wallet": "node --test --experimental-strip-types src/features/social/socialUtils.test.ts src/features/profile/profileQrUtils.test.ts"
   },
   "private": true
 }

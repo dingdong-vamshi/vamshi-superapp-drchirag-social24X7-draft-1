@@ -9,7 +9,7 @@ export default function AuthLayout() {
   }
 
   if (session?.user) {
-    return <Redirect href="/social" />;
+    return <Redirect href="/chats" />;
   }
 
   return <Stack screenOptions={{ headerShown: false }} />;

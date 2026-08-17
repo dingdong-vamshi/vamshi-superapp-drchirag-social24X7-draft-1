@@ -28,6 +28,8 @@ type ProfileRow = {
   phone_discoverable?: boolean | null;
   username_discoverable?: boolean | null;
   is_private: boolean | null;
+  avatar_path?: string | null;
+  avatar_url?: string | null;
 };
 
 type RequestRow = {
@@ -45,6 +47,7 @@ type ParticipantRow = {
   manually_unread_at?: string | null;
   pinned_at?: string | null;
   cleared_at?: string | null;
+  member_role?: 'admin' | 'member';
   profiles: ProfileRow | ProfileRow[] | null;
 };
 
@@ -56,6 +59,8 @@ type ConversationRow = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  title?: string | null;
+  image_path?: string | null;
   storefronts: StorefrontRow | StorefrontRow[] | null;
   conversation_participants: ParticipantRow[] | null;
 };
@@ -165,6 +170,7 @@ const toContact = (row: ProfileRow): ChatContact => {
     id: row.id,
     name,
     avatarLabel: initialsFor(name),
+    avatarUrl: row.avatar_url || null,
     username: row.username || row.id.slice(0, 8),
     phone: row.phone_discoverable ? row.phone || undefined : undefined,
     isOnline: false,
@@ -297,6 +303,7 @@ export const createSupabaseChatRepository = ({
   const viewerId = user?.id && isUuid(user.id) ? user.id : null;
   const listeners = new Set<() => void>();
   let channel: RealtimeChannel | null = null;
+  let syncFallback: ReturnType<typeof setInterval> | null = null;
 
   const notify = () => {
     listeners.forEach((listener) => listener());
@@ -315,7 +322,7 @@ export const createSupabaseChatRepository = ({
   };
 
   const fetchConversationRows = async (
-    kinds: ConversationRow['kind'][] = ['personal', 'business'],
+    kinds: ConversationRow['kind'][] = ['personal', 'business', 'group'],
   ) => {
     const { data, error } = await client
       .from('conversations')
@@ -327,6 +334,8 @@ export const createSupabaseChatRepository = ({
         created_by,
         created_at,
         updated_at,
+        title,
+        image_path,
         storefronts!conversations_storefront_id_fkey(
           id,
           name,
@@ -341,6 +350,7 @@ export const createSupabaseChatRepository = ({
           manually_unread_at,
           pinned_at,
           cleared_at,
+          member_role,
           profiles!conversation_participants_user_id_fkey(
             id,
             username,
@@ -349,6 +359,7 @@ export const createSupabaseChatRepository = ({
             phone_discoverable,
             username_discoverable,
             is_private
+            ,avatar_path
           )
         )
       `)
@@ -357,7 +368,22 @@ export const createSupabaseChatRepository = ({
       .limit(100);
 
     if (error) throw new Error(error.message);
-    return (data as ConversationRow[] | null) ?? [];
+    const rows = (data as ConversationRow[] | null) ?? [];
+    const paths = unique(rows.flatMap((row) =>
+      (row.conversation_participants || []).flatMap((participant) => {
+        const profile = firstRelation(participant.profiles);
+        return profile?.avatar_path ? [profile.avatar_path] : [];
+      }),
+    ));
+    const signed = paths.length
+      ? await client.storage.from('profile-media').createSignedUrls(paths, 3600)
+      : { data: [], error: null };
+    const urls = new Map(paths.map((path, index) => [path, signed.data?.[index]?.signedUrl || null]));
+    rows.forEach((row) => row.conversation_participants?.forEach((participant) => {
+      const profiles = Array.isArray(participant.profiles) ? participant.profiles : participant.profiles ? [participant.profiles] : [];
+      profiles.forEach((profile) => { profile.avatar_url = profile.avatar_path ? urls.get(profile.avatar_path) || null : null; });
+    }));
+    return rows;
   };
 
   const fetchPersonalConversationRows = () => fetchConversationRows(['personal']);
@@ -545,12 +571,17 @@ export const createSupabaseChatRepository = ({
   const fetchContact = async (contactId: string): Promise<ChatContact | null> => {
     const { data, error } = await client
       .from('profiles')
-      .select('id,username,display_name,phone,phone_discoverable,username_discoverable,is_private')
+      .select('id,username,display_name,phone,phone_discoverable,username_discoverable,is_private,avatar_path')
       .eq('id', contactId)
       .maybeSingle();
 
     if (error || !data) return null;
-    return toContact(data as ProfileRow);
+    const profile = data as ProfileRow;
+    if (profile.avatar_path) {
+      const signed = await client.storage.from('profile-media').createSignedUrl(profile.avatar_path, 3600);
+      profile.avatar_url = signed.data?.signedUrl || null;
+    }
+    return toContact(profile);
   };
 
   const ensureAcceptedConversation = async (participantId: string) => {
@@ -613,12 +644,23 @@ export const createSupabaseChatRepository = ({
     const businessRole = row.kind === 'business'
       ? row.business_customer_id === viewerProfileId ? 'customer' : 'seller'
       : undefined;
-    const contact = row.kind === 'business' && storefront && businessRole === 'customer'
+    const contact = row.kind === 'group'
+      ? {
+          id: row.id,
+          name: row.title?.trim() || 'Group chat',
+          avatarLabel: initialsFor(row.title?.trim() || 'Group chat'),
+          username: `group-${row.id.slice(0, 8)}`,
+          isOnline: false,
+        }
+      : row.kind === 'business' && storefront && businessRole === 'customer'
       ? {
           ...personContact,
           name: storefront.name,
           avatarLabel: initialsFor(storefront.name),
           username: storefront.slug,
+          avatarUrl: storefront.logo_path
+            ? client.storage.from('shop-media').getPublicUrl(storefront.logo_path).data.publicUrl
+            : undefined,
         }
       : personContact;
 
@@ -665,6 +707,8 @@ export const createSupabaseChatRepository = ({
             verificationStatus: storefront.verification_status ?? undefined,
           }
         : undefined,
+      groupName: row.kind === 'group' ? row.title?.trim() || 'Group chat' : undefined,
+      memberCount: row.kind === 'group' ? row.conversation_participants?.length || 0 : undefined,
     };
   };
 
@@ -710,12 +754,21 @@ export const createSupabaseChatRepository = ({
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_event_rsvps' }, notify)
       .subscribe();
 
+    // Keep chat usable if a deployment temporarily omits a table from the
+    // Realtime publication. Postgres Changes remains the fast path; this quiet
+    // fallback reconciles inbox/detail state without requiring a reload.
+    syncFallback ??= setInterval(notify, 4_000);
+
   };
 
   const stopLiveSync = () => {
     if (channel) {
       void client.removeChannel(channel);
       channel = null;
+    }
+    if (syncFallback) {
+      clearInterval(syncFallback);
+      syncFallback = null;
     }
   };
 
@@ -824,13 +877,25 @@ export const createSupabaseChatRepository = ({
       const pendingProfiles = pendingParticipantIds.length
         ? await client
           .from('profiles')
-          .select('id,username,display_name,phone,phone_discoverable,username_discoverable,is_private')
+          .select('id,username,display_name,phone,phone_discoverable,username_discoverable,is_private,avatar_path')
           .in('id', pendingParticipantIds)
         : { data: [] as ProfileRow[] | null, error: null };
 
       if (pendingProfiles.error) throw new Error(pendingProfiles.error.message);
 
-      const pendingConversations = ((pendingProfiles.data as ProfileRow[] | null) ?? [])
+      const pendingRows = (pendingProfiles.data as ProfileRow[] | null) ?? [];
+      const pendingPaths = pendingRows.flatMap((profile) => profile.avatar_path ? [profile.avatar_path] : []);
+      if (pendingPaths.length) {
+        const signed = await client.storage.from('profile-media').createSignedUrls(pendingPaths, 3600);
+        pendingRows.forEach((profile) => {
+          if (profile.avatar_path) {
+            const index = pendingPaths.indexOf(profile.avatar_path);
+            profile.avatar_url = signed.data?.[index]?.signedUrl || null;
+          }
+        });
+      }
+
+      const pendingConversations = pendingRows
         .map((profile): Conversation | null => {
           const state = requestStateFor(requests, viewerId, profile.id);
           if (!state || state.status === 'accepted') return null;
@@ -1096,7 +1161,7 @@ export const createSupabaseChatRepository = ({
 
       const { data, error } = await client
         .from('profiles')
-        .select('id,username,display_name,phone,phone_discoverable,username_discoverable,is_private')
+        .select('id,username,display_name,phone,phone_discoverable,username_discoverable,is_private,avatar_path')
         .eq('is_private', false)
         .or(clauses.join(','))
         .limit(20);
@@ -1104,7 +1169,19 @@ export const createSupabaseChatRepository = ({
       if (error) throw new Error(error.message);
       if (!data) return [];
 
-      const remote = (data as ProfileRow[])
+      const remoteProfiles = data as ProfileRow[];
+      const avatarPaths = remoteProfiles.flatMap((profile) => profile.avatar_path ? [profile.avatar_path] : []);
+      if (avatarPaths.length) {
+        const signed = await client.storage.from('profile-media').createSignedUrls(avatarPaths, 3600);
+        remoteProfiles.forEach((profile) => {
+          if (profile.avatar_path) {
+            const index = avatarPaths.indexOf(profile.avatar_path);
+            profile.avatar_url = signed.data?.[index]?.signedUrl || null;
+          }
+        });
+      }
+
+      const remote = remoteProfiles
         .filter((profile) => profile.id !== viewerId)
         .filter((profile) => {
           const nameMatches = profile.display_name?.toLocaleLowerCase().includes(normalized);
@@ -1130,6 +1207,47 @@ export const createSupabaseChatRepository = ({
         viewerProfileId: viewerId,
         requestStatus: 'accepted',
       });
+    },
+
+    async listGroupEligibleContacts() {
+      if (!viewerId) return [];
+      const { data, error } = await client.rpc('list_group_eligible_contacts');
+      if (error) throw new Error(error.message);
+      const profiles = (data || []) as ProfileRow[];
+      const signed = await Promise.all(profiles.map(async (profile) => {
+        if (!profile.avatar_path) return profile;
+        const result = await client.storage.from('profile-media').createSignedUrl(profile.avatar_path, 3600);
+        return { ...profile, avatar_url: result.data?.signedUrl || null };
+      }));
+      return signed.map(toContact);
+    },
+
+    async createGroup(name, memberIds) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const { data: conversationId, error } = await client.rpc('create_group_conversation', {
+        group_name: name.trim(),
+        member_ids: memberIds,
+      });
+      if (error) throw new Error(error.message);
+      const rows = await fetchConversationRows(['group']);
+      const row = rows.find((item) => item.id === conversationId);
+      if (!row) throw new Error('Group was created but could not be loaded.');
+      notify();
+      return toConversation({ row, viewerProfileId: viewerId, requestStatus: 'accepted' });
+    },
+
+    async listGroupMembers(conversationId) {
+      const { data, error } = await client.rpc('get_group_members', {
+        target_conversation: conversationId,
+      });
+      if (error) throw new Error(error.message);
+      const profiles = (data || []) as Array<ProfileRow & { member_role: 'admin' | 'member' }>;
+      const signed = await Promise.all(profiles.map(async (profile) => {
+        if (!profile.avatar_path) return profile;
+        const result = await client.storage.from('profile-media').createSignedUrl(profile.avatar_path, 3600);
+        return { ...profile, avatar_url: result.data?.signedUrl || null };
+      }));
+      return signed.map((profile) => ({ ...toContact(profile), role: profile.member_role }));
     },
 
     async sendMessageRequest(contact) {

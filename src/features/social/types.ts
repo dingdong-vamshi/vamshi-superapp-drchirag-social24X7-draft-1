@@ -4,6 +4,7 @@ export type SocialUser = {
   displayName: string;
   avatarUrl?: string | null;
   following?: boolean;
+  verifiedProfessional?: boolean;
 };
 
 export type SocialStory = {
@@ -11,7 +12,10 @@ export type SocialStory = {
   author: SocialUser;
   mediaUrl?: string | null;
   mediaPath?: string | null;
-  mediaType: 'image' | 'video';
+  contentType: 'media' | 'text';
+  mediaType: 'image' | 'video' | null;
+  textContent?: string | null;
+  backgroundStyle?: 'forest' | 'sunset' | 'ocean' | 'berry' | 'midnight' | null;
   thumbnailUrl?: string | null;
   thumbnailPath?: string | null;
   createdAt: string;
@@ -48,8 +52,23 @@ export type NewSocialPost = Pick<
 >;
 export type NewSocialStory = Pick<
   SocialStory,
-  'mediaUrl' | 'mediaPath' | 'mediaType' | 'thumbnailUrl' | 'thumbnailPath'
+  | 'contentType'
+  | 'mediaUrl'
+  | 'mediaPath'
+  | 'mediaType'
+  | 'thumbnailUrl'
+  | 'thumbnailPath'
+  | 'textContent'
+  | 'backgroundStyle'
 >;
+
+export type SocialSearchResult = {
+  kind: 'profile' | 'post';
+  id: string;
+  author: SocialUser;
+  body?: string | null;
+  createdAt?: string | null;
+};
 
 export type SocialComment = {
   id: string;
@@ -70,6 +89,7 @@ export type SocialRepository = {
   createStory: (story: NewSocialStory) => Promise<SocialStory>;
   setPostLike: (postId: string, liked: boolean) => Promise<{ likeCount: number }>;
   setFollowing: (userId: string, following: boolean) => Promise<void>;
+  search: (query: string) => Promise<SocialSearchResult[]>;
   getComments: (postId: string) => Promise<SocialComment[]>;
   createComment: (postId: string, body: string) => Promise<SocialComment>;
 };

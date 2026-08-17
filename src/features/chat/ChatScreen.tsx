@@ -16,10 +16,12 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  type StyleProp,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type ViewStyle,
 } from "react-native";
 import {
   ArrowLeft,
@@ -39,6 +41,7 @@ import {
   ImageIcon,
   MapPin,
   Reply,
+  QrCode,
   Search,
   Send,
   Settings,
@@ -74,8 +77,12 @@ type Props = {
   onViewStore?: (slug: string) => void;
   onViewOrder?: (orderId: string) => void;
   onViewProfile?: (profileId: string) => void;
+  viewer?: ChatContact | null;
+  onOpenOwnProfile?: () => void;
+  onOpenQr?: () => void;
   initialConversationId?: string;
   sharedPost?: SharedPost;
+  onShareComplete?: () => void;
 };
 type LoadState = "loading" | "ready" | "error";
 type ChatListFilter = "all" | "unread" | "requests" | "archived";
@@ -147,8 +154,12 @@ export default function ChatScreen({
   onViewStore,
   onViewOrder,
   onViewProfile,
+  viewer,
+  onOpenOwnProfile,
+  onOpenQr,
   initialConversationId,
   sharedPost,
+  onShareComplete,
 }: Props) {
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -160,6 +171,9 @@ export default function ChatScreen({
   const [requestingId, setRequestingId] = useState<string | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [selectedShareIds, setSelectedShareIds] = useState<string[]>([]);
+  const [sharingPost, setSharingPost] = useState(false);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [segment, setSegment] = useState<"personal" | "business">("personal");
@@ -352,6 +366,18 @@ export default function ChatScreen({
       }),
     [conversations, segment],
   );
+  const shareableConversationIds = useMemo(
+    () => new Set(
+      conversations
+        .filter((conversation) => {
+          const kind = conversation.kind ?? "personal";
+          return (kind === "personal" || kind === "group" || kind === "business")
+            && (!conversation.requestStatus || conversation.requestStatus === "accepted");
+        })
+        .map((conversation) => conversation.id),
+    ),
+    [conversations],
+  );
   const filtered = useMemo(
     () => {
       const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -504,6 +530,33 @@ export default function ChatScreen({
     Alert.alert(conversation.participant.name, "Choose a chat action.", buttons);
   };
 
+  const sendSharedPost = async () => {
+    if (!sharedPost || !selectedShareIds.length || sharingPost) return;
+    setSharingPost(true);
+    try {
+      const eligibleIds = selectedShareIds.filter((conversationId) =>
+        shareableConversationIds.has(conversationId),
+      );
+      if (!eligibleIds.length) throw new Error("Choose a personal, group, or business chat.");
+      await Promise.all(eligibleIds.map((conversationId) =>
+        dataSource.sendMessage({
+          conversationId,
+          text: `Shared a post from ${sharedPost.author}`,
+          type: "shared_post",
+          post: sharedPost,
+        }),
+      ));
+      setSelectedShareIds([]);
+      onShareComplete?.();
+      Alert.alert("Post shared", `Sent to ${eligibleIds.length} chat${eligibleIds.length === 1 ? "" : "s"}.`);
+      await loadConversations("refresh");
+    } catch (cause) {
+      Alert.alert("Post not shared", cause instanceof Error ? cause.message : "Please try again.");
+    } finally {
+      setSharingPost(false);
+    }
+  };
+
   if (selected)
     return (
       <ConversationView
@@ -547,15 +600,6 @@ export default function ChatScreen({
           >
             <Plus color="#ffffff" size={24} />
           </Pressable>
-	          <Pressable
-	            accessibilityRole="button"
-	            accessibilityLabel="Chat settings"
-	            disabled
-	            accessibilityState={{ disabled: true }}
-	            style={styles.iconButtonMuted}
-	          >
-            <Settings color="#475467" size={20} />
-          </Pressable>
           <Pressable
 	            accessibilityRole="button"
 	            accessibilityLabel={`More options${incomingRequests.length ? `, ${incomingRequests.length} request${incomingRequests.length === 1 ? "" : "s"} waiting` : ""}`}
@@ -570,6 +614,19 @@ export default function ChatScreen({
                 </Text>
               </View>
             )}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open my profile"
+            disabled={!onOpenOwnProfile}
+            onPress={onOpenOwnProfile}
+            style={styles.viewerAvatarButton}
+          >
+            <Avatar
+              label={viewer?.avatarLabel ?? "M"}
+              url={viewer?.avatarUrl}
+              online={false}
+            />
           </Pressable>
         </View>
       </View>
@@ -716,12 +773,38 @@ export default function ChatScreen({
             <ConversationRow
               item={item}
               busy={actioningId === item.id}
-              onPress={() => void openConversation(item)}
+              selected={selectedShareIds.includes(item.id)}
+              onPress={() => {
+                if (sharedPost) {
+                  if (!shareableConversationIds.has(item.id)) return;
+                  if (item.requestStatus && item.requestStatus !== "accepted") return;
+                  setSelectedShareIds((current) => current.includes(item.id)
+                    ? current.filter((id) => id !== item.id)
+                    : [...current, item.id]);
+                  return;
+                }
+                void openConversation(item);
+              }}
               onMore={() => showConversationActions(item)}
             />
           )}
         />
       )}
+      {sharedPost ? (
+        <View style={styles.multiShareBar}>
+          <Text style={styles.multiShareCount}>{selectedShareIds.length} selected</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Send post to selected chats"
+            disabled={!selectedShareIds.length || sharingPost}
+            onPress={() => void sendSharedPost()}
+            style={[styles.multiShareButton, (!selectedShareIds.length || sharingPost) && styles.disabledAction]}
+          >
+            {sharingPost ? <ActivityIndicator color="#ffffff" /> : <Send color="#ffffff" size={18} />}
+            <Text style={styles.multiShareButtonText}>Send</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <NewChatModal
         visible={newChatOpen}
         lookup={lookup}
@@ -754,6 +837,25 @@ export default function ChatScreen({
         openRequests={() => {
           setToolsOpen(false);
           setRequestsOpen(true);
+        }}
+        openNewGroup={() => {
+          setToolsOpen(false);
+          setGroupOpen(true);
+        }}
+        openQr={() => {
+          setToolsOpen(false);
+          onOpenQr?.();
+        }}
+      />
+      <NewGroupModal
+        visible={groupOpen}
+        dataSource={dataSource}
+        close={() => setGroupOpen(false)}
+        created={(conversation) => {
+          setGroupOpen(false);
+          setSegment("personal");
+          setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
+          void openConversation(conversation);
         }}
       />
       <CallOverlay
@@ -853,6 +955,7 @@ function ConversationView({
   const [returnTarget, setReturnTarget] = useState<{ orderItemId: string; title: string } | null>(null);
   const [returnReason, setReturnReason] = useState("");
   const [commerceActionPending, setCommerceActionPending] = useState(false);
+  const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const list = useRef<FlatList<ChatMessage>>(null);
 
   useEffect(() => {
@@ -1273,6 +1376,8 @@ function ConversationView({
     ? conversation.businessRole === "seller"
       ? `Customer · ${conversation.storefront.name}`
       : `${conversation.storefront.verificationStatus === "approved" ? "Verified store" : "Store"} · Messages are private`
+    : conversation.kind === "group"
+      ? `${conversation.memberCount || 0} members · Messages are private`
     : conversation.participant.isOnline
       ? "online"
       : "Messages are private";
@@ -1305,10 +1410,18 @@ function ConversationView({
           >
             <ArrowLeft color="#162033" size={25} />
           </Pressable>
-          <Avatar
-            label={conversation.participant.avatarLabel}
-            online={conversation.participant.isOnline}
-          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={conversation.kind === "group" ? "View group members" : `Open ${conversation.participant.name}'s profile`}
+            disabled={Boolean(conversation.storefront)}
+            onPress={() => conversation.kind === "group" ? setGroupMembersOpen(true) : onViewProfile?.(conversation.participant.id)}
+          >
+            <Avatar
+              label={conversation.participant.avatarLabel}
+              url={conversation.participant.avatarUrl}
+              online={conversation.participant.isOnline}
+            />
+          </Pressable>
           {canOpenStoreFromHeader ? (
             <Pressable
               accessibilityRole="button"
@@ -1324,7 +1437,14 @@ function ConversationView({
               {headerIdentity}
             </Pressable>
           ) : (
-            <View style={styles.headerInfo}>{headerIdentity}</View>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!onViewProfile && conversation.kind !== "group"}
+              onPress={() => conversation.kind === "group" ? setGroupMembersOpen(true) : onViewProfile?.(conversation.participant.id)}
+              style={styles.headerInfo}
+            >
+              {headerIdentity}
+            </Pressable>
           )}
           {conversation.storefront && onViewStore ? (
             <Pressable
@@ -1592,6 +1712,16 @@ function ConversationView({
           participantName={conversation.participant.name}
           adapter={callAdapter}
         />
+        <GroupMembersModal
+          visible={groupMembersOpen}
+          conversation={conversation}
+          dataSource={dataSource}
+          close={() => setGroupMembersOpen(false)}
+          openProfile={(id) => {
+            setGroupMembersOpen(false);
+            onViewProfile?.(id);
+          }}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1600,16 +1730,18 @@ function ConversationView({
 function ConversationRow({
   item,
   busy,
+  selected = false,
   onPress,
   onMore,
 }: {
   item: Conversation;
   busy: boolean;
+  selected?: boolean;
   onPress: () => void;
   onMore: () => void;
 }) {
   return (
-    <View style={styles.row}>
+    <View style={[styles.row, selected && styles.rowSelected]}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Open conversation with ${item.participant.name}${item.unreadCount ? `, ${item.unreadCount} unread messages` : ""}`}
@@ -1618,6 +1750,7 @@ function ConversationRow({
       >
         <Avatar
           label={item.participant.avatarLabel}
+          url={item.participant.avatarUrl}
           online={item.participant.isOnline}
         />
         <View style={styles.rowCopy}>
@@ -1656,6 +1789,7 @@ function ConversationRow({
                 <Text style={styles.badgeText}>{item.unreadCount}</Text>
               </View>
             )}
+            {selected ? <CheckCircle2 color="#078f4a" size={20} /> : null}
           </View>
         </View>
       </Pressable>
@@ -1710,16 +1844,54 @@ function BusinessPlaceholder({
   );
 }
 
-function Avatar({ label, online }: { label: string; online?: boolean }) {
+function Avatar({ label, url, online }: { label: string; url?: string | null; online?: boolean }) {
   return (
     <View style={styles.avatarWrap}>
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{label.slice(0, 2).toUpperCase()}</Text>
+        {url ? <Image source={{ uri: url }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{label.slice(0, 2).toUpperCase()}</Text>}
       </View>
       {online && <View style={styles.online} />}
     </View>
   );
 }
+
+function MessageSurface({
+  systemEvent,
+  accessibilityRole,
+  accessibilityLabel,
+  onLongPress,
+  onPress,
+  webLongPressProps,
+  style,
+  children,
+}: {
+  systemEvent: boolean;
+  accessibilityRole?: "button";
+  accessibilityLabel: string;
+  onLongPress?: () => void;
+  onPress?: () => void;
+  webLongPressProps: { onContextMenu?: (event: { preventDefault?: () => void }) => void };
+  style: StyleProp<ViewStyle>;
+  children: ReactNode;
+}) {
+  if (systemEvent) {
+    return <View accessibilityLabel={accessibilityLabel} style={style}>{children}</View>;
+  }
+  return (
+    <Pressable
+      accessibilityRole={accessibilityRole}
+      accessibilityLabel={accessibilityLabel}
+      onLongPress={onLongPress}
+      onPress={onPress}
+      delayLongPress={350}
+      {...webLongPressProps}
+      style={style}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
 function MessageBubble({
   message,
   onLongPress,
@@ -1795,13 +1967,13 @@ function MessageBubble({
             )}
           </Pressable>
         ) : null}
-        <Pressable
+        <MessageSurface
+          systemEvent={systemEvent}
           accessibilityRole={systemEvent || message.poll || message.event ? undefined : "button"}
           accessibilityLabel={systemEvent ? "System order update" : `${mine ? "Your" : "Received"} message. Long press for actions.`}
           onLongPress={systemEvent ? undefined : onLongPress}
           onPress={systemEvent || message.poll || message.event ? undefined : openStructured}
-          delayLongPress={350}
-          {...(systemEvent ? {} : webLongPressProps)}
+          webLongPressProps={systemEvent ? {} : webLongPressProps}
           style={[
             styles.message,
             message.type === "sticker" && styles.stickerMessage,
@@ -1980,7 +2152,7 @@ function MessageBubble({
             {formatTime(message.createdAt)}
             {mine && message.status === "read" ? " · Read" : ""}
           </Text>
-        </Pressable>
+        </MessageSurface>
         {mine && !systemEvent ? (
           <Pressable
             accessibilityRole="button"
@@ -2142,7 +2314,7 @@ function ContactShareModal({ visible, query, setQuery, contacts, loading, close,
             ListEmptyComponent={<Text style={styles.emptyText}>{query.trim().length < 2 ? "Type at least two characters." : "No matching profiles."}</Text>}
             renderItem={({ item }) => (
               <Pressable accessibilityRole="button" accessibilityLabel={`Share ${item.name}`} onPress={() => share(item)} style={styles.actionRow}>
-                <Avatar label={item.avatarLabel} />
+                <Avatar label={item.avatarLabel} url={item.avatarUrl} />
                 <View style={styles.rowCopy}><Text style={styles.rowName}>{item.name}</Text><Text style={styles.rowPreview}>@{item.username}</Text></View>
                 <Text style={styles.orderEventAction}>Share</Text>
               </Pressable>
@@ -2730,6 +2902,7 @@ function RequestsModal({
               <View style={styles.requestCard}>
                 <Avatar
                   label={item.participant.avatarLabel}
+                  url={item.participant.avatarUrl}
                   online={item.participant.isOnline}
                 />
                 <View style={styles.contactCopy}>
@@ -2784,6 +2957,8 @@ function ChatToolsModal({
   setFilter,
   requestCount,
   openRequests,
+  openNewGroup,
+  openQr,
 }: {
   visible: boolean;
   close: () => void;
@@ -2791,13 +2966,9 @@ function ChatToolsModal({
   setFilter: (filter: ChatListFilter) => void;
   requestCount: number;
   openRequests: () => void;
+  openNewGroup: () => void;
+  openQr: () => void;
 }) {
-  const filters: Array<{ value: ChatListFilter; label: string }> = [
-    { value: "all", label: "Show active chats" },
-    { value: "unread", label: "Show unread chats" },
-    { value: "requests", label: "Show message requests" },
-    { value: "archived", label: "Show archived chats" },
-  ];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
       <View style={styles.sheetBackdrop}>
@@ -2811,40 +2982,172 @@ function ChatToolsModal({
           <View style={styles.sheetHeader}>
             <View>
               <Text style={styles.sheetTitle}>Chat tools</Text>
-              <Text style={styles.sheetSubtitle}>Filter and review your real conversations</Text>
+              <Text style={styles.sheetSubtitle}>Groups, QR connections, archive and preferences</Text>
             </View>
             <Pressable accessibilityLabel="Close chat tools" onPress={close} style={styles.sheetClose}>
               <X color="#172235" size={20} />
             </Pressable>
           </View>
-          {filters.map((item) => (
-            <Pressable
-              key={item.value}
-              accessibilityRole="button"
-              accessibilityState={{ selected: filter === item.value }}
-              onPress={() => setFilter(item.value)}
-              style={styles.actionRow}
-            >
-              <CheckCircle2
-                color={filter === item.value ? "#078f4a" : "#98a2b3"}
-                size={19}
-              />
-              <Text style={styles.actionText}>{item.label}</Text>
-            </Pressable>
-          ))}
+          <Pressable accessibilityRole="button" onPress={openNewGroup} style={styles.actionRow}>
+            <UsersRound color="#078f4a" size={19} />
+            <Text style={styles.actionText}>New Group</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={openQr} style={styles.actionRow}>
+            <QrCode color="#078f4a" size={19} />
+            <Text style={styles.actionText}>My QR / Scan QR</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setFilter("archived")} style={styles.actionRow}>
+            <CheckCircle2 color={filter === "archived" ? "#078f4a" : "#98a2b3"} size={19} />
+            <Text style={styles.actionText}>Archived Chats</Text>
+          </Pressable>
           <Pressable
             accessibilityRole="button"
-            disabled={requestCount === 0}
-            onPress={openRequests}
-            style={[styles.actionRow, requestCount === 0 && styles.disabledAction]}
+            onPress={() => {
+              close();
+              Alert.alert("Chat settings", "Message requests, archived chats and privacy are backed by your account. Notification permissions are managed in your device settings.", [
+                ...(requestCount ? [{ text: `Review ${requestCount} request${requestCount === 1 ? "" : "s"}`, onPress: openRequests }] : []),
+                { text: "OK" },
+              ]);
+            }}
+            style={styles.actionRow}
           >
-            <Bell color={requestCount ? "#078f4a" : "#98a2b3"} size={19} />
-            <Text style={styles.actionText}>
-              Review requests {requestCount ? `(${requestCount})` : ""}
-            </Text>
+            <Settings color="#078f4a" size={19} />
+            <Text style={styles.actionText}>Chat Settings</Text>
           </Pressable>
         </View>
       </View>
+    </Modal>
+  );
+}
+
+function NewGroupModal({
+  visible,
+  dataSource,
+  close,
+  created,
+}: {
+  visible: boolean;
+  dataSource: ChatDataSource;
+  close: () => void;
+  created: (conversation: Conversation) => void;
+}) {
+  const [name, setName] = useState("");
+  const [contacts, setContacts] = useState<ChatContact[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  useEffect(() => {
+    if (!visible) {
+      setName("");
+      setSelectedIds([]);
+      return;
+    }
+    setLoading(true);
+    dataSource.listGroupEligibleContacts?.()
+      .then(setContacts)
+      .catch(() => setContacts([]))
+      .finally(() => setLoading(false));
+  }, [dataSource, visible]);
+  const submit = async () => {
+    if (!dataSource.createGroup || name.trim().length < 2 || selectedIds.length < 2) return;
+    setCreating(true);
+    try {
+      created(await dataSource.createGroup(name, selectedIds));
+    } catch (cause) {
+      Alert.alert("Group not created", cause instanceof Error ? cause.message : "Please try again.");
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.modalHeader}>
+          <Text accessibilityRole="header" style={styles.modalTitle}>New group</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close new group" onPress={close} style={styles.iconButtonMuted}><X color="#172235" size={22} /></Pressable>
+        </View>
+        <TextInput
+          accessibilityLabel="Group name"
+          value={name}
+          onChangeText={setName}
+          maxLength={80}
+          placeholder="Group name"
+          style={styles.groupNameInput}
+        />
+        <Text style={styles.lookupHelp}>Choose at least two accepted contacts. The group is saved to Supabase and appears for every member.</Text>
+        {loading ? <Loading /> : (
+          <FlatList
+            data={contacts}
+            keyExtractor={(contact) => contact.id}
+            contentContainerStyle={styles.list}
+            ListEmptyComponent={<Text style={styles.emptyText}>No accepted contacts are available for a group yet.</Text>}
+            renderItem={({ item }) => {
+              const selected = selectedIds.includes(item.id);
+              return (
+                <Pressable
+                  style={[styles.groupContactRow, selected && styles.rowSelected]}
+                  onPress={() => setSelectedIds((current) => selected ? current.filter((id) => id !== item.id) : [...current, item.id])}
+                >
+                  <Avatar label={item.avatarLabel} url={item.avatarUrl} />
+                  <View style={styles.rowCopy}><Text style={styles.personName}>{item.name}</Text><Text style={styles.contactMeta}>@{item.username}</Text></View>
+                  <CheckCircle2 color={selected ? "#078f4a" : "#c5ccc8"} size={22} />
+                </Pressable>
+              );
+            }}
+          />
+        )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Create group"
+          disabled={creating || name.trim().length < 2 || selectedIds.length < 2 || !dataSource.createGroup}
+          onPress={() => void submit()}
+          style={[styles.createGroupButton, (creating || name.trim().length < 2 || selectedIds.length < 2 || !dataSource.createGroup) && styles.disabledAction]}
+        >
+          {creating ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.createGroupButtonText}>Create group ({selectedIds.length})</Text>}
+        </Pressable>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function GroupMembersModal({
+  visible,
+  conversation,
+  dataSource,
+  close,
+  openProfile,
+}: {
+  visible: boolean;
+  conversation: Conversation;
+  dataSource: ChatDataSource;
+  close: () => void;
+  openProfile: (id: string) => void;
+}) {
+  const [members, setMembers] = useState<Array<ChatContact & { role: "admin" | "member" }>>([]);
+  useEffect(() => {
+    if (!visible) return;
+    dataSource.listGroupMembers?.(conversation.id).then(setMembers).catch(() => setMembers([]));
+  }, [conversation.id, dataSource, visible]);
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.modalHeader}>
+          <View><Text style={styles.modalTitle}>{conversation.groupName || conversation.participant.name}</Text><Text style={styles.contactMeta}>{members.length || conversation.memberCount || 0} members</Text></View>
+          <Pressable onPress={close} style={styles.iconButtonMuted}><X color="#172235" size={22} /></Pressable>
+        </View>
+        <FlatList
+          data={members}
+          keyExtractor={(member) => member.id}
+          contentContainerStyle={styles.list}
+          renderItem={({ item }) => (
+            <Pressable style={styles.groupContactRow} onPress={() => openProfile(item.id)}>
+              <Avatar label={item.avatarLabel} url={item.avatarUrl} />
+              <View style={styles.rowCopy}><Text style={styles.personName}>{item.name}</Text><Text style={styles.contactMeta}>@{item.username}</Text></View>
+              <Text style={styles.groupRole}>{item.role}</Text>
+            </Pressable>
+          )}
+        />
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -2928,7 +3231,7 @@ function NewChatModal({
                 onPress={() => void sendRequest(item)}
                 style={styles.contactRow}
               >
-                <Avatar label={item.avatarLabel} online={item.isOnline} />
+                <Avatar label={item.avatarLabel} url={item.avatarUrl} online={item.isOnline} />
                 <View style={styles.contactCopy}>
                   <Text style={styles.personName}>{item.name}</Text>
                   <Text style={styles.contactMeta}>
@@ -2969,6 +3272,10 @@ const styles = StyleSheet.create({
   headerCopy: { flex: 1 },
   title: { color: "#111111", fontSize: 34, lineHeight: 40, fontWeight: "800" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 10 },
+  viewerAvatarButton: {
+    borderRadius: 999,
+    overflow: "hidden",
+  },
   iconButton: {
     width: 44,
     height: 44,
@@ -3136,6 +3443,19 @@ const styles = StyleSheet.create({
   shareSelectionTitle: { color: "#173c28", fontSize: 13, fontWeight: "800" },
   shareSelectionCaption: { color: "#668071", fontSize: 12, marginTop: 2 },
   shareSelectionHint: { color: "#078f4a", fontSize: 12, fontWeight: "800" },
+  multiShareBar: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#dce5df",
+    backgroundColor: "#ffffff",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  multiShareCount: { color: "#33413a", fontWeight: "800" },
+  multiShareButton: { minWidth: 106, minHeight: 44, paddingHorizontal: 18, borderRadius: 15, backgroundColor: "#07c160", flexDirection: "row", gap: 7, alignItems: "center", justifyContent: "center" },
+  multiShareButtonText: { color: "#ffffff", fontWeight: "900" },
   requestBanner: {
     marginHorizontal: 16,
     marginBottom: 12,
@@ -3272,6 +3592,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: "#eef2f6",
   },
+  rowSelected: { backgroundColor: "#effaf3", borderColor: "#b9e4c8" },
   rowMain: {
     flex: 1,
     minWidth: 0,
@@ -3287,8 +3608,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#dff4e7",
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
+  avatarImage: { width: "100%", height: "100%" },
   avatarText: { color: "#07934a", fontSize: 18, fontWeight: "700" },
+  groupNameInput: { margin: 16, minHeight: 52, borderRadius: 16, borderWidth: 1, borderColor: "#d8e1dc", paddingHorizontal: 15, color: "#172235", fontSize: 16 },
+  groupContactRow: { minHeight: 70, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e2e8e4", flexDirection: "row", alignItems: "center", gap: 12 },
+  createGroupButton: { margin: 16, minHeight: 52, borderRadius: 17, backgroundColor: "#07c160", alignItems: "center", justifyContent: "center" },
+  createGroupButtonText: { color: "#ffffff", fontSize: 16, fontWeight: "900" },
+  groupRole: { color: "#078f4a", fontWeight: "800", textTransform: "capitalize" },
   online: {
     position: "absolute",
     right: 0,

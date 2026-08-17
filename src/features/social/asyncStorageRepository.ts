@@ -31,7 +31,9 @@ export function createAsyncStorageSocialRepository(viewer: SocialUser): SocialRe
         expiresAt:
           story.expiresAt ||
           new Date(new Date(story.createdAt).getTime() + 86400000).toISOString(),
-        mediaType: story.mediaType || ("image" as const),
+        contentType: story.contentType || ('media' as const),
+        mediaType:
+          story.contentType === 'text' ? null : story.mediaType || ('image' as const),
         thumbnailUrl: story.thumbnailUrl || story.mediaUrl || null,
       }));
       const stories = normalizedStories.filter(
@@ -60,7 +62,10 @@ export function createAsyncStorageSocialRepository(viewer: SocialUser): SocialRe
       const createdAt = new Date().toISOString();
       const story: SocialStory = {
         id: id('story'), author: viewer, mediaUrl: input.mediaUrl,
-        mediaPath: input.mediaPath, mediaType: input.mediaType,
+        mediaPath: input.mediaPath, contentType: input.contentType,
+        mediaType: input.mediaType,
+        textContent: input.textContent || null,
+        backgroundStyle: input.backgroundStyle || null,
         thumbnailUrl: input.thumbnailUrl, thumbnailPath: input.thumbnailPath, createdAt,
         expiresAt: new Date(Date.now() + 86400000).toISOString(), seen: false,
       };
@@ -79,6 +84,29 @@ export function createAsyncStorageSocialRepository(viewer: SocialUser): SocialRe
     async setFollowing(userId, following) {
       const state = await read();
       await write({ ...state, posts: state.posts.map((post) => post.author.id === userId ? { ...post, author: { ...post.author, following } } : post) });
+    },
+    async search(query) {
+      const state = await read();
+      const needle = query.trim().toLocaleLowerCase();
+      if (!needle) return [];
+      const profiles = new Map<string, SocialUser>();
+      for (const post of state.posts) profiles.set(post.author.id, post.author);
+      for (const story of state.stories) profiles.set(story.author.id, story.author);
+      const profileResults = [...profiles.values()]
+        .filter((profile) =>
+          `${profile.displayName} ${profile.handle}`.toLocaleLowerCase().includes(needle),
+        )
+        .map((author) => ({ kind: 'profile' as const, id: author.id, author }));
+      const postResults = state.posts
+        .filter((post) => post.caption.toLocaleLowerCase().includes(needle))
+        .map((post) => ({
+          kind: 'post' as const,
+          id: post.id,
+          author: post.author,
+          body: post.caption,
+          createdAt: post.createdAt,
+        }));
+      return [...profileResults, ...postResults].slice(0, 20);
     },
     async getComments(postId) { const state = await read(); return state.comments.filter((comment) => comment.postId === postId); },
     async createComment(postId, body) {

@@ -22,7 +22,8 @@ import {
   slugify,
 } from "./shopRepository";
 
-const cartKey = "social24x7:commerce-cart:v2";
+const cartKeyForUser = (userId: string | null | undefined) =>
+  `social24x7:commerce-cart:v3:${userId ?? "guest"}`;
 const mediaBucket = "shop-media";
 const privateProductMediaBucket = "product-media";
 const productSelect =
@@ -250,6 +251,7 @@ export function createSupabaseShopRepository({
   client: SupabaseClient;
   user: User | null;
 }): ShopRepository {
+  const cartKey = cartKeyForUser(user?.id);
   const requireUser = () => {
     if (!user) {
       throw new Error("Please sign in with a Social 24x7 account first.");
@@ -261,6 +263,18 @@ export function createSupabaseShopRepository({
     async listProducts(input) {
       const category = normalizeCategory(input?.category);
       const queryText = input?.query?.trim();
+      let storefrontIds: string[] = [];
+      if (queryText) {
+        const escapedStore = queryText.replace(/[%_,()]/g, " ");
+        const storefrontResult = await client
+          .from("storefronts")
+          .select("id")
+          .eq("active", true)
+          .or(`name.ilike.%${escapedStore}%,slug.ilike.%${escapedStore}%,tagline.ilike.%${escapedStore}%`)
+          .limit(30);
+        if (storefrontResult.error) throw new Error(storefrontResult.error.message);
+        storefrontIds = (storefrontResult.data || []).map((row) => row.id);
+      }
       let query = client
         .from("products")
         .select(
@@ -273,8 +287,19 @@ export function createSupabaseShopRepository({
 
       if (category) query = query.eq("category", category);
       if (queryText) {
-        const escaped = queryText.replace(/[%_,]/g, " ");
-        query = query.or(`title.ilike.%${escaped}%,brand.ilike.%${escaped}%`);
+        const escaped = queryText.replace(/[%_,()]/g, " ");
+        const categoryMatch = ["Wellness", "Home", "Travel", "Everyday"].find(
+          (value) => value.toLocaleLowerCase() === queryText.trim().toLocaleLowerCase(),
+        );
+        const clauses = [
+          `title.ilike.%${escaped}%`,
+          `brand.ilike.%${escaped}%`,
+          `short_description.ilike.%${escaped}%`,
+          `description.ilike.%${escaped}%`,
+        ];
+        if (categoryMatch) clauses.push(`category.eq.${categoryMatch}`);
+        if (storefrontIds.length) clauses.push(`storefront_id.in.(${storefrontIds.join(",")})`);
+        query = query.or(clauses.join(","));
       }
 
       const { data, error } = await query;

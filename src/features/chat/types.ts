@@ -4,6 +4,7 @@ export type ChatParticipant = {
   id: string;
   name: string;
   avatarLabel: string;
+  avatarUrl?: string | null;
   isOnline?: boolean;
 };
 
@@ -201,6 +202,8 @@ export type Conversation = {
   requestMessage?: string;
   storefront?: BusinessStorefrontIdentity;
   businessRole?: 'customer' | 'seller';
+  groupName?: string;
+  memberCount?: number;
 };
 
 export type ChatDataSource = {
@@ -238,6 +241,9 @@ export type ChatDataSource = {
   markConversationRead(conversationId: string): Promise<void>;
   searchContacts(query: string): Promise<ChatContact[]>;
   openDirectConversation(contactId: string): Promise<Conversation>;
+  listGroupEligibleContacts?(): Promise<ChatContact[]>;
+  createGroup?(name: string, memberIds: string[]): Promise<Conversation>;
+  listGroupMembers?(conversationId: string): Promise<Array<ChatContact & { role: 'admin' | 'member' }>>;
   sendMessageRequest(contact: ChatContact, note?: string): Promise<Conversation>;
   acceptMessageRequest(conversationId: string): Promise<Conversation>;
   rejectMessageRequest?(conversationId: string): Promise<void>;

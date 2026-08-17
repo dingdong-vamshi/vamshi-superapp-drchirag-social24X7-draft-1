@@ -17,8 +17,6 @@ import {
   type CartLine,
   formatInr,
   localShopRepository,
-  shopCategories,
-  type ShopCategory,
   type ShopProduct,
   type ShopRepository,
   type StorefrontSummary,
@@ -52,7 +50,6 @@ export function ShopScreen({
   const [storefronts, setStorefronts] = useState<StorefrontSummary[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<ShopCategory>("All");
   const [isSaving, setSaving] = useState(false);
   const [isCheckingOut, setCheckingOut] = useState(false);
   const [isCartOpen, setCartOpen] = useState(false);
@@ -61,7 +58,7 @@ export function ShopScreen({
     setState("loading");
     try {
       const [nextProducts, nextStorefronts, nextCart] = await Promise.all([
-        repository.listProducts({ category, query }),
+        repository.listProducts({ category: "All", query }),
         repository.listStorefronts(),
         repository.getCart(),
       ]);
@@ -77,7 +74,7 @@ export function ShopScreen({
 
   useEffect(() => {
     void load();
-  }, [repository, category, query]);
+  }, [repository, query]);
 
   const cartProducts = cart.flatMap((line) => {
     const product = products.find((item) => item.id === line.productId);
@@ -223,32 +220,6 @@ export function ShopScreen({
               />
             </View>
 
-            <FlatList
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              data={shopCategories}
-              keyExtractor={(item) => item}
-              contentContainerStyle={styles.categoryRail}
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => setCategory(item)}
-                  style={[
-                    styles.categoryChip,
-                    category === item && styles.categoryChipActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.categoryText,
-                      category === item && styles.categoryTextActive,
-                    ]}
-                  >
-                    {item}
-                  </Text>
-                </Pressable>
-              )}
-            />
-
             {storefrontPreview.length ? (
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
@@ -308,12 +279,22 @@ export function ShopScreen({
             label="No products matched this filter."
             actionLabel="Clear filters"
             onAction={() => {
-              setCategory("All");
               setQuery("");
             }}
           />
         }
       />
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open cart with ${cartCount} item${cartCount === 1 ? "" : "s"}`}
+        onPress={() => (onCartPress ? onCartPress() : setCartOpen(true))}
+        style={styles.floatingCart}
+      >
+        <ShoppingBag color="#ffffff" size={22} />
+        <Text style={styles.floatingCartText}>Cart</Text>
+        {cartCount ? <View style={styles.floatingCartBadge}><Text style={styles.badgeText}>{cartCount}</Text></View> : null}
+      </Pressable>
 
       <Modal
         visible={isCartOpen}
@@ -472,6 +453,21 @@ function CenteredState({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: panelBg },
+  floatingCart: {
+    position: "absolute",
+    right: 18,
+    bottom: 18,
+    minHeight: 52,
+    paddingHorizontal: 18,
+    borderRadius: 26,
+    backgroundColor: green,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    boxShadow: "0 8px 20px rgba(0, 137, 70, 0.28)",
+  },
+  floatingCartText: { color: "#ffffff", fontSize: 15, fontWeight: "900" },
+  floatingCartBadge: { minWidth: 22, height: 22, paddingHorizontal: 5, borderRadius: 11, backgroundColor: "#e73845", alignItems: "center", justifyContent: "center" },
   heading: {
     paddingHorizontal: 20,
     paddingTop: 12,

@@ -36,10 +36,12 @@ import type {
   SocialComment,
   SocialPost,
   SocialRepository,
+  SocialSearchResult,
   SocialStory,
   SocialUser,
   UploadedMedia,
 } from "./types";
+import { flattenStoryGroups, groupStoriesByAuthor } from "./socialUtils";
 
 const brand = "#00A859";
 const ink = "#182334";
@@ -150,6 +152,9 @@ export function SocialScreen({
   const [submitting, setSubmitting] = useState(false);
   const [commentsFor, setCommentsFor] = useState<SocialPost | null>(null);
   const [storyIndex, setStoryIndex] = useState<number | null>(null);
+  const [storyQueue, setStoryQueue] = useState<SocialStory[]>([]);
+  const [storyComposerOpen, setStoryComposerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const load = useCallback(
     async (refresh = false) => {
@@ -235,6 +240,7 @@ export function SocialScreen({
       author: viewer,
       mediaUrl: uploaded.url,
       mediaPath: uploaded.path,
+      contentType: "media",
       mediaType: uploaded.mediaType,
       thumbnailUrl: uploaded.thumbnailUrl || uploaded.url,
       thumbnailPath: uploaded.thumbnailPath,
@@ -245,6 +251,7 @@ export function SocialScreen({
     setStories((current) => [temporary, ...current]);
     try {
       const saved = await repository.createStory({
+        contentType: "media",
         mediaUrl: uploaded.url,
         mediaPath: uploaded.path,
         mediaType: uploaded.mediaType,
@@ -262,6 +269,42 @@ export function SocialScreen({
         "Story not published",
         "Nothing was shared. Please try again.",
       );
+    }
+  };
+
+  const createTextStory = async (
+    textContent: string,
+    backgroundStyle: NonNullable<SocialStory["backgroundStyle"]>,
+  ) => {
+    const clean = textContent.trim();
+    if (!clean) return;
+    const createdAt = new Date().toISOString();
+    const temporary: SocialStory = {
+      id: `pending-story-${Date.now()}`,
+      author: viewer,
+      contentType: "text",
+      mediaType: null,
+      textContent: clean,
+      backgroundStyle,
+      createdAt,
+      expiresAt: new Date(Date.now() + DAY_MS).toISOString(),
+      seen: false,
+    };
+    setStories((current) => [temporary, ...current]);
+    setStoryComposerOpen(false);
+    try {
+      const saved = await repository.createStory({
+        contentType: "text",
+        mediaType: null,
+        textContent: clean,
+        backgroundStyle,
+      });
+      setStories((current) =>
+        current.map((story) => (story.id === temporary.id ? saved : story)),
+      );
+    } catch {
+      setStories((current) => current.filter((story) => story.id !== temporary.id));
+      Alert.alert("Story not published", "Nothing was shared. Please try again.");
     }
   };
 
@@ -366,17 +409,26 @@ export function SocialScreen({
     }
   };
 
+  const storyGroups = useMemo(() => groupStoriesByAuthor(stories), [stories]);
+  const openStoryGroup = useCallback(
+    (authorId: string) => {
+      setStoryQueue(flattenStoryGroups(storyGroups, authorId));
+      setStoryIndex(0);
+    },
+    [storyGroups],
+  );
   const storyStrip = useMemo(
     () => (
       <Stories
-        stories={stories}
+        groups={storyGroups}
         viewer={viewer}
-        onCreate={() => void createStory()}
-        onOpen={(index) => setStoryIndex(index)}
+        onCreate={() => setStoryComposerOpen(true)}
+        onOpen={openStoryGroup}
         onOpenOwnProfile={onOpenOwnProfile}
+        onSearch={() => setSearchOpen(true)}
       />
     ),
-    [stories, viewer, onOpenOwnProfile],
+    [storyGroups, viewer, onOpenOwnProfile, openStoryGroup],
   );
 
   if (loading) return <Centered label="Loading social" />;
@@ -398,7 +450,7 @@ export function SocialScreen({
         ListEmptyComponent={
           <EmptyState
             onCreate={() => setComposerOpen(true)}
-            onCreateStory={() => void createStory()}
+            onCreateStory={() => setStoryComposerOpen(true)}
           />
         }
         renderItem={({ item }) => (
@@ -452,26 +504,46 @@ export function SocialScreen({
         close={() => setCommentsFor(null)}
       />
       <StoryViewer
-        stories={stories}
+        stories={storyQueue}
         initialIndex={storyIndex}
         close={() => setStoryIndex(null)}
+      />
+      <StoryComposer
+        visible={storyComposerOpen}
+        close={() => setStoryComposerOpen(false)}
+        createMedia={() => {
+          setStoryComposerOpen(false);
+          void createStory();
+        }}
+        createText={(text, background) => void createTextStory(text, background)}
+      />
+      <SocialSearch
+        visible={searchOpen}
+        repository={repository}
+        close={() => setSearchOpen(false)}
+        openProfile={(user) => {
+          setSearchOpen(false);
+          onOpenProfile?.(user);
+        }}
       />
     </SafeAreaView>
   );
 }
 
 function Stories({
-  stories,
+  groups,
   viewer,
   onCreate,
   onOpen,
   onOpenOwnProfile,
+  onSearch,
 }: {
-  stories: SocialStory[];
+  groups: ReturnType<typeof groupStoriesByAuthor>;
   viewer: SocialUser;
   onCreate: () => void;
-  onOpen: (index: number) => void;
+  onOpen: (authorId: string) => void;
   onOpenOwnProfile?: () => void;
+  onSearch: () => void;
 }) {
   return (
     <View style={styles.storyBlock}>
@@ -483,6 +555,7 @@ function Stories({
           accessibilityRole="search"
           accessibilityLabel="Search social"
           style={styles.topSearch}
+          onPress={onSearch}
         >
           <Search size={18} color="#8f98a8" />
           <Text style={styles.topSearchText}>Search</Text>
@@ -507,8 +580,8 @@ function Stories({
       </View>
       <FlatList
         horizontal
-        data={stories}
-        keyExtractor={(story) => story.id}
+        data={groups}
+        keyExtractor={(group) => group.author.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.stories}
         ListHeaderComponent={
@@ -529,15 +602,15 @@ function Stories({
             </Text>
           </Pressable>
         }
-        renderItem={({ item, index }) => (
+        renderItem={({ item }) => (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`View ${item.author.displayName}'s story`}
+            accessibilityLabel={`View ${item.author.displayName}'s stories`}
             style={styles.story}
-            onPress={() => onOpen(index)}
+            onPress={() => onOpen(item.author.id)}
           >
-            <View style={[styles.storyRing, item.seen && styles.seenStory]}>
-              <StoryThumbnail story={item} />
+            <View style={[styles.storyRing, item.stories.every((story) => story.seen) && styles.seenStory]}>
+              <StoryThumbnail story={item.stories[0]} />
             </View>
             <Text numberOfLines={1} style={styles.storyName}>
               {item.author.handle}
@@ -546,6 +619,192 @@ function Stories({
         )}
       />
     </View>
+  );
+}
+
+const STORY_BACKGROUNDS = ["forest", "sunset", "ocean", "berry", "midnight"] as const;
+
+function storyBackground(value: SocialStory["backgroundStyle"]) {
+  switch (value) {
+    case "sunset": return { backgroundColor: "#DB6B45" };
+    case "ocean": return { backgroundColor: "#176B87" };
+    case "berry": return { backgroundColor: "#8B3A62" };
+    case "midnight": return { backgroundColor: "#1D2740" };
+    default: return { backgroundColor: "#087A4B" };
+  }
+}
+
+function StoryComposer({
+  visible,
+  close,
+  createMedia,
+  createText,
+}: {
+  visible: boolean;
+  close: () => void;
+  createMedia: () => void;
+  createText: (text: string, background: (typeof STORY_BACKGROUNDS)[number]) => void;
+}) {
+  const [mode, setMode] = useState<"choose" | "text">("choose");
+  const [draft, setDraft] = useState("");
+  const [background, setBackground] = useState<(typeof STORY_BACKGROUNDS)[number]>("forest");
+  useEffect(() => {
+    if (visible) return;
+    setMode("choose");
+    setDraft("");
+    setBackground("forest");
+  }, [visible]);
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView style={styles.composerScreen}>
+        <View style={styles.composerHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close story composer" onPress={close}>
+            <X color={ink} size={27} />
+          </Pressable>
+          <Text accessibilityRole="header" style={styles.composerTitle}>New story</Text>
+          <View style={{ width: 27 }} />
+        </View>
+        {mode === "choose" ? (
+          <View style={styles.storyComposerChoices}>
+            <Pressable style={styles.storyComposerChoice} onPress={createMedia}>
+              <ImagePlus color={brand} size={28} />
+              <Text style={styles.storyComposerChoiceTitle}>Photo or video</Text>
+              <Text style={styles.storyComposerChoiceCopy}>Choose media from your device.</Text>
+            </Pressable>
+            <Pressable style={styles.storyComposerChoice} onPress={() => setMode("text")}>
+              <Text style={styles.storyComposerTextIcon}>Aa</Text>
+              <Text style={styles.storyComposerChoiceTitle}>Text story</Text>
+              <Text style={styles.storyComposerChoiceCopy}>Share a short update for 24 hours.</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.textStoryComposer}>
+            <View style={[styles.textStoryPreview, storyBackground(background)]}>
+              <TextInput
+                accessibilityLabel="Text story content"
+                autoFocus
+                multiline
+                maxLength={240}
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="Type your story…"
+                placeholderTextColor="#DCEBE4"
+                style={styles.textStoryInput}
+              />
+            </View>
+            <View style={styles.storyPalette}>
+              {STORY_BACKGROUNDS.map((value) => (
+                <Pressable
+                  key={value}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${value} story background`}
+                  accessibilityState={{ selected: background === value }}
+                  onPress={() => setBackground(value)}
+                  style={[styles.storySwatch, storyBackground(value), background === value && styles.storySwatchSelected]}
+                />
+              ))}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Publish text story"
+              disabled={!draft.trim()}
+              style={[styles.publishStoryButton, !draft.trim() && styles.disabledButton]}
+              onPress={() => createText(draft, background)}
+            >
+              <Text style={styles.publishStoryButtonText}>Share story</Text>
+            </Pressable>
+          </View>
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function SocialSearch({
+  visible,
+  repository,
+  close,
+  openProfile,
+}: {
+  visible: boolean;
+  repository: SocialRepository;
+  close: () => void;
+  openProfile: (user: SocialUser) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SocialSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!visible) {
+      setQuery("");
+      setResults([]);
+      setSearchError(null);
+      return;
+    }
+    const clean = query.trim();
+    if (!clean) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      setSearching(true);
+      setSearchError(null);
+      repository.search(clean)
+        .then((next) => { if (active) setResults(next); })
+        .catch(() => { if (active) setSearchError("Search is unavailable. Please try again."); })
+        .finally(() => { if (active) setSearching(false); });
+    }, 350);
+    return () => { active = false; clearTimeout(timer); };
+  }, [query, repository, visible]);
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView style={styles.composerScreen}>
+        <View style={styles.composerHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close social search" onPress={close}>
+            <X color={ink} size={27} />
+          </Pressable>
+          <Text accessibilityRole="header" style={styles.composerTitle}>Search social</Text>
+          <View style={{ width: 27 }} />
+        </View>
+        <View style={styles.socialSearchInputRow}>
+          <Search size={19} color="#738092" />
+          <TextInput
+            accessibilityLabel="Search people and posts"
+            autoFocus
+            value={query}
+            onChangeText={setQuery}
+            autoCapitalize="none"
+            placeholder="Search people and posts"
+            style={styles.socialSearchInput}
+          />
+          {searching ? <ActivityIndicator color={brand} /> : null}
+        </View>
+        {searchError ? <Text style={styles.searchError}>{searchError}</Text> : null}
+        <FlatList
+          data={results}
+          keyExtractor={(item) => `${item.kind}:${item.id}`}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.socialSearchResults}
+          ListEmptyComponent={query.trim() && !searching ? <Text style={styles.emptyText}>No matching people or posts.</Text> : null}
+          renderItem={({ item }) => (
+            <Pressable style={styles.socialSearchResult} onPress={() => openProfile(item.author)}>
+              <Avatar user={item.author} size={42} />
+              <View style={styles.socialSearchResultCopy}>
+                <View style={styles.authorNameRow}>
+                  <Text style={styles.socialSearchResultTitle}>{item.author.displayName}</Text>
+                  {item.author.verifiedProfessional ? <Text style={styles.verifiedDot}>✓</Text> : null}
+                </View>
+                <Text style={styles.meta}>@{item.author.handle}{item.kind === "post" ? " · post" : ""}</Text>
+                {item.body ? <Text numberOfLines={2} style={styles.socialSearchBody}>{item.body}</Text> : null}
+              </View>
+            </Pressable>
+          )}
+        />
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -579,6 +838,16 @@ function SocialVideo({
 }
 
 function StoryThumbnail({ story }: { story: SocialStory }) {
+  if (story.contentType === "text")
+    return (
+      <View style={styles.storyThumbnailClip}>
+        <View style={[styles.storyThumbnail, styles.textStory, storyBackground(story.backgroundStyle)]}>
+          <Text numberOfLines={3} style={styles.textStoryThumbnailCopy}>
+            {story.textContent}
+          </Text>
+        </View>
+      </View>
+    );
   const source = story.thumbnailUrl || story.mediaUrl;
   if (!source)
     return (
@@ -599,12 +868,14 @@ function StoryThumbnail({ story }: { story: SocialStory }) {
       </View>
     </View>
   ) : (
-    <Image
-      accessibilityLabel={`${story.author.displayName}'s story thumbnail`}
-      source={{ uri: source }}
-      style={styles.storyThumbnail}
-      resizeMode="cover"
-    />
+    <View style={styles.storyThumbnailClip}>
+      <Image
+        accessibilityLabel={`${story.author.displayName}'s story thumbnail`}
+        source={{ uri: source }}
+        style={styles.storyThumbnail}
+        resizeMode="cover"
+      />
+    </View>
   );
 }
 
@@ -715,7 +986,11 @@ function StoryViewer({
               </Pressable>
             </View>
             <View style={styles.storyMedia}>
-              {story.mediaUrl ? (
+              {story.contentType === "text" ? (
+                <View style={[styles.storyMediaAsset, styles.textStory, storyBackground(story.backgroundStyle)]}>
+                  <Text style={styles.textStoryViewerCopy}>{story.textContent}</Text>
+                </View>
+              ) : story.mediaUrl ? (
                 story.mediaType === "video" ? (
                   <SocialVideo
                     key={story.id}
@@ -797,13 +1072,13 @@ function PostCard({
         >
           <View style={styles.authorNameRow}>
             <Text style={styles.authorName}>{post.author.handle}</Text>
-            {post.author.following ? <Text style={styles.verifiedDot}>✓</Text> : null}
+            {post.author.verifiedProfessional ? <Text style={styles.verifiedDot}>✓</Text> : null}
           </View>
           <Text style={styles.meta}>
             {post.author.displayName}
           </Text>
         </Pressable>
-        {!ownPost && !post.author.following ? (
+        {!ownPost ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`${post.author.following ? "Unfollow" : "Follow"} ${post.author.displayName}`}
@@ -1371,7 +1646,16 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "#e8f7ed",
   },
-  storyThumbnail: { width: "100%", height: "100%" },
+  storyThumbnail: { width: "100%", height: "100%", borderRadius: 28 },
+  textStory: { alignItems: "center", justifyContent: "center" },
+  textStoryThumbnailCopy: {
+    color: "#ffffff",
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: "800",
+    textAlign: "center",
+    padding: 5,
+  },
   videoBadge: {
     position: "absolute",
     right: 3,
@@ -1504,6 +1788,14 @@ const styles = StyleSheet.create({
   },
   storyMedia: { flex: 1, alignItems: "center", justifyContent: "center" },
   storyMediaAsset: { width: "100%", height: "100%" },
+  textStoryViewerCopy: {
+    color: "#ffffff",
+    fontSize: 32,
+    lineHeight: 42,
+    fontWeight: "800",
+    textAlign: "center",
+    paddingHorizontal: 34,
+  },
   storyMediaMissing: { alignItems: "center", gap: 10 },
   storyMediaMissingText: { color: "#ffffff", fontWeight: "700" },
   storyTapZone: { position: "absolute", top: 88, bottom: 0, width: "36%" },
@@ -1561,6 +1853,68 @@ const styles = StyleSheet.create({
     boxShadow: "0 3px 10px rgba(0, 0, 0, 0.18)",
   },
   composerScreen: { flex: 1, backgroundColor: "#fff" },
+  storyComposerChoices: { padding: 18, gap: 14 },
+  storyComposerChoice: {
+    minHeight: 150,
+    padding: 20,
+    borderRadius: 22,
+    backgroundColor: "#F2FAF5",
+    borderWidth: 1,
+    borderColor: "#CFE9D8",
+    justifyContent: "center",
+    gap: 7,
+  },
+  storyComposerTextIcon: { color: brand, fontSize: 30, fontWeight: "900" },
+  storyComposerChoiceTitle: { color: ink, fontSize: 20, fontWeight: "800" },
+  storyComposerChoiceCopy: { color: "#687386", lineHeight: 20 },
+  textStoryComposer: { flex: 1, padding: 18 },
+  textStoryPreview: { minHeight: 360, borderRadius: 24, overflow: "hidden" },
+  textStoryInput: {
+    width: "100%",
+    minHeight: 360,
+    padding: 28,
+    color: "#ffffff",
+    fontSize: 29,
+    lineHeight: 38,
+    fontWeight: "800",
+    textAlign: "center",
+    textAlignVertical: "center",
+  },
+  storyPalette: { flexDirection: "row", gap: 13, paddingVertical: 18, justifyContent: "center" },
+  storySwatch: { width: 38, height: 38, borderRadius: 19 },
+  storySwatchSelected: { borderWidth: 4, borderColor: "#ffffff", outlineWidth: 2, outlineColor: brand },
+  publishStoryButton: {
+    minHeight: 54,
+    borderRadius: 18,
+    backgroundColor: brand,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  publishStoryButtonText: { color: "#ffffff", fontSize: 16, fontWeight: "800" },
+  disabledButton: { opacity: 0.42 },
+  socialSearchInputRow: {
+    margin: 16,
+    paddingHorizontal: 14,
+    minHeight: 50,
+    borderRadius: 17,
+    backgroundColor: "#F1F4F2",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  socialSearchInput: { flex: 1, color: ink, fontSize: 16 },
+  socialSearchResults: { paddingHorizontal: 16, paddingBottom: 30 },
+  socialSearchResult: {
+    paddingVertical: 13,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#DDE5E0",
+    flexDirection: "row",
+    gap: 12,
+  },
+  socialSearchResultCopy: { flex: 1 },
+  socialSearchResultTitle: { color: ink, fontSize: 15, fontWeight: "800" },
+  socialSearchBody: { color: "#465247", marginTop: 6, lineHeight: 19 },
+  searchError: { color: "#B42318", marginHorizontal: 18, marginBottom: 8 },
   composerHeader: {
     height: 60,
     paddingHorizontal: 17,
