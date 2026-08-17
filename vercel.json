@@ -16,6 +16,10 @@
       "destination": "/business-chat/[id]"
     },
     {
+      "source": "/commerce/order/:id",
+      "destination": "/commerce/order/[id]"
+    },
+    {
       "source": "/games/:id",
       "destination": "/games/[id]"
     }
