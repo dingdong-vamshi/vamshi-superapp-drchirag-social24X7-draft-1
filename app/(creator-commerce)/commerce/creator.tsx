@@ -1,3 +1,3 @@
-import { ApprovedCreatorScreen } from '../../../src/features/creatorCommerce/CreatorCommerceScreens';
+import { CreatorCentreScreen } from '../../../src/features/creatorCommerce/RedesignedCommerceScreens';
 
-export default ApprovedCreatorScreen;
+export default CreatorCentreScreen;

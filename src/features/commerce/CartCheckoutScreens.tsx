@@ -249,7 +249,12 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
       await repository.saveCart([]);
       onSuccess(checkoutId, paymentMethod, total);
     } catch (cause) {
-      Alert.alert("Order not placed", cause instanceof Error ? cause.message : "Please try again.");
+      const message = cause instanceof Error ? cause.message : "Please try again.";
+      if (paymentMethod === "cod" && /kyc|verification|verified buyer/i.test(message)) {
+        Alert.alert("Buyer KYC required for COD", "Cash on delivery is available after Buyer KYC is verified. Complete Buyer KYC in Earn & Sell, or choose Test online payment for this order.");
+      } else {
+        Alert.alert("Order not placed", message);
+      }
     } finally {
       setSubmitting(false);
     }

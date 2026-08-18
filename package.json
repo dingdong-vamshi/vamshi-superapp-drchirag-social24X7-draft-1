@@ -45,7 +45,7 @@
     "web": "expo start --web",
     "test:chat": "node --test --experimental-strip-types src/features/chat/chatContracts.test.ts",
     "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts",
-    "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts",
+    "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts src/features/creatorCommerce/onboardingRules.test.ts",
     "test:social-wallet": "node --test --experimental-strip-types src/features/social/socialUtils.test.ts src/features/profile/profileQrUtils.test.ts"
   },
   "private": true

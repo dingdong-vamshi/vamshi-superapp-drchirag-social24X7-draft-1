@@ -7,14 +7,17 @@ import { useAuth } from "../../src/lib/AuthContext";
 import { supabase } from "../../src/lib/supabase";
 
 export default function ShopPage() {
-  const { user } = useAuth();
+  const { initialized, user } = useAuth();
   const repository = useMemo(() => {
     if (!supabase) return localShopRepository;
+    if (!initialized) return null;
     return createSupabaseShopRepository({
       client: supabase,
       user: user && "identities" in user ? user : null,
     });
-  }, [user]);
+  }, [initialized, user]);
+
+  if (!repository) return null;
 
   return (
     <ShopScreen

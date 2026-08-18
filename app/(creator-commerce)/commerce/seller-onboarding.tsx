@@ -1,3 +1,3 @@
-import { SellerOnboardingScreen } from '../../../src/features/creatorCommerce/CreatorCommerceScreens';
+import { SellerOnboardingScreen } from '../../../src/features/creatorCommerce/RedesignedCommerceScreens';
 
 export default SellerOnboardingScreen;

@@ -14,23 +14,32 @@ import { ArrowLeft, ShoppingBag, Store } from "lucide-react-native";
 import { ShopProduct, formatInr } from "../../../../src/features/commerce/shopRepository";
 import { createSupabaseShopRepository } from "../../../../src/features/commerce/supabaseShopRepository";
 import { supabase } from "../../../../src/lib/supabase";
+import { useAuth } from "../../../../src/lib/AuthContext";
+import { recordCreatorPromotionClick } from "../../../../src/features/creatorCommerce/lifecycleRepository";
 
 export default function ProductPage() {
-  const { slug, productSlug } = useLocalSearchParams<{
+  const { initialized, user } = useAuth();
+  const { slug, productSlug, ref } = useLocalSearchParams<{
     slug: string;
     productSlug: string;
+    ref?: string;
   }>();
   const repository = useMemo(
     () =>
-      supabase
-        ? createSupabaseShopRepository({ client: supabase, user: null })
+      supabase && initialized
+        ? createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null })
         : null,
-    [],
+    [initialized, user],
   );
   const [loading, setLoading] = useState(true);
   const [product, setProduct] = useState<ShopProduct | null>(null);
   const [quantity, setQuantity] = useState(0);
   const [savingCart, setSavingCart] = useState(false);
+
+  useEffect(() => {
+    if (!supabase || !user || typeof ref !== "string" || !ref.trim()) return;
+    void recordCreatorPromotionClick(supabase, ref, "product_link").catch(() => undefined);
+  }, [ref, user]);
 
   useEffect(() => {
     if (!repository || !slug || !productSlug) return;
@@ -80,8 +89,11 @@ export default function ProductPage() {
       const nextQuantity = Math.min(product.inventory, (existing?.quantity ?? 0) + 1);
       const next = existing
         ? cart.map((item) => item.productId === product.id ? { ...item, quantity: nextQuantity } : item)
-        : [...cart, { productId: product.id, quantity: 1 }];
-      await repository.saveCart(next);
+        : [...cart, { productId: product.id, quantity: 1, promotionCode: typeof ref === "string" ? ref : null }];
+      const attributed = next.map((item) => item.productId === product.id && typeof ref === "string"
+        ? { ...item, promotionCode: ref }
+        : item);
+      await repository.saveCart(attributed);
       setQuantity(nextQuantity);
     } finally {
       setSavingCart(false);

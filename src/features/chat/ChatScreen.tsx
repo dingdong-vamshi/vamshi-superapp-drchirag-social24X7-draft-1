@@ -951,7 +951,7 @@ function ConversationView({
   const [eventOpen, setEventOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [structuredPending, setStructuredPending] = useState(false);
-  const [evidenceTarget, setEvidenceTarget] = useState<{ orderId: string; orderItemId: string; title: string } | null>(null);
+  const [evidenceTarget, setEvidenceTarget] = useState<{ orderId: string; orderItemId?: string; title: string; kind: "packing" | "unboxing" } | null>(null);
   const [returnTarget, setReturnTarget] = useState<{ orderItemId: string; title: string } | null>(null);
   const [returnReason, setReturnReason] = useState("");
   const [commerceActionPending, setCommerceActionPending] = useState(false);
@@ -1025,8 +1025,9 @@ function ConversationView({
     }
   };
 
-  const submitUnboxingEvidence = async (source: "live_capture" | "uploaded_file") => {
-    if (!evidenceTarget || !dataSource.submitUnboxingEvidence || commerceActionPending) return;
+  const submitOrderEvidence = async (source: "live_capture" | "uploaded_file") => {
+    if (!evidenceTarget || commerceActionPending) return;
+    if (!dataSource.submitOrderEvidence && !(evidenceTarget.kind === "unboxing" && evidenceTarget.orderItemId && dataSource.submitUnboxingEvidence)) return;
     try {
       const permission = source === "live_capture"
         ? await ImagePicker.requestCameraPermissionsAsync()
@@ -1041,14 +1042,13 @@ function ConversationView({
       if (!response.ok) throw new Error("The selected evidence could not be read.");
       const bytes = await response.arrayBuffer();
       setCommerceActionPending(true);
-      await dataSource.submitUnboxingEvidence({
-        orderId: evidenceTarget.orderId,
-        orderItemId: evidenceTarget.orderItemId,
-        bytes,
-        filename: asset.fileName || `unboxing-${source === "live_capture" ? "live" : "upload"}-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`,
-        mimeType: asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg"),
-        source,
-      });
+      const filename = asset.fileName || `${evidenceTarget.kind}-${source === "live_capture" ? "live" : "upload"}-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`;
+      const mimeType = asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg");
+      if (dataSource.submitOrderEvidence) {
+        await dataSource.submitOrderEvidence({ orderId: evidenceTarget.orderId, orderItemId: evidenceTarget.orderItemId, kind: evidenceTarget.kind, bytes, filename, mimeType, source });
+      } else if (evidenceTarget.orderItemId && dataSource.submitUnboxingEvidence) {
+        await dataSource.submitUnboxingEvidence({ orderId: evidenceTarget.orderId, orderItemId: evidenceTarget.orderItemId, bytes, filename, mimeType, source });
+      }
       setEvidenceTarget(null);
       Alert.alert("Evidence submitted", source === "live_capture" ? "Private live-capture evidence is attached to this order." : "Your private uploaded file is attached to this order.");
     } catch (cause) {
@@ -1061,7 +1061,7 @@ function ConversationView({
   const submitReturnFromChat = async () => {
     if (!returnTarget || !dataSource.submitOrderReturn || commerceActionPending) return;
     if (!returnReason.trim()) {
-      Alert.alert("Return reason required", "Tell the seller and admin why this item is being returned.");
+      Alert.alert("Return reason required", "Tell the seller why this item is being returned.");
       return;
     }
     setCommerceActionPending(true);
@@ -1069,9 +1069,22 @@ function ConversationView({
       await dataSource.submitOrderReturn({ orderItemId: returnTarget.orderItemId, reason: returnReason });
       setReturnTarget(null);
       setReturnReason("");
-      Alert.alert("Return requested", "The request is now available for admin review.");
+      Alert.alert("Return requested", "The request is now available for the seller to review.");
     } catch (cause) {
       Alert.alert("Return not submitted", cause instanceof Error ? cause.message : "Please retry.");
+    } finally {
+      setCommerceActionPending(false);
+    }
+  };
+
+  const reviewReturnFromChat = async (returnRequestId: string, decision: "approved" | "rejected") => {
+    if (!dataSource.reviewOrderReturn || commerceActionPending) return;
+    setCommerceActionPending(true);
+    try {
+      await dataSource.reviewOrderReturn({ returnRequestId, decision });
+      Alert.alert(decision === "approved" ? "Return approved" : "Return rejected", "The buyer and commission status have been updated.");
+    } catch (cause) {
+      Alert.alert("Return not updated", cause instanceof Error ? cause.message : "Please retry.");
     } finally {
       setCommerceActionPending(false);
     }
@@ -1548,8 +1561,9 @@ function ConversationView({
                 onViewProfile={onViewProfile}
                 onVotePoll={(pollId, optionId) => void votePoll(pollId, optionId)}
                 onRsvpEvent={(eventId, response) => void rsvpEvent(eventId, response)}
-                onAddEvidence={(orderId, orderItemId, title) => setEvidenceTarget({ orderId, orderItemId, title })}
+                onAddEvidence={(orderId, orderItemId, title, kind) => setEvidenceTarget({ orderId, orderItemId, title, kind })}
                 onRequestReturn={(orderItemId, title) => { setReturnTarget({ orderItemId, title }); setReturnReason(""); }}
+                onReviewReturn={(returnRequestId, decision) => void reviewReturnFromChat(returnRequestId, decision)}
               />
             )}
             onContentSizeChange={() =>
@@ -1688,7 +1702,7 @@ function ConversationView({
           target={evidenceTarget}
           pending={commerceActionPending}
           close={() => !commerceActionPending && setEvidenceTarget(null)}
-          choose={(source) => void submitUnboxingEvidence(source)}
+          choose={(source) => void submitOrderEvidence(source)}
         />
         <ReturnRequestModal
           target={returnTarget}
@@ -1904,6 +1918,7 @@ function MessageBubble({
   onRsvpEvent,
   onAddEvidence,
   onRequestReturn,
+  onReviewReturn,
 }: {
   message: ChatMessage;
   onLongPress: () => void;
@@ -1914,8 +1929,9 @@ function MessageBubble({
   onViewProfile?: (profileId: string) => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
   onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
-  onAddEvidence?: (orderId: string, orderItemId: string, title: string) => void;
+  onAddEvidence?: (orderId: string, orderItemId: string | undefined, title: string, kind: "packing" | "unboxing") => void;
   onRequestReturn?: (orderItemId: string, title: string) => void;
+  onReviewReturn?: (returnRequestId: string, decision: "approved" | "rejected") => void;
 }) {
   const systemEvent = message.type === "order_event";
   const mine = !systemEvent && message.senderId === CURRENT_USER_ID;
@@ -2017,6 +2033,28 @@ function MessageBubble({
                   {[message.order.carrier, message.order.trackingNumber].filter(Boolean).join(" · ")}
                 </Text>
               ) : null}
+              {message.order.packingEvidence?.length ? (
+                <View style={styles.orderEvidenceList}>
+                  <Text style={styles.orderEvidenceEyebrow}>PRIVATE PACKING EVIDENCE</Text>
+                  {message.order.packingEvidence.map((evidence) => (
+                    <Pressable accessibilityRole="button" accessibilityLabel={`View private packing evidence ${evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => evidence.signedUrl ? void Linking.openURL(evidence.signedUrl) : undefined} style={styles.orderEvidenceRow}>
+                      <View style={styles.grow}>
+                        <Text style={styles.orderEvidenceTitle} numberOfLines={1}>{evidence.filename}</Text>
+                        <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? "Live Capture" : "Uploaded file"} · Buyer and seller only</Text>
+                      </View>
+                      {evidence.signedUrl ? <Text style={styles.orderEventAction}>View</Text> : null}
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+              {message.order.canSubmitPackingEvidence && onAddEvidence && ["order_confirmed", "order_processing"].includes(message.order.eventType) ? (
+                <View style={styles.orderCommerceActions}>
+                  <Pressable accessibilityRole="button" accessibilityLabel="Submit packing evidence" onPress={() => onAddEvidence(message.order!.orderId, undefined, "Packing evidence", "packing")} style={styles.orderCommerceButton}>
+                    <Camera size={14} color="#087c43" />
+                    <Text style={styles.orderCommerceButtonText}>Submit packing evidence</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               {showOrderEvidence && message.order.unboxingEvidence?.length ? (
                 <View style={styles.orderEvidenceList}>
                   <Text style={styles.orderEvidenceEyebrow}>PRIVATE UNBOXING EVIDENCE</Text>
@@ -2037,11 +2075,24 @@ function MessageBubble({
               {showOrderEvidence && message.order.canSubmitUnboxingEvidence && onAddEvidence ? (
                 <View style={styles.orderCommerceActions}>
                   {message.order.items.filter((item) => !message.order!.unboxingEvidence?.some((evidence) => evidence.orderItemId === item.orderItemId)).map((item) => (
-                    <Pressable accessibilityRole="button" accessibilityLabel={`Submit unboxing evidence for ${item.title}`} key={item.orderItemId} onPress={() => onAddEvidence(message.order!.orderId, item.orderItemId, item.title)} style={styles.orderCommerceButton}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Submit unboxing evidence for ${item.title}`} key={item.orderItemId} onPress={() => onAddEvidence(message.order!.orderId, item.orderItemId, item.title, "unboxing")} style={styles.orderCommerceButton}>
                       <Camera size={14} color="#087c43" />
                       <Text style={styles.orderCommerceButtonText}>Submit evidence · {item.title}</Text>
                     </Pressable>
                   ))}
+                </View>
+              ) : null}
+              {message.order.returnStatus ? (
+                <Text style={[styles.orderEventMeta, mine && styles.mineText]}>Return: {message.order.returnStatus.replaceAll("_", " ")}</Text>
+              ) : null}
+              {message.order.canReviewReturn && message.order.returnRequestId && onReviewReturn ? (
+                <View style={styles.orderCommerceActions}>
+                  <Pressable accessibilityRole="button" accessibilityLabel="Approve buyer return" onPress={() => onReviewReturn(message.order!.returnRequestId!, "approved")} style={styles.orderCommerceButton}>
+                    <Text style={styles.orderCommerceButtonText}>Approve return</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="Reject buyer return" onPress={() => onReviewReturn(message.order!.returnRequestId!, "rejected")} style={[styles.orderCommerceButton, styles.returnCommerceButton]}>
+                    <Text style={[styles.orderCommerceButtonText, styles.returnCommerceButtonText]}>Reject return</Text>
+                  </Pressable>
                 </View>
               ) : null}
               {showOrderEvidence && message.order.canRequestReturn && onRequestReturn ? (
@@ -2400,7 +2451,7 @@ function ScheduleComposer({ visible, pending, close, submit }: {
 }
 
 function UnboxingEvidenceModal({ target, pending, close, choose }: {
-  target: { orderId: string; orderItemId: string; title: string } | null;
+  target: { orderId: string; orderItemId?: string; title: string; kind: "packing" | "unboxing" } | null;
   pending: boolean;
   close: () => void;
   choose: (source: "live_capture" | "uploaded_file") => void;
@@ -2409,8 +2460,8 @@ function UnboxingEvidenceModal({ target, pending, close, choose }: {
     <Modal visible={Boolean(target)} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
       <SafeAreaView style={styles.composerSheet}>
         <View style={styles.sheetHeader}>
-          <View style={styles.grow}><Text style={styles.sheetTitle}>Submit unboxing evidence</Text><Text style={styles.sheetSubtitle} numberOfLines={2}>{target?.title} · Private to buyer, seller and admin</Text></View>
-          <Pressable accessibilityLabel="Close unboxing evidence" disabled={pending} onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
+          <View style={styles.grow}><Text style={styles.sheetTitle}>Submit {target?.kind ?? "order"} evidence</Text><Text style={styles.sheetSubtitle} numberOfLines={2}>{target?.title} · Private to buyer and seller</Text></View>
+          <Pressable accessibilityLabel="Close order evidence" disabled={pending} onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
         </View>
         <Text style={styles.evidenceHelp}>Choose how this evidence was created. The source is stored and shown clearly on the order card.</Text>
         <Pressable accessibilityRole="button" disabled={pending} onPress={() => choose("live_capture")} style={styles.evidenceChoice}>
@@ -2443,7 +2494,7 @@ function ReturnRequestModal({ target, reason, setReason, pending, close, submit 
           <Pressable accessibilityLabel="Close return request" disabled={pending} onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
         </View>
         <TextInput value={reason} onChangeText={setReason} placeholder="Why are you returning this item?" placeholderTextColor="#8a9690" multiline maxLength={1000} style={[styles.structuredInput, styles.structuredMultiline]} />
-        <Text style={styles.evidenceHelp}>The request will go to Commerce Admin for review. The seller can see its status in this Business Chat.</Text>
+        <Text style={styles.evidenceHelp}>The request goes directly to the seller for review. Both sides can follow its status in this Business Chat.</Text>
         <Pressable accessibilityRole="button" disabled={pending || !reason.trim()} onPress={submit} style={[styles.structuredSubmit, (pending || !reason.trim()) && styles.disabledAction]}>{pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Submit return request</Text>}</Pressable>
       </SafeAreaView>
     </Modal>

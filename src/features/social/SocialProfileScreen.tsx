@@ -39,7 +39,7 @@ type Props = {
   supabaseClient?: SupabaseClient | null;
 };
 
-type TabKey = "posts" | "reels" | "reviews" | "reposts";
+type TabKey = "posts" | "reels" | "recommended" | "reviews" | "reposts";
 
 type ProfileViewModel = {
   id: string;
@@ -50,6 +50,17 @@ type ProfileViewModel = {
 };
 
 type ReviewItem = SocialComment & { postMediaUrl?: string | null };
+type CreatorRecommendation = {
+  promotionId: string;
+  trackingCode: string;
+  productId: string;
+  productTitle: string;
+  productSlug: string;
+  storefrontName: string;
+  storefrontSlug: string;
+  priceMinor: number;
+  coverUrl: string | null;
+};
 
 export function SocialProfileScreen({
   viewer,
@@ -69,6 +80,7 @@ export function SocialProfileScreen({
   const [followers, setFollowers] = useState(0);
   const [following, setFollowing] = useState(0);
   const [storefront, setStorefront] = useState<{ name: string; slug: string } | null>(null);
+  const [recommendations, setRecommendations] = useState<CreatorRecommendation[]>([]);
   const [isFollowing, setIsFollowing] = useState(false);
   const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
 
@@ -163,6 +175,7 @@ export function SocialProfileScreen({
         );
 
         let publicStorefront: { name: string; slug: string } | null = null;
+        let publicRecommendations: CreatorRecommendation[] = [];
         if (supabaseClient && isUuid(profileUserId)) {
           const { data: storefrontRows, error: storefrontError } =
             await supabaseClient.rpc("get_public_storefront_for_profile", {
@@ -174,6 +187,25 @@ export function SocialProfileScreen({
               ? { name: row.name as string, slug: row.slug as string }
               : null;
           }
+          const { data: recommendationRows, error: recommendationError } =
+            await supabaseClient.rpc("get_public_creator_recommendations", {
+              target_creator: profileUserId,
+            });
+          if (!recommendationError) {
+            publicRecommendations = ((recommendationRows as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+              promotionId: String(row.promotion_id),
+              trackingCode: String(row.tracking_code),
+              productId: String(row.product_id),
+              productTitle: String(row.product_title),
+              productSlug: String(row.product_slug),
+              storefrontName: String(row.storefront_name),
+              storefrontSlug: String(row.storefront_slug),
+              priceMinor: Number(row.price_minor) || 0,
+              coverUrl: typeof row.cover_path === "string" && row.cover_path
+                ? supabaseClient.storage.from("shop-media").getPublicUrl(row.cover_path).data.publicUrl
+                : null,
+            }));
+          }
         }
 
         if (!mounted) return;
@@ -184,6 +216,7 @@ export function SocialProfileScreen({
         setFollowing(followingCount);
         setReviews(commentGroups.flat().slice(0, 8));
         setStorefront(publicStorefront);
+        setRecommendations(publicRecommendations);
         setIsFollowing(Boolean(fallbackAuthor?.following));
       } catch (cause) {
         if (!mounted) return;
@@ -342,11 +375,34 @@ export function SocialProfileScreen({
         <View style={styles.tabBar}>
           <ProfileTab icon={Grid3X3} label="Posts" active={tab === "posts"} onPress={() => setTab("posts")} />
           <ProfileTab icon={Play} label="Reels" active={tab === "reels"} onPress={() => setTab("reels")} />
+          {recommendations.length ? <ProfileTab icon={Star} label="Recommended" active={tab === "recommended"} onPress={() => setTab("recommended")} /> : null}
           <ProfileTab icon={Star} label="Reviews" active={tab === "reviews"} onPress={() => setTab("reviews")} />
           <ProfileTab icon={Repeat2} label="Reposts" active={tab === "reposts"} onPress={() => setTab("reposts")} />
         </View>
 
-        {tab === "reviews" ? (
+        {tab === "recommended" ? (
+          <View style={styles.recommendationList}>
+            {recommendations.map((item) => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open recommended Product ${item.productTitle}`}
+                key={item.promotionId}
+                onPress={() => router.push({
+                  pathname: "/store/[slug]/product/[productSlug]",
+                  params: { slug: item.storefrontSlug, productSlug: item.productSlug, ref: item.trackingCode },
+                })}
+                style={styles.recommendationCard}
+              >
+                {item.coverUrl ? <Image source={{ uri: item.coverUrl }} style={styles.recommendationImage} /> : <View style={[styles.recommendationImage, styles.cardPlaceholder]}><Star size={28} color={brand} /></View>}
+                <View style={styles.recommendationCopy}>
+                  <Text style={styles.recommendationTitle}>{item.productTitle}</Text>
+                  <Text style={styles.recommendationMeta}>{item.storefrontName}</Text>
+                  <Text style={styles.recommendationPrice}>{formatInrMinor(item.priceMinor)}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : tab === "reviews" ? (
           reviews.length ? (
             <View style={styles.reviewList}>
               {reviews.map((review) => (
@@ -514,6 +570,10 @@ const formatDate = (value: string) =>
     day: "numeric",
   }).format(new Date(value));
 
+const formatInrMinor = (value: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 })
+    .format(value / 100);
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#ffffff" },
   content: { padding: 18, paddingBottom: 120, gap: 18 },
@@ -563,6 +623,13 @@ const styles = StyleSheet.create({
   reviewAuthor: { fontSize: 17, fontWeight: "800", color: ink },
   reviewDate: { marginTop: 4, fontSize: 14, color: muted },
   reviewBody: { fontSize: 16, lineHeight: 26, color: muted },
+  recommendationList: { gap: 12 },
+  recommendationCard: { borderRadius: 20, borderWidth: 1, borderColor: "#dbece2", padding: 12, backgroundColor: "#fff", flexDirection: "row", gap: 14, alignItems: "center" },
+  recommendationImage: { width: 82, height: 82, borderRadius: 16, backgroundColor: card },
+  recommendationCopy: { flex: 1 },
+  recommendationTitle: { fontSize: 17, fontWeight: "800", color: ink },
+  recommendationMeta: { marginTop: 5, fontSize: 14, color: muted },
+  recommendationPrice: { marginTop: 8, fontSize: 16, fontWeight: "800", color: brand },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   card: { width: "31.8%", aspectRatio: 0.78, borderRadius: 18, overflow: "hidden", backgroundColor: "#eef2f6", position: "relative" },
   cardImage: { width: "100%", height: "100%" },

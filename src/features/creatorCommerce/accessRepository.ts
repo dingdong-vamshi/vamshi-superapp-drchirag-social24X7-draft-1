@@ -28,6 +28,28 @@ export type CreatorCommerceAccess = {
   adminAccess: boolean;
 };
 
+export type ProviderVerificationStatus =
+  | 'not_started'
+  | 'pending'
+  | 'manual_review'
+  | 'verified'
+  | 'failed'
+  | 'needs_information'
+  | 'not_applicable';
+
+export type CommerceVerificationProfile = {
+  userId: string;
+  identityStatus: ProviderVerificationStatus;
+  gstStatus: ProviderVerificationStatus;
+  panStatus: ProviderVerificationStatus;
+  bankStatus: ProviderVerificationStatus;
+  liveKycStatus: ProviderVerificationStatus;
+  professionalStatus: ProviderVerificationStatus;
+  blueTickEligibilityStatus: string;
+  blueTickPaymentStatus: string;
+  blueTickStatus: string;
+};
+
 export type SellerType = 'gst' | 'non_gst';
 export type CreatorType = 'general' | 'professional';
 export type ApplicationKind = 'seller' | 'creator' | 'professional';
@@ -71,6 +93,9 @@ export type SellerApplication = {
   documentPath: string | null;
   exteriorEvidencePath: string | null;
   interiorEvidencePath: string | null;
+  locationLatitude: number | null;
+  locationLongitude: number | null;
+  applicationPayload: Record<string, unknown>;
   status: CommerceApprovalStatus;
   requestedInformation: string | null;
   reviewNote: string | null;
@@ -87,6 +112,7 @@ export type CreatorApplication = {
   socialHandles: Record<string, string>;
   identityName: string;
   identityDocumentPath: string | null;
+  applicationPayload: Record<string, unknown>;
   status: CommerceApprovalStatus;
   requestedInformation: string | null;
   reviewNote: string | null;
@@ -106,6 +132,8 @@ export type ProfessionalVerificationRequest = {
   registrationNumber: string;
   credentialDocumentPath: string | null;
   supportingDocumentPath: string | null;
+  creatorIdentityDocumentPath?: string | null;
+  applicationPayload: Record<string, unknown>;
   socialHandles: Record<string, string>;
   status: CommerceApprovalStatus;
   requestedInformation: string | null;
@@ -147,6 +175,9 @@ type SellerApplicationRow = {
   document_path: string | null;
   exterior_evidence_path: string | null;
   interior_evidence_path: string | null;
+  location_latitude: number | null;
+  location_longitude: number | null;
+  application_payload: Record<string, unknown> | null;
   status: CommerceApprovalStatus;
   requested_information: string | null;
   review_note: string | null;
@@ -163,6 +194,7 @@ type CreatorApplicationRow = {
   social_handles: Record<string, string> | null;
   identity_name: string;
   identity_document_path: string | null;
+  application_payload: Record<string, unknown> | null;
   status: CommerceApprovalStatus;
   requested_information: string | null;
   review_note: string | null;
@@ -182,6 +214,7 @@ type ProfessionalVerificationRow = {
   registration_number: string;
   credential_document_path: string | null;
   supporting_document_path: string | null;
+  application_payload: Record<string, unknown> | null;
   social_handles: Record<string, string> | null;
   status: CommerceApprovalStatus;
   requested_information: string | null;
@@ -242,6 +275,9 @@ const sellerFromRow = (row: SellerApplicationRow): SellerApplication => ({
   documentPath: row.document_path,
   exteriorEvidencePath: row.exterior_evidence_path,
   interiorEvidencePath: row.interior_evidence_path,
+  locationLatitude: row.location_latitude,
+  locationLongitude: row.location_longitude,
+  applicationPayload: row.application_payload ?? {},
   status: row.status,
   requestedInformation: row.requested_information,
   reviewNote: row.review_note,
@@ -258,6 +294,7 @@ const creatorFromRow = (row: CreatorApplicationRow): CreatorApplication => ({
   socialHandles: row.social_handles ?? {},
   identityName: row.identity_name,
   identityDocumentPath: row.identity_document_path,
+  applicationPayload: row.application_payload ?? {},
   status: row.status,
   requestedInformation: row.requested_information,
   reviewNote: row.review_note,
@@ -277,6 +314,7 @@ const professionalFromRow = (row: ProfessionalVerificationRow): ProfessionalVeri
   registrationNumber: row.registration_number,
   credentialDocumentPath: row.credential_document_path,
   supportingDocumentPath: row.supporting_document_path,
+  applicationPayload: row.application_payload ?? {},
   socialHandles: row.social_handles ?? {},
   status: row.status,
   requestedInformation: row.requested_information,
@@ -317,6 +355,50 @@ export async function getCreatorCommerceAccess(
   };
 }
 
+export async function getMyCommerceVerificationProfile(
+  client: SupabaseClient,
+): Promise<CommerceVerificationProfile> {
+  const { data, error } = await client.rpc('get_my_commerce_verification_profile');
+  if (error) throw error;
+  const row = data as {
+    user_id: string;
+    identity_status: ProviderVerificationStatus;
+    gst_status: ProviderVerificationStatus;
+    pan_status: ProviderVerificationStatus;
+    bank_status: ProviderVerificationStatus;
+    live_kyc_status: ProviderVerificationStatus;
+    professional_status: ProviderVerificationStatus;
+    blue_tick_eligibility_status: string;
+    blue_tick_payment_status: string;
+    blue_tick_status: string;
+  };
+  return {
+    userId: row.user_id,
+    identityStatus: row.identity_status,
+    gstStatus: row.gst_status,
+    panStatus: row.pan_status,
+    bankStatus: row.bank_status,
+    liveKycStatus: row.live_kyc_status,
+    professionalStatus: row.professional_status,
+    blueTickEligibilityStatus: row.blue_tick_eligibility_status,
+    blueTickPaymentStatus: row.blue_tick_payment_status,
+    blueTickStatus: row.blue_tick_status,
+  };
+}
+
+export async function saveCommerceOnboardingDraft(
+  client: SupabaseClient,
+  kind: 'seller' | 'creator',
+  payload: Record<string, unknown>,
+) {
+  const { data, error } = await client.rpc('save_creator_commerce_onboarding_draft', {
+    p_kind: kind,
+    p_payload: payload,
+  });
+  if (error) throw error;
+  return (data ?? {}) as Record<string, unknown>;
+}
+
 export async function uploadCommerceEvidence(
   client: SupabaseClient,
   userId: string,
@@ -353,7 +435,7 @@ export async function uploadCommerceEvidence(
 export async function getMySellerApplication(client: SupabaseClient, userId: string) {
   const { data, error } = await client
     .from('seller_applications')
-    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -384,6 +466,7 @@ export async function submitSellerApplication(
     interiorEvidencePath?: string | null;
     locationLatitude?: number | null;
     locationLongitude?: number | null;
+    applicationPayload?: Record<string, unknown>;
   },
 ) {
   const slug = safeSlug(input.storefrontName);
@@ -417,10 +500,11 @@ export async function submitSellerApplication(
         status: 'submitted',
         submitted_at: new Date().toISOString(),
         verification_mode: 'manual',
+        application_payload: input.applicationPayload ?? {},
       },
       { onConflict: 'owner_id' },
     )
-    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .single();
   if (error) throw error;
   return sellerFromRow(data as SellerApplicationRow);
@@ -429,7 +513,7 @@ export async function submitSellerApplication(
 export async function getMyCreatorApplication(client: SupabaseClient, userId: string) {
   const { data, error } = await client
     .from('creator_applications')
-    .select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -441,7 +525,7 @@ export async function getMyCreatorApplication(client: SupabaseClient, userId: st
 export async function getMyProfessionalRequest(client: SupabaseClient, userId: string) {
   const { data, error } = await client
     .from('professional_verification_requests')
-    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,social_handles,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -460,6 +544,7 @@ export async function submitCreatorApplication(
     socialHandles: Record<string, string>;
     identityName: string;
     identityDocumentPath?: string | null;
+    applicationPayload?: Record<string, unknown>;
   },
 ) {
   const { data, error } = await client
@@ -473,12 +558,13 @@ export async function submitCreatorApplication(
         social_handles: input.socialHandles,
         identity_name: input.identityName.trim(),
         identity_document_path: input.identityDocumentPath ?? null,
+        application_payload: input.applicationPayload ?? {},
         status: 'submitted',
         submitted_at: new Date().toISOString(),
       },
       { onConflict: 'owner_id' },
     )
-    .select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .single();
   if (error) throw error;
   return creatorFromRow(data as CreatorApplicationRow);
@@ -498,6 +584,7 @@ export async function submitProfessionalVerification(
     credentialDocumentPath?: string | null;
     supportingDocumentPath?: string | null;
     socialHandles: Record<string, string>;
+    applicationPayload?: Record<string, unknown>;
   },
 ) {
   const { data, error } = await client
@@ -515,12 +602,13 @@ export async function submitProfessionalVerification(
         credential_document_path: input.credentialDocumentPath ?? null,
         supporting_document_path: input.supportingDocumentPath ?? null,
         social_handles: input.socialHandles,
+        application_payload: input.applicationPayload ?? {},
         status: 'submitted',
         submitted_at: new Date().toISOString(),
       },
       { onConflict: 'owner_id' },
     )
-    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,social_handles,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at')
     .single();
   if (error) throw error;
   return professionalFromRow(data as ProfessionalVerificationRow);
@@ -528,9 +616,9 @@ export async function submitProfessionalVerification(
 
 export async function listCommerceApplications(client: SupabaseClient): Promise<CommerceApplicationSummary[]> {
   const [sellerResult, creatorResult, professionalResult, documentsResult] = await Promise.all([
-    client.from('seller_applications').select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,status,requested_information,review_note,submitted_at,updated_at').order('updated_at', { ascending: false }).limit(50),
-    client.from('creator_applications').select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,status,requested_information,review_note,submitted_at,updated_at').order('updated_at', { ascending: false }).limit(50),
-    client.from('professional_verification_requests').select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,social_handles,status,requested_information,review_note,submitted_at,updated_at').order('updated_at', { ascending: false }).limit(50),
+    client.from('seller_applications').select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
+    client.from('creator_applications').select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
+    client.from('professional_verification_requests').select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
     client.from('creator_commerce_documents').select('id,owner_id,application_kind,application_id,document_kind,storage_path,file_name,mime_type,file_size,created_at').order('created_at', { ascending: false }).limit(250),
   ]);
   if (sellerResult.error) throw sellerResult.error;
@@ -550,6 +638,9 @@ export async function listCommerceApplications(client: SupabaseClient): Promise<
       .filter((path): path is string => Boolean(path))
       .map((path) => documentsByPath.get(path))
       .filter((document): document is CommerceDocument => Boolean(document));
+  const creatorsById = new Map(
+    ((creatorResult.data as CreatorApplicationRow[] | null) ?? []).map((row) => [row.id, row] as const),
+  );
 
   return [
     ...((sellerResult.data as SellerApplicationRow[] | null) ?? []).map((row) => ({
@@ -565,7 +656,14 @@ export async function listCommerceApplications(client: SupabaseClient): Promise<
     ...((professionalResult.data as ProfessionalVerificationRow[] | null) ?? []).map((row) => ({
       kind: 'professional' as const,
       ...professionalFromRow(row),
-      documents: docsFor([row.credential_document_path, row.supporting_document_path]),
+      creatorIdentityDocumentPath: row.creator_application_id
+        ? creatorsById.get(row.creator_application_id)?.identity_document_path ?? null
+        : null,
+      documents: docsFor([
+        row.creator_application_id ? creatorsById.get(row.creator_application_id)?.identity_document_path ?? null : null,
+        row.credential_document_path,
+        row.supporting_document_path,
+      ]),
     })),
   ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }

@@ -27,7 +27,7 @@ const cartKeyForUser = (userId: string | null | undefined) =>
 const mediaBucket = "shop-media";
 const privateProductMediaBucket = "product-media";
 const productSelect =
-  "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position,storage_bucket)";
+  "id,storefront_id,title,slug,brand,price_minor,sale_price_minor,inventory,category,short_description,description,sku,status,cover_path,tags,search_keywords,seo_title,seo_description,llm_summary,creator_promotion_enabled,creator_commission_bps,return_window_days,storefronts!products_storefront_id_fkey(id,name,slug),product_media(path,position,storage_bucket)";
 
 type StorefrontRow = {
   id: string;
@@ -43,6 +43,9 @@ type StorefrontRow = {
   seo_title: string | null;
   seo_description: string | null;
   llm_summary: string | null;
+  creator_promotion_enabled: boolean;
+  creator_commission_bps: number;
+  return_window_days: number;
   indexable?: boolean;
   geo_enabled?: boolean;
 };
@@ -67,6 +70,9 @@ type ProductRow = {
   seo_title: string | null;
   seo_description: string | null;
   llm_summary: string | null;
+  creator_promotion_enabled: boolean;
+  creator_commission_bps: number;
+  return_window_days: number;
   storefronts:
     | {
         id: string;
@@ -212,6 +218,9 @@ const productFromRow = (
     seoTitle: row.seo_title,
     seoDescription: row.seo_description,
     llmSummary: row.llm_summary,
+    creatorPromotionEnabled: row.creator_promotion_enabled,
+    creatorCommissionBps: row.creator_commission_bps,
+    returnWindowDays: row.return_window_days,
   };
 };
 
@@ -349,6 +358,25 @@ export function createSupabaseShopRepository({
     },
 
     async getCart() {
+      if (user) {
+        const { data, error } = await client
+          .from("cart_items")
+          .select("product_id,quantity,creator_product_promotions(tracking_code)")
+          .order("updated_at", { ascending: false });
+        if (error) throw new Error(error.message);
+        return ((data as Array<{
+          product_id: string;
+          quantity: number;
+          creator_product_promotions:
+            | { tracking_code: string }[]
+            | { tracking_code: string }
+            | null;
+        }> | null) ?? []).map((row) => ({
+          productId: row.product_id,
+          quantity: row.quantity,
+          promotionCode: firstRelation(row.creator_product_promotions)?.tracking_code ?? null,
+        }));
+      }
       const raw = await AsyncStorage.getItem(cartKey);
       if (!raw) return [];
       try {
@@ -359,6 +387,29 @@ export function createSupabaseShopRepository({
     },
 
     async saveCart(lines) {
+      if (user) {
+        const current = await this.getCart();
+        const desired = new Map(lines.map((line) => [line.productId, line]));
+        for (const line of current) {
+          if (desired.has(line.productId)) continue;
+          const { error } = await client.rpc("upsert_creator_commerce_cart_item", {
+            p_product_id: line.productId,
+            p_quantity: 0,
+            p_tracking_code: null,
+          });
+          if (error) throw new Error(error.message);
+        }
+        for (const line of lines) {
+          const existing = current.find((item) => item.productId === line.productId);
+          const { error } = await client.rpc("upsert_creator_commerce_cart_item", {
+            p_product_id: line.productId,
+            p_quantity: line.quantity,
+            p_tracking_code: line.promotionCode ?? existing?.promotionCode ?? null,
+          });
+          if (error) throw new Error(error.message);
+        }
+        return;
+      }
       await AsyncStorage.setItem(cartKey, JSON.stringify(lines));
     },
 
@@ -732,36 +783,54 @@ export function createSupabaseShopRepository({
         .single();
       if (storefrontError) throw new Error(storefrontError.message);
 
-      const payload = {
-        id: draft.id,
-        storefront_id: storefrontData.id,
-        title: draft.title.trim(),
-        slug: slugify(draft.slug || draft.title),
-        brand: draft.brand.trim() || storefrontData.name,
-        category: draft.category,
-        price_minor: Math.max(0, draft.pricePaise),
-        inventory: Math.max(0, draft.inventory),
-        sku: draft.sku.trim(),
-        short_description: draft.shortDescription.trim(),
-        description: draft.description.trim(),
-        status: draft.status,
-        tags: draft.tags,
-        search_keywords: draft.keywords,
-        seo_title: draft.seoTitle.trim(),
-        seo_description: draft.seoDescription.trim(),
-        llm_summary: draft.llmSummary.trim(),
-        published_at:
-          draft.status === "active" ? new Date().toISOString() : null,
-      };
+      const saved = await client.rpc("save_creator_commerce_product", {
+        p_product_id: draft.id ?? null,
+        p_title: draft.title.trim(),
+        p_slug: slugify(draft.slug || draft.title),
+        p_category: draft.category,
+        p_price_minor: Math.max(0, draft.pricePaise),
+        p_sale_price_minor: null,
+        p_inventory: Math.max(0, draft.inventory),
+        p_sku: draft.sku.trim(),
+        p_short_description: draft.shortDescription.trim(),
+        p_description: draft.description.trim(),
+        p_creator_promotion_enabled: draft.creatorPromotionEnabled,
+        p_creator_commission_bps: draft.creatorPromotionEnabled ? draft.creatorCommissionBps : 0,
+        p_return_window_days: draft.returnWindowDays,
+      });
+      if (saved.error) throw new Error(saved.error.message);
+      const savedProduct = saved.data as ProductRow;
       const { data, error } = await client
         .from("products")
-        .upsert(payload, { onConflict: "id" })
+        .update({
+          brand: draft.brand.trim() || storefrontData.name,
+          tags: draft.tags,
+          search_keywords: draft.keywords,
+          seo_title: draft.seoTitle.trim(),
+          seo_description: draft.seoDescription.trim(),
+          llm_summary: draft.llmSummary.trim(),
+        })
+        .eq("id", savedProduct.id)
         .select(
           productSelect,
         )
         .single();
       if (error) throw new Error(error.message);
       return productFromRowWithMedia(client, data as ProductRow);
+    },
+
+    async publishProduct(productId) {
+      const { data, error } = await client.rpc("publish_creator_commerce_product", {
+        p_product_id: productId,
+      });
+      if (error) throw new Error(error.message);
+      const { data: productData, error: productError } = await client
+        .from("products")
+        .select(productSelect)
+        .eq("id", productId)
+        .single();
+      if (productError) throw new Error(productError.message);
+      return productFromRowWithMedia(client, (productData ?? data) as ProductRow);
     },
 
     async uploadProductMedia(_storefrontId, productId, assets) {

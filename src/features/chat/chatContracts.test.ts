@@ -100,6 +100,10 @@ test("migrations keep authoritative events and private media behind RLS", () => 
     new URL("../../../supabase/migrations/20260813103148_business_chat_unboxing_evidence_source.sql", import.meta.url),
     "utf8",
   );
+  const commerceFinalizationMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260817142344_seller_owned_commerce_rearchitecture.sql", import.meta.url),
+    "utf8",
+  );
 
   assert.match(orderMigration, /revoke\s+all\s+on\s+table\s+public\.commerce_order_chat_events/i);
   assert.match(orderMigration, /unique\s*\(order_id,\s*event_type\)/i);
@@ -110,4 +114,9 @@ test("migrations keep authoritative events and private media behind RLS", () => 
   assert.match(evidenceMigration, /evidence_source\s+in\s*\('live_capture',\s*'uploaded_file'\)/i);
   assert.match(evidenceMigration, /evidence_order\.status\s+in\s*\('delivered',\s*'return_requested'/i);
   assert.match(evidenceMigration, /evidence_item\.buyer_id\s*=\s*\(select auth\.uid\(\)\)/i);
+  assert.match(commerceFinalizationMigration, /commerce_evidence_capture_intents[\s\S]*enable row level security/i);
+  assert.match(commerceFinalizationMigration, /revoke insert on public\.commerce_order_evidence from authenticated/i);
+  assert.match(commerceFinalizationMigration, /seller_review_creator_commerce_return/i);
+  assert.match(commerceFinalizationMigration, /creator_commerce_private_order_participant_read/i);
+  assert.match(commerceFinalizationMigration, /get_public_creator_recommendations/i);
 });

@@ -5,8 +5,10 @@ import {
   canEditLifecycleProduct,
   canSubmitLifecycleProduct,
   formatMinor,
+  listCreatorCommissions,
   listAdminProductQueue,
   listCreatorMarketplaceProducts,
+  listMyPromotions,
   listSellerLifecycleProducts,
   reviewLifecycleProduct,
   saveSellerLifecycleProduct,
@@ -26,12 +28,12 @@ test('formatMinor renders INR minor units', () => {
   assert.equal(formatMinor(123456), '₹1,235');
 });
 
-test('seller edits and submits only mutable product states', () => {
-  for (const status of ['draft', 'changes_required', 'rejected'] as const) {
+test('seller can edit and publish Seller-controlled product states', () => {
+  for (const status of ['draft', 'changes_required', 'rejected', 'approved'] as const) {
     assert.equal(canEditLifecycleProduct(status), true);
     assert.equal(canSubmitLifecycleProduct(status), true);
   }
-  for (const status of ['submitted', 'under_review', 'approved', 'suspended', 'archived'] as const) {
+  for (const status of ['submitted', 'under_review', 'suspended', 'archived'] as const) {
     assert.equal(canEditLifecycleProduct(status), false);
     assert.equal(canSubmitLifecycleProduct(status), false);
   }
@@ -56,7 +58,42 @@ test('seller fulfillment exposes only the next forward transition', () => {
   assert.deepEqual(sellerFulfillmentDecisionsFor('delivered'), []);
 });
 
-test('approved seller provisions a storefront and one draft reaches admin approval and creator discovery', async () => {
+test('Creator Centre queries explicitly scope promotions and commissions to the signed-in creator', async () => {
+  const creatorId = '5574e549-7d97-4f43-a2cd-dcb5eb9e4a7a';
+  const calls: Array<{ table: string; column: string; value: unknown }> = [];
+  const promotionRow = {
+    id: 'promotion-1', product_id: 'product-1', creator_id: creatorId, tracking_code: 'creator-code', status: 'active', commission_bps_snapshot: 1000,
+    products: { title: 'Seller product', slug: 'seller-product', storefronts: { name: 'Seller store', slug: 'seller-store' } },
+  };
+  const commissionRow = {
+    id: 'commission-1', status: 'pending', commission_minor: 6000, eligible_item_minor: 59900, order_id: 'order-1', created_at: '2026-08-17T00:00:00.000Z',
+    order_items: { product_title_snapshot: 'Seller product' },
+  };
+  const client = {
+    auth: { getUser: async () => ({ data: { user: { id: creatorId } }, error: null }) },
+    from: (table: string) => {
+      const builder: any = {
+        select: () => builder,
+        eq: (column: string, value: unknown) => { calls.push({ table, column, value }); return builder; },
+        order: () => builder,
+        limit: () => builder,
+        then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+          Promise.resolve({ data: table === 'creator_product_promotions' ? [promotionRow] : [commissionRow], error: null }).then(resolve, reject),
+      };
+      return builder;
+    },
+  } as any;
+
+  const [promotions, commissions] = await Promise.all([listMyPromotions(client), listCreatorCommissions(client)]);
+  assert.equal(promotions[0]?.creatorId, creatorId);
+  assert.equal(commissions[0]?.commissionMinor, 6000);
+  assert.deepEqual(calls, [
+    { table: 'creator_product_promotions', column: 'creator_id', value: creatorId },
+    { table: 'creator_commissions', column: 'creator_id', value: creatorId },
+  ]);
+});
+
+test('approved seller provisions a storefront, publishes directly, and remains subject to admin moderation', async () => {
   const sellerId = '272d8b05-da97-4d4c-8294-be45b7958ec9';
   const storefrontId = 'ab78991c-29a0-4286-aa82-201e88ae1b15';
   const productId = '0282490e-1a3f-487d-9778-997d349a425c';
@@ -108,7 +145,7 @@ test('approved seller provisions a storefront and one draft reaches admin approv
     { data: baseProduct, error: null },
     { data: storefront, error: null },
     { data: [baseProduct], error: null },
-    { data: [{ ...baseProduct, product_approval_status: 'submitted' }], error: null },
+    { data: [{ ...baseProduct, status: 'active', product_approval_status: 'approved' }], error: null },
     {
       data: [{ ...baseProduct, status: 'active', product_approval_status: 'approved' }],
       error: null,
@@ -123,10 +160,10 @@ test('approved seller provisions a storefront and one draft reaches admin approv
       { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } },
     ],
     submit_creator_commerce_product: [
-      { data: { ...baseProduct, product_approval_status: 'submitted' }, error: null },
+      { data: { ...baseProduct, status: 'active', product_approval_status: 'approved' }, error: null },
     ],
     review_creator_commerce_product: [
-      { data: { ...baseProduct, product_approval_status: 'under_review' }, error: null },
+      { data: { ...baseProduct, status: 'draft', product_approval_status: 'suspended' }, error: null },
       { data: { ...baseProduct, status: 'active', product_approval_status: 'approved' }, error: null },
     ],
   };
@@ -184,9 +221,9 @@ test('approved seller provisions a storefront and one draft reaches admin approv
   const reloaded = await listSellerLifecycleProducts(client);
   assert.equal(reloaded.length, 1);
   assert.equal(reloaded[0]?.id, productId);
-  assert.equal((await submitLifecycleProduct(client, productId)).approvalStatus, 'submitted');
-  assert.equal((await listAdminProductQueue(client))[0]?.approvalStatus, 'submitted');
-  assert.equal((await reviewLifecycleProduct(client, productId, 'under_review', '')).approvalStatus, 'under_review');
+  assert.equal((await submitLifecycleProduct(client, productId)).approvalStatus, 'approved');
+  assert.equal((await listAdminProductQueue(client))[0]?.approvalStatus, 'approved');
+  assert.equal((await reviewLifecycleProduct(client, productId, 'suspended', 'Moderation test')).approvalStatus, 'suspended');
   assert.equal((await reviewLifecycleProduct(client, productId, 'approved', '')).approvalStatus, 'approved');
   assert.equal((await listCreatorMarketplaceProducts(client))[0]?.approvalStatus, 'approved');
   assert.equal(tableResponses.length, 0);

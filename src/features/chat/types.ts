@@ -58,7 +58,7 @@ export type OrderChatItem = {
 
 export type OrderChatEvidence = {
   id: string;
-  orderItemId: string;
+  orderItemId?: string;
   filename: string;
   mimeType: string;
   source: 'live_capture' | 'uploaded_file';
@@ -87,9 +87,14 @@ export type OrderChatEvent = {
   customerNote?: string;
   liveOrderStatus?: string;
   viewerRole?: 'buyer' | 'seller';
+  packingEvidence?: OrderChatEvidence[];
   unboxingEvidence?: OrderChatEvidence[];
+  canSubmitPackingEvidence?: boolean;
   canSubmitUnboxingEvidence?: boolean;
   canRequestReturn?: boolean;
+  returnRequestId?: string;
+  returnStatus?: string;
+  canReviewReturn?: boolean;
 };
 
 export type ChatAttachmentSource = 'camera_capture' | 'gallery' | 'document_picker' | 'document_scan';
@@ -227,6 +232,20 @@ export type ChatDataSource = {
     filename: string;
     mimeType: string;
     source: 'live_capture' | 'uploaded_file';
+  }): Promise<void>;
+  submitOrderEvidence?(input: {
+    orderId: string;
+    orderItemId?: string | null;
+    kind: 'packing' | 'unboxing';
+    bytes: ArrayBuffer;
+    filename: string;
+    mimeType: string;
+    source: 'live_capture' | 'uploaded_file';
+  }): Promise<void>;
+  reviewOrderReturn?(input: {
+    returnRequestId: string;
+    decision: 'approved' | 'rejected' | 'under_review';
+    reason?: string;
   }): Promise<void>;
   submitOrderReturn?(input: { orderItemId: string; reason: string }): Promise<void>;
   sendLocation?(input: { conversationId: string; location: ChatLocation }): Promise<ChatMessage>;

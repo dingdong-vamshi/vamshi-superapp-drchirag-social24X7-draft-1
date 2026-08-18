@@ -76,9 +76,17 @@ export type ShopProduct = {
   seoTitle?: string | null;
   seoDescription?: string | null;
   llmSummary?: string | null;
+  creatorPromotionEnabled?: boolean;
+  creatorCommissionBps?: number;
+  returnWindowDays?: number;
 };
 
-export type CartLine = { productId: string; quantity: number };
+export type CartLine = {
+  productId: string;
+  quantity: number;
+  /** Creator referral retained by the authoritative cart when present. */
+  promotionCode?: string | null;
+};
 
 export type SellerApplicationDraft = {
   legalName: string;
@@ -124,6 +132,9 @@ export type ProductDraft = {
   seoTitle: string;
   seoDescription: string;
   llmSummary: string;
+  creatorPromotionEnabled: boolean;
+  creatorCommissionBps: number;
+  returnWindowDays: number;
 };
 
 export type SellerDashboard = {
@@ -218,6 +229,7 @@ export interface ShopRepository {
   ): Promise<StorefrontSummary>;
   saveStorefront(draft: StorefrontDraft): Promise<StorefrontSummary>;
   saveProduct(draft: ProductDraft): Promise<ShopProduct>;
+  publishProduct(productId: string): Promise<ShopProduct>;
   uploadProductMedia(
     storefrontId: string,
     productId: string,
@@ -484,6 +496,11 @@ export const localShopRepository: ShopRepository = {
   async saveProduct() {
     throw new Error(
       "Product management requires a real Social 24x7 account connected to Supabase.",
+    );
+  },
+  async publishProduct() {
+    throw new Error(
+      "Product publishing requires a real Social 24x7 account connected to Supabase.",
     );
   },
   async uploadProductMedia(_storefrontId, _productId, assets) {

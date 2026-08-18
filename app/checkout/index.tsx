@@ -7,8 +7,12 @@ import { useAuth } from "../../src/lib/AuthContext";
 import { supabase } from "../../src/lib/supabase";
 
 export default function CheckoutPage() {
-  const { user } = useAuth();
-  const repository = useMemo(() => supabase ? createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null }) : localShopRepository, [user]);
-  if (!supabase) return null;
+  const { initialized, user } = useAuth();
+  const repository = useMemo(() => {
+    if (!supabase) return localShopRepository;
+    if (!initialized) return null;
+    return createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null });
+  }, [initialized, user]);
+  if (!supabase || !repository) return null;
   return <CheckoutScreen repository={repository} client={supabase} onBack={() => router.back()} onSuccess={(checkoutId, paymentMethod, totalMinor) => router.replace({ pathname: "/checkout/success", params: { checkoutId, paymentMethod, totalMinor: String(totalMinor) } })} />;
 }

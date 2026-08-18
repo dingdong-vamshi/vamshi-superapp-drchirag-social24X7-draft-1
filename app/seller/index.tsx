@@ -71,6 +71,7 @@ export default function SellerStudioPage() {
   return (
     <SellerStudioScreen
       repository={repository}
+      persistenceKey={user ? `seller-studio-work:${user.id}` : undefined}
       pickProductImages={async () => {
         const permission =
           await ImagePicker.requestMediaLibraryPermissionsAsync();

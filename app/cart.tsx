@@ -7,8 +7,12 @@ import { useAuth } from "../src/lib/AuthContext";
 import { supabase } from "../src/lib/supabase";
 
 export default function CartPage() {
-  const { user } = useAuth();
-  const repository = useMemo(() => supabase ? createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null }) : localShopRepository, [user]);
-  if (!supabase) return null;
+  const { initialized, user } = useAuth();
+  const repository = useMemo(() => {
+    if (!supabase) return localShopRepository;
+    if (!initialized) return null;
+    return createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null });
+  }, [initialized, user]);
+  if (!supabase || !repository) return null;
   return <CartScreen repository={repository} client={supabase} onBack={() => router.back()} onContinue={() => router.push("/checkout")} />;
 }

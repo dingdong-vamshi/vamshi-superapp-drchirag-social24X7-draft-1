@@ -184,7 +184,7 @@ export function SellerLifecycleScreen() {
     try {
       await submitLifecycleProduct(supabase, productId);
       await load();
-      setFeedback({ tone: 'success', message: 'Submitted for review. The product remains visible below.' });
+      setFeedback({ tone: 'success', message: 'Published live. No separate Product approval is required for an approved Seller.' });
     } catch (cause) {
       const message = messageFor(cause);
       setFeedback({ tone: 'error', message });
@@ -291,12 +291,12 @@ export function SellerLifecycleScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Header title="Seller product studio" subtitle="Create products, set creator commission, submit for admin approval, then fulfil orders." />
+      <Header title="Seller product studio" subtitle="Create Products, set Creator commission, publish directly, then fulfil orders." />
       <StateBanner state={state} error={error} onRetry={load} />
       <MutationFeedback feedback={feedback} />
 
       <Panel title={editingId ? 'Edit product draft' : 'New product'}>
-        <Text style={styles.meta}>Save the draft first. You can then attach product media in the existing advanced Seller Studio and submit the same product for approval.</Text>
+        <Text style={styles.meta}>Save the draft first, attach Product media in Advanced Seller Studio, then publish the same Product live.</Text>
         <Pressable accessibilityRole="button" onPress={() => router.push('/seller')} style={styles.secondaryButton}>
           <Text style={styles.secondaryButtonText}>Open advanced media studio</Text>
         </Pressable>
@@ -345,7 +345,7 @@ export function SellerLifecycleScreen() {
             <View style={styles.actionRow}>
               <SmallButton label="Edit" disabled={saving || !canEditLifecycleProduct(product.approvalStatus)} onPress={() => edit(product)} />
               <SmallButton label={product.mediaItems.length ? 'Replace images' : 'Add images'} disabled={saving || !canEditLifecycleProduct(product.approvalStatus)} onPress={() => void replaceProductImages(product)} />
-              <SmallButton label="Submit for approval" disabled={saving || !canSubmitLifecycleProduct(product.approvalStatus)} onPress={() => void submit(product.id)} />
+              <SmallButton label="Publish Product" disabled={saving || !canSubmitLifecycleProduct(product.approvalStatus)} onPress={() => void submit(product.id)} />
             </View>
             {product.mediaItems.length ? (
               <View style={styles.mediaRow}>
@@ -841,8 +841,8 @@ export function AdminProductReviewPanel() {
     <View style={styles.panel}>
       <View style={styles.rowBetween}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.panelTitle}>Product approval queue</Text>
-          <Text style={styles.meta}>Admin-controlled product review. Approval makes a product live; suspend/archive removes it from live shop.</Text>
+          <Text style={styles.panelTitle}>Product moderation</Text>
+          <Text style={styles.meta}>Approved Sellers publish directly. Admin can inspect live/history states, suspend unsafe Products, or reinstate them.</Text>
         </View>
         <Pressable accessibilityRole="button" disabled={loading} onPress={() => void load()} style={styles.iconButton}>
           {loading ? <ActivityIndicator color="#08713d" /> : <RefreshCcw size={16} color="#08713d" />}
@@ -888,7 +888,7 @@ export function AdminProductReviewPanel() {
             ))}
           </View>
         </View>
-      )) : <Text style={styles.emptyText}>No product submissions yet.</Text>}
+      )) : <Text style={styles.emptyText}>No Products require moderation.</Text>}
     </View>
   );
 }

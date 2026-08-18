@@ -796,8 +796,6 @@ export function AdminReviewScreen() {
           onReview={review}
         />
       )) : <Text style={styles.emptyText}>No commerce applications yet.</Text>}
-      <AdminProductReviewPanel />
-      <AdminLifecycleOperationsPanel />
     </ScrollView>
   );
 }
@@ -859,6 +857,7 @@ function AdminCard({
               label={action.label}
               processing={busyDecision === action.decision}
               destructive={action.destructive}
+              primary={action.decision === 'approved'}
               disabled={busy}
               onPress={() => onReview(item, action.decision)}
             />
@@ -922,6 +921,7 @@ function evidenceForApplication(item: CommerceApplicationSummary): EvidenceAsset
     : item.kind === 'creator'
       ? [fromPath('Government identity evidence', item.identityDocumentPath)]
       : [
+          fromPath('Government identity evidence', item.creatorIdentityDocumentPath ?? null),
           fromPath('Credential document', item.credentialDocumentPath),
           fromPath('Supporting document', item.supportingDocumentPath),
         ];
@@ -1166,10 +1166,10 @@ function StatusPill({ status }: { status: CommerceApprovalStatus }) {
   );
 }
 
-function ReviewButton({ label, destructive, disabled, processing, onPress }: { label: string; destructive?: boolean; disabled?: boolean; processing?: boolean; onPress: () => void }) {
+function ReviewButton({ label, destructive, primary, disabled, processing, onPress }: { label: string; destructive?: boolean; primary?: boolean; disabled?: boolean; processing?: boolean; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.reviewButton, destructive && styles.reviewButtonDestructive, disabled && styles.disabledButton]}>
-      {processing ? <ActivityIndicator color={destructive ? '#b42318' : '#08713d'} /> : <Text style={[styles.reviewButtonText, destructive && styles.reviewButtonTextDestructive]}>{label}</Text>}
+    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.reviewButton, primary && styles.reviewButtonPrimary, destructive && styles.reviewButtonDestructive, disabled && styles.disabledButton]}>
+      {processing ? <ActivityIndicator color={primary ? '#fff' : destructive ? '#b42318' : '#08713d'} /> : <Text style={[styles.reviewButtonText, primary && styles.reviewButtonTextPrimary, destructive && styles.reviewButtonTextDestructive]}>{label}</Text>}
     </Pressable>
   );
 }
@@ -1325,8 +1325,10 @@ const styles = StyleSheet.create({
   copyText: { color: '#08713d', fontSize: 12, fontWeight: '900' },
   actionRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   reviewButton: { flexGrow: 1, minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: '#dcefe2', backgroundColor: '#eff9f2', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  reviewButtonPrimary: { minHeight: 50, backgroundColor: '#08713d', borderColor: '#08713d', shadowColor: '#08713d', shadowOpacity: 0.2, shadowRadius: 8, elevation: 3 },
   reviewButtonDestructive: { backgroundColor: '#fff1f0', borderColor: '#ffd6d2' },
   reviewButtonText: { color: '#08713d', fontSize: 12, fontWeight: '900' },
+  reviewButtonTextPrimary: { color: '#ffffff', fontSize: 14 },
   reviewButtonTextDestructive: { color: '#b42318' },
   emptyText: { color: '#667085', fontSize: 14, lineHeight: 21, padding: 12 },
   errorCard: { gap: 10, borderRadius: 18, backgroundColor: '#fff1f0', borderWidth: 1, borderColor: '#ffd6d2', padding: 14 },

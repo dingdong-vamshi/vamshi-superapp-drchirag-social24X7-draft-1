@@ -81,6 +81,8 @@ export type CreatorPromotion = {
   commissionBpsSnapshot: number;
   productTitle: string;
   storefrontName: string;
+  productSlug: string;
+  storefrontSlug: string;
 };
 
 export type CartLine = {
@@ -344,7 +346,7 @@ export const formatMinor = (value: number) =>
 export const slugifyCommerce = (value: string) =>
   value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 62) || 'product';
 
-export const sellerEditableProductStatuses: ProductApprovalStatus[] = ['draft', 'changes_required', 'rejected'];
+export const sellerEditableProductStatuses: ProductApprovalStatus[] = ['draft', 'changes_required', 'rejected', 'approved'];
 
 export const canEditLifecycleProduct = (status: ProductApprovalStatus) =>
   sellerEditableProductStatuses.includes(status);
@@ -413,7 +415,7 @@ export async function saveSellerLifecycleProduct(client: SupabaseClient, input: 
       .single();
     if (existingError) throw new Error(existingError.message);
     if (!canEditLifecycleProduct(existing.product_approval_status as ProductApprovalStatus)) {
-      throw new Error('Only draft, changes-required, or rejected products can be edited.');
+      throw new Error('Only Seller-controlled Product states can be edited.');
     }
   }
 
@@ -588,24 +590,32 @@ export async function createPromotion(client: SupabaseClient, productId: string)
     commissionBpsSnapshot: row.commission_bps_snapshot,
     productTitle: 'Promotion',
     storefrontName: 'Storefront',
+    productSlug: '',
+    storefrontSlug: '',
   };
 }
 
-export async function recordCreatorPromotionClick(client: SupabaseClient, trackingCode: string) {
+export async function recordCreatorPromotionClick(
+  client: SupabaseClient,
+  trackingCode: string,
+  source = 'buyer_link',
+) {
   const code = trackingCode.trim();
   if (!code) throw new Error('A promotion tracking code is required.');
   const { data, error } = await client.rpc('record_creator_promotion_click', {
     p_tracking_code: code,
-    p_source: 'buyer_link',
+    p_source: source,
   });
   if (error) throw new Error(error.message);
   return data as string;
 }
 
 export async function listMyPromotions(client: SupabaseClient): Promise<CreatorPromotion[]> {
+  const userId = await requireSupabaseUserId(client);
   const { data, error } = await client
     .from('creator_product_promotions')
-    .select('id,product_id,creator_id,tracking_code,status,commission_bps_snapshot,products(title,storefronts(name))')
+    .select('id,product_id,creator_id,tracking_code,status,commission_bps_snapshot,products(title,slug,storefronts(name,slug))')
+    .eq('creator_id', userId)
     .order('updated_at', { ascending: false })
     .limit(100);
   if (error) throw new Error(error.message);
@@ -618,6 +628,8 @@ export async function listMyPromotions(client: SupabaseClient): Promise<CreatorP
     commissionBpsSnapshot: row.commission_bps_snapshot,
     productTitle: first(row.products)?.title ?? row.products?.title ?? 'Product',
     storefrontName: first(first(row.products)?.storefronts)?.name ?? first(row.products?.storefronts)?.name ?? 'Storefront',
+    productSlug: first(row.products)?.slug ?? row.products?.slug ?? '',
+    storefrontSlug: first(first(row.products)?.storefronts)?.slug ?? first(row.products?.storefronts)?.slug ?? '',
   }));
 }
 
@@ -652,7 +664,7 @@ export async function listLifecycleCart(client: SupabaseClient): Promise<CartLin
 
 export async function replaceLifecycleCart(
   client: SupabaseClient,
-  lines: Array<{ productId: string; quantity: number }>,
+  lines: Array<{ productId: string; quantity: number; promotionCode?: string | null }>,
 ) {
   const current = await listLifecycleCart(client);
   const desired = new Map(lines.map((line) => [line.productId, line.quantity]));
@@ -662,7 +674,7 @@ export async function replaceLifecycleCart(
       .map((line) => addLifecycleCartItem(client, line.productId, 0, null)),
   );
   for (const line of lines) {
-    await addLifecycleCartItem(client, line.productId, line.quantity, null);
+    await addLifecycleCartItem(client, line.productId, line.quantity, line.promotionCode ?? null);
   }
 }
 
@@ -917,9 +929,11 @@ export async function uploadLifecycleOrderEvidence(
 }
 
 export async function listCreatorCommissions(client: SupabaseClient): Promise<CreatorCommission[]> {
+  const userId = await requireSupabaseUserId(client);
   const { data, error } = await client
     .from('creator_commissions')
     .select('id,status,commission_minor,eligible_item_minor,order_id,created_at,order_items(product_title_snapshot)')
+    .eq('creator_id', userId)
     .order('created_at', { ascending: false })
     .limit(100);
   if (error) throw new Error(error.message);

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Alert,
@@ -59,6 +60,7 @@ import SellerAnalyticsCharts from "./SellerAnalyticsCharts";
 type Props = {
   repository: ShopRepository;
   pickProductImages?: () => Promise<UploadAsset[]>;
+  persistenceKey?: string;
 };
 
 type SellerSection =
@@ -172,6 +174,9 @@ const defaultProductDraft: ProductDraft = {
   seoTitle: "",
   seoDescription: "",
   llmSummary: "",
+  creatorPromotionEnabled: true,
+  creatorCommissionBps: 1000,
+  returnWindowDays: 7,
 };
 
 const sellerHeroIllustration = require("../../../assets/images/seller-central-hero-v1.png");
@@ -187,6 +192,7 @@ const sellerSectionIllustrations = {
 export function SellerStudioScreen({
   repository,
   pickProductImages,
+  persistenceKey,
 }: Props) {
   const [dashboard, setDashboard] = useState<SellerDashboard | null>(null);
   const [sellerDraft, setSellerDraft] =
@@ -203,6 +209,7 @@ export function SellerStudioScreen({
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeSection, setActiveSection] =
     useState<SellerSection>("overview");
+  const [draftRestored, setDraftRestored] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [orders, setOrders] = useState<SellerOrder[]>([]);
   const [analytics, setAnalytics] = useState<SellerAnalytics | null>(null);
@@ -215,6 +222,47 @@ export function SellerStudioScreen({
     useState<BusinessConversationSummary | null>(null);
   const [businessMessages, setBusinessMessages] = useState<BusinessMessage[]>([]);
   const [businessMessageDraft, setBusinessMessageDraft] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const restoreProductWork = async () => {
+      if (!persistenceKey) {
+        if (active) setDraftRestored(true);
+        return;
+      }
+      try {
+        const saved = await AsyncStorage.getItem(persistenceKey);
+        if (!saved || !active) return;
+        const parsed = JSON.parse(saved) as {
+          activeSection?: SellerSection;
+          productDraft?: Partial<ProductDraft>;
+        };
+        if (parsed.productDraft) {
+          setProductDraft({ ...defaultProductDraft, ...parsed.productDraft });
+          if (parsed.productDraft.title || parsed.productDraft.description || parsed.productDraft.sku) {
+            setProductSaveNotice({ tone: "success", message: "Your unfinished Product form was restored." });
+          }
+        }
+        if (parsed.activeSection && navItems.some((item) => item.key === parsed.activeSection)) {
+          setActiveSection(parsed.activeSection);
+        }
+      } catch {
+        // A corrupt local draft should never block Seller Studio.
+      } finally {
+        if (active) setDraftRestored(true);
+      }
+    };
+    void restoreProductWork();
+    return () => { active = false; };
+  }, [persistenceKey]);
+
+  useEffect(() => {
+    if (!persistenceKey || !draftRestored) return;
+    const timer = setTimeout(() => {
+      void AsyncStorage.setItem(persistenceKey, JSON.stringify({ activeSection, productDraft }));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [activeSection, draftRestored, persistenceKey, productDraft]);
 
   useEffect(() => {
     const loadSellerDashboard = async () => {
@@ -410,6 +458,9 @@ export function SellerStudioScreen({
       seoTitle: product.seoTitle ?? "",
       seoDescription: product.seoDescription ?? "",
       llmSummary: product.llmSummary ?? "",
+      creatorPromotionEnabled: product.creatorPromotionEnabled ?? true,
+      creatorCommissionBps: product.creatorCommissionBps ?? 1000,
+      returnWindowDays: product.returnWindowDays ?? 7,
     });
     setSelectedAssets([]);
     setProductSaveNotice(null);
@@ -418,6 +469,21 @@ export function SellerStudioScreen({
 
   const saveProduct = async () => {
     setProductSaveNotice(null);
+    if (!productDraft.id && selectedAssets.length === 0) {
+      const message = "Add at least one Product image before publishing.";
+      setProductSaveNotice({ tone: "error", message });
+      Alert.alert("Product image required", message);
+      return;
+    }
+    if (
+      productDraft.creatorPromotionEnabled &&
+      (productDraft.creatorCommissionBps < 500 || productDraft.creatorCommissionBps > 7000)
+    ) {
+      const message = "Creator commission must be between 5% and 70%.";
+      setProductSaveNotice({ tone: "error", message });
+      Alert.alert("Commission out of range", message);
+      return;
+    }
     setBusy(true);
     try {
       const product = await repository.saveProduct({
@@ -433,18 +499,19 @@ export function SellerStudioScreen({
         );
         await repository.replaceProductMedia(product.id, media);
       }
+      await repository.publishProduct(product.id);
       setProductDraft(defaultProductDraft);
       setSelectedAssets([]);
       setProductSaveNotice({
         tone: "success",
         message: selectedAssets.length
-          ? `Product and ${selectedAssets.length} media item(s) saved.`
-          : "Product saved.",
+          ? `Product and ${selectedAssets.length} media item(s) published live.`
+          : "Product published live.",
       });
       refresh();
       Alert.alert(
         "Catalog updated",
-        `${product.name} is ready inside Social Chat 24/7 Shop.`,
+        `${product.name} is live in Shop without a separate Product approval step.`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Please try again.";
@@ -1048,6 +1115,44 @@ export function SellerStudioScreen({
                       }))
                     }
                   />
+                  <View style={styles.commissionPanel}>
+                    <View style={styles.commissionHeadingRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.previewTitle}>Creator promotion</Text>
+                        <Text style={styles.previewBody}>Let approved Creators promote this Product using tracked links.</Text>
+                      </View>
+                      <Switch
+                        value={productDraft.creatorPromotionEnabled}
+                        onValueChange={(value) => setProductDraft((current) => ({
+                          ...current,
+                          creatorPromotionEnabled: value,
+                          creatorCommissionBps: value ? Math.max(current.creatorCommissionBps, 500) : 0,
+                        }))}
+                        trackColor={{ false: "#d8e1dc", true: "#a7e2c2" }}
+                        thumbColor={productDraft.creatorPromotionEnabled ? green : "#ffffff"}
+                      />
+                    </View>
+                    {productDraft.creatorPromotionEnabled ? (
+                      <Field
+                        label="Creator commission % (5–70)"
+                        value={String(productDraft.creatorCommissionBps / 100)}
+                        keyboardType="numeric"
+                        onChangeText={(value) => setProductDraft((current) => ({
+                          ...current,
+                          creatorCommissionBps: Math.round(Number(value.replace(/[^0-9.]/g, "") || 0) * 100),
+                        }))}
+                      />
+                    ) : null}
+                    <Field
+                      label="Return window days"
+                      value={String(productDraft.returnWindowDays)}
+                      keyboardType="numeric"
+                      onChangeText={(value) => setProductDraft((current) => ({
+                        ...current,
+                        returnWindowDays: Math.max(0, Math.min(30, Number(value.replace(/\D+/g, "") || 0))),
+                      }))}
+                    />
+                  </View>
 
                   <PreviewCard
                     title="Media"
@@ -2333,6 +2438,8 @@ const styles = StyleSheet.create({
   searchPreviewTitle: { color: "#1558d6", fontSize: 18, fontWeight: "700" },
   searchPreviewUrl: { color: "#1f7a34", fontSize: 12, marginTop: 4 },
   searchPreviewBody: { color: "#4a5564", fontSize: 13, lineHeight: 20, marginTop: 8 },
+  commissionPanel: { gap: 12, borderWidth: 1, borderColor: line, borderRadius: 14, padding: 14, backgroundColor: mint },
+  commissionHeadingRow: { flexDirection: "row", alignItems: "center", gap: 14 },
   operationsGrid: { flexDirection: "row", gap: 18, flexWrap: "wrap" },
   infoRow: {
     flexDirection: "row",

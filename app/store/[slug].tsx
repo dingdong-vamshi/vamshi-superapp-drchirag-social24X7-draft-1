@@ -19,12 +19,13 @@ import { useAuth } from "../../src/lib/AuthContext";
 
 export default function StorefrontPage() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
+  const { initialized, user } = useAuth();
   const repository = useMemo(
     () =>
-      supabase
-        ? createSupabaseShopRepository({ client: supabase, user: null })
+      supabase && initialized
+        ? createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null })
         : null,
-    [],
+    [initialized, user],
   );
   const [loading, setLoading] = useState(true);
   const [storefront, setStorefront] = useState<StorefrontSummary | null>(null);
@@ -32,7 +33,6 @@ export default function StorefrontPage() {
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [savingCart, setSavingCart] = useState(false);
-  const { user } = useAuth();
 
   useEffect(() => {
     if (!slug || !repository) return;

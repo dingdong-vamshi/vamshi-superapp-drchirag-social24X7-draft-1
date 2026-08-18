@@ -1,3 +1,3 @@
-import { CommerceHomeScreen } from '../../../src/features/creatorCommerce/CreatorCommerceScreens';
+import { CommerceHomeScreen } from '../../../src/features/creatorCommerce/RedesignedCommerceScreens';
 
 export default CommerceHomeScreen;

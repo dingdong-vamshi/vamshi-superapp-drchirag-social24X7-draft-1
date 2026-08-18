@@ -133,11 +133,19 @@ type OrderStateRow = {
 type OrderEvidenceRow = {
   id: string;
   order_id: string;
-  order_item_id: string;
+  order_item_id: string | null;
+  evidence_kind: 'packing' | 'unboxing';
   storage_path: string;
   file_name: string | null;
   mime_type: string | null;
   evidence_source: 'live_capture' | 'uploaded_file';
+  created_at: string;
+};
+
+type OrderReturnRow = {
+  id: string;
+  order_id: string;
+  status: string;
   created_at: string;
 };
 
@@ -504,41 +512,55 @@ export const createSupabaseChatRepository = ({
 
     const orderIds = unique(hydrated.flatMap((message) => message.order?.orderId ? [message.order.orderId] : []));
     if (orderIds.length) {
-      const [ordersResult, evidenceResult] = await Promise.all([
+      const [ordersResult, evidenceResult, returnResult] = await Promise.all([
         client.from('orders').select('id,status,customer_id').in('id', orderIds),
         client
           .from('commerce_order_evidence')
-          .select('id,order_id,order_item_id,storage_path,file_name,mime_type,evidence_source,created_at')
+          .select('id,order_id,order_item_id,evidence_kind,storage_path,file_name,mime_type,evidence_source,created_at')
           .in('order_id', orderIds)
-          .eq('evidence_kind', 'unboxing')
+          .order('created_at', { ascending: false }),
+        client
+          .from('return_requests')
+          .select('id,order_id,status,created_at')
+          .in('order_id', orderIds)
           .order('created_at', { ascending: false }),
       ]);
       if (ordersResult.error) throw new Error(ordersResult.error.message);
       if (evidenceResult.error) throw new Error(evidenceResult.error.message);
+      if (returnResult.error) throw new Error(returnResult.error.message);
       const orderStates = new Map(((ordersResult.data as OrderStateRow[] | null) ?? []).map((order) => [order.id, order]));
       const evidenceRows = (evidenceResult.data as OrderEvidenceRow[] | null) ?? [];
+      const returnRows = (returnResult.data as OrderReturnRow[] | null) ?? [];
       const signed = evidenceRows.length
         ? await client.storage.from('creator-commerce-private').createSignedUrls(evidenceRows.map((evidence) => evidence.storage_path), 3600)
         : { data: [], error: null };
       if (signed.error) throw new Error(signed.error.message);
-      const evidenceByOrder = new Map<string, NonNullable<ChatMessage['order']>['unboxingEvidence']>();
+      const packingByOrder = new Map<string, NonNullable<ChatMessage['order']>['packingEvidence']>();
+      const unboxingByOrder = new Map<string, NonNullable<ChatMessage['order']>['unboxingEvidence']>();
       evidenceRows.forEach((evidence, index) => {
-        const next = evidenceByOrder.get(evidence.order_id) ?? [];
+        const target = evidence.evidence_kind === 'packing' ? packingByOrder : unboxingByOrder;
+        const next = target.get(evidence.order_id) ?? [];
         next.push({
           id: evidence.id,
-          orderItemId: evidence.order_item_id,
-          filename: evidence.file_name || 'Unboxing evidence',
+          orderItemId: evidence.order_item_id ?? undefined,
+          filename: evidence.file_name || (evidence.evidence_kind === 'packing' ? 'Packing evidence' : 'Unboxing evidence'),
           mimeType: evidence.mime_type || 'application/octet-stream',
           source: evidence.evidence_source,
           createdAt: evidence.created_at,
           signedUrl: signed.data?.[index]?.signedUrl ?? undefined,
         });
-        evidenceByOrder.set(evidence.order_id, next);
+        target.set(evidence.order_id, next);
+      });
+      const latestReturnByOrder = new Map<string, OrderReturnRow>();
+      returnRows.forEach((request) => {
+        if (!latestReturnByOrder.has(request.order_id)) latestReturnByOrder.set(request.order_id, request);
       });
       hydrated = hydrated.map((message) => {
         if (!message.order) return message;
         const live = orderStates.get(message.order.orderId);
-        const evidence = evidenceByOrder.get(message.order.orderId) ?? [];
+        const packingEvidence = packingByOrder.get(message.order.orderId) ?? [];
+        const unboxingEvidence = unboxingByOrder.get(message.order.orderId) ?? [];
+        const returnRequest = latestReturnByOrder.get(message.order.orderId);
         const viewerRole = live?.customer_id === viewerId ? 'buyer' : 'seller';
         const liveStatus = live?.status ?? message.order.orderStatus;
         return {
@@ -547,9 +569,14 @@ export const createSupabaseChatRepository = ({
             ...message.order,
             liveOrderStatus: liveStatus,
             viewerRole,
-            unboxingEvidence: evidence,
+            packingEvidence,
+            unboxingEvidence,
+            canSubmitPackingEvidence: viewerRole === 'seller' && ['placed', 'confirmed', 'processing'].includes(liveStatus) && packingEvidence.length === 0,
             canSubmitUnboxingEvidence: viewerRole === 'buyer' && liveStatus === 'delivered',
-            canRequestReturn: viewerRole === 'buyer' && liveStatus === 'delivered' && evidence.length > 0,
+            canRequestReturn: viewerRole === 'buyer' && liveStatus === 'delivered' && unboxingEvidence.length > 0 && !returnRequest,
+            returnRequestId: returnRequest?.id,
+            returnStatus: returnRequest?.status,
+            canReviewReturn: viewerRole === 'seller' && returnRequest?.status === 'submitted',
           },
         };
       });
@@ -816,6 +843,54 @@ export const createSupabaseChatRepository = ({
     return attachReactions((data as MessageRow[] | null) ?? []);
   };
 
+  const submitCommerceEvidence = async (input: {
+    orderId: string;
+    orderItemId?: string | null;
+    kind: 'packing' | 'unboxing';
+    bytes: ArrayBuffer;
+    filename: string;
+    mimeType: string;
+    source: 'live_capture' | 'uploaded_file';
+  }) => {
+    if (!viewerId) throw new Error('Authentication required.');
+    if (!isUuid(input.orderId) || (input.orderItemId && !isUuid(input.orderItemId))) {
+      throw new Error('Invalid order evidence target.');
+    }
+    if (input.bytes.byteLength < 1 || input.bytes.byteLength > 26_214_400) {
+      throw new Error('Order evidence must be 25 MiB or smaller.');
+    }
+    const { data: intentData, error: intentError } = await client.rpc('begin_commerce_evidence_capture', {
+      p_order_id: input.orderId,
+      p_order_item_id: input.orderItemId ?? null,
+      p_evidence_kind: input.kind,
+      p_evidence_source: input.source,
+    });
+    if (intentError) throw new Error(intentError.message);
+    const intent = (Array.isArray(intentData) ? intentData[0] : intentData) as { intent_id: string; path_prefix: string } | null;
+    if (!intent) throw new Error('Evidence capture could not be authorized.');
+    const extension = input.filename.toLowerCase().match(/\.([a-z0-9]{1,8})$/)?.[1]
+      ?? input.mimeType.split('/')[1]?.replace('jpeg', 'jpg')
+      ?? 'bin';
+    const storagePath = `${intent.path_prefix}.${extension}`;
+    const upload = await client.storage.from('creator-commerce-private').upload(storagePath, input.bytes, {
+      contentType: input.mimeType,
+      upsert: false,
+    });
+    if (upload.error) throw new Error(upload.error.message);
+    const { error } = await client.rpc('finalize_commerce_evidence_capture', {
+      p_intent_id: intent.intent_id,
+      p_storage_path: storagePath,
+      p_file_name: input.filename,
+      p_mime_type: input.mimeType,
+      p_file_size: input.bytes.byteLength,
+    });
+    if (error) {
+      await client.storage.from('creator-commerce-private').remove([storagePath]);
+      throw new Error(error.message);
+    }
+    notify();
+  };
+
   return {
     async listConversations() {
       if (!viewerId) return [];
@@ -992,35 +1067,21 @@ export const createSupabaseChatRepository = ({
     },
 
     async submitUnboxingEvidence(input) {
+      await submitCommerceEvidence({ ...input, kind: 'unboxing' });
+    },
+
+    async submitOrderEvidence(input) {
+      await submitCommerceEvidence(input);
+    },
+
+    async reviewOrderReturn(input) {
       if (!viewerId) throw new Error('Authentication required.');
-      if (!isUuid(input.orderId) || !isUuid(input.orderItemId)) throw new Error('Invalid order evidence target.');
-      if (input.bytes.byteLength < 1 || input.bytes.byteLength > 26_214_400) {
-        throw new Error('Unboxing evidence must be 25 MiB or smaller.');
-      }
-      const extension = input.filename.toLowerCase().match(/\.([a-z0-9]{1,8})$/)?.[1]
-        ?? input.mimeType.split('/')[1]?.replace('jpeg', 'jpg')
-        ?? 'bin';
-      const storagePath = `${viewerId}/orders/${input.orderId}/unboxing/${createClientMessageId()}.${extension}`;
-      const upload = await client.storage.from('creator-commerce-private').upload(storagePath, input.bytes, {
-        contentType: input.mimeType,
-        upsert: false,
+      const { error } = await client.rpc('seller_review_creator_commerce_return', {
+        p_return_request_id: input.returnRequestId,
+        p_decision: input.decision,
+        p_reason: input.reason?.trim() || null,
       });
-      if (upload.error) throw new Error(upload.error.message);
-      const { error } = await client.from('commerce_order_evidence').insert({
-        owner_id: viewerId,
-        order_id: input.orderId,
-        order_item_id: input.orderItemId,
-        evidence_kind: 'unboxing',
-        evidence_source: input.source,
-        storage_path: storagePath,
-        file_name: input.filename,
-        mime_type: input.mimeType,
-        file_size: input.bytes.byteLength,
-      });
-      if (error) {
-        await client.storage.from('creator-commerce-private').remove([storagePath]);
-        throw new Error(error.message);
-      }
+      if (error) throw new Error(error.message);
       notify();
     },
 
