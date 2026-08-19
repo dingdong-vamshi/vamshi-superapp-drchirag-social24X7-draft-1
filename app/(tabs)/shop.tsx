@@ -23,6 +23,7 @@ export default function ShopPage() {
     <ShopScreen
       repository={repository}
       onCartPress={() => router.push("/cart")}
+      onWishlistPress={() => router.push("/wishlist")}
       onStorefrontPress={(storefront) =>
         router.push({ pathname: "/store/[slug]", params: { slug: storefront.slug } })
       }

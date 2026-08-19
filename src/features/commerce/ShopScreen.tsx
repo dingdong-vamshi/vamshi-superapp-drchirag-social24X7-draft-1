@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Search, ShoppingBag, Sparkles } from "lucide-react-native";
+import { Heart, Search, ShoppingBag, Sparkles } from "lucide-react-native";
 import {
   type CartLine,
   formatInr,
@@ -28,6 +28,8 @@ type Props = {
   onCheckout?: (lines: CartLine[]) => void | Promise<void>;
   onProductPress?: (product: ShopProduct) => void;
   onStorefrontPress?: (storefront: StorefrontSummary) => void;
+  onWishlistPress?: () => void;
+  wishlistOnly?: boolean;
 };
 
 type LoadState = "loading" | "ready" | "error";
@@ -44,11 +46,14 @@ export function ShopScreen({
   onCheckout,
   onProductPress,
   onStorefrontPress,
+  onWishlistPress,
+  wishlistOnly = false,
 }: Props) {
   const [state, setState] = useState<LoadState>("loading");
   const [products, setProducts] = useState<ShopProduct[]>([]);
   const [storefronts, setStorefronts] = useState<StorefrontSummary[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [isSaving, setSaving] = useState(false);
   const [isCheckingOut, setCheckingOut] = useState(false);
@@ -57,14 +62,16 @@ export function ShopScreen({
   const load = async () => {
     setState("loading");
     try {
-      const [nextProducts, nextStorefronts, nextCart] = await Promise.all([
+      const [nextProducts, nextStorefronts, nextCart, nextWishlist] = await Promise.all([
         repository.listProducts({ category: "All", query }),
         repository.listStorefronts(),
         repository.getCart(),
+        repository.getWishlistProductIds(),
       ]);
       setProducts(nextProducts);
       setStorefronts(nextStorefronts);
       setCart(nextCart);
+      setWishlistIds(nextWishlist);
       setState("ready");
     } catch (error) {
       console.error(error);
@@ -110,6 +117,14 @@ export function ShopScreen({
     }
   };
 
+  const toggleWishlist = async (productId: string) => {
+    try {
+      setWishlistIds(await repository.toggleWishlist(productId));
+    } catch (cause) {
+      Alert.alert("Wishlist not updated", cause instanceof Error ? cause.message : "Please try again.");
+    }
+  };
+
   const handleCheckout = async () => {
     if (isCheckingOut) return;
     if (!cart.length) {
@@ -140,6 +155,7 @@ export function ShopScreen({
     }
   };
 
+  const visibleProducts = wishlistOnly ? products.filter((product) => wishlistIds.includes(product.id)) : products;
   const storefrontPreview = useMemo(
     () =>
       storefronts.slice(0, 6).map((item) => ({
@@ -171,12 +187,20 @@ export function ShopScreen({
           <>
             <View style={styles.heading}>
               <View>
-                <Text style={styles.title}>Shop</Text>
+                <Text style={styles.title}>{wishlistOnly ? "Saved products" : "Shop"}</Text>
                 <Text style={styles.subtitle}>
-                  Browse real storefronts and products from sellers across Social
-                  24x7.
+                  {wishlistOnly ? "Products you saved from Social 24x7 storefronts." : "Browse real storefronts and products from sellers across Social 24x7."}
                 </Text>
               </View>
+              <View style={styles.headerActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open saved products"
+                onPress={onWishlistPress}
+                style={styles.cartButton}
+              >
+                <Heart color="#0b8d50" size={20} fill={wishlistIds.length ? "#0b8d50" : "transparent"} />
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Open bag with ${cartCount} item${cartCount === 1 ? "" : "s"}`}
@@ -190,9 +214,10 @@ export function ShopScreen({
                   </View>
                 ) : null}
               </Pressable>
+              </View>
             </View>
 
-            <View style={styles.hero}>
+            {!wishlistOnly ? <View style={styles.hero}>
               <View style={{ flex: 1 }}>
                 <View style={styles.heroPill}>
                   <Sparkles size={13} color="#0a8e4f" />
@@ -207,7 +232,7 @@ export function ShopScreen({
                   admin side.
                 </Text>
               </View>
-            </View>
+            </View> : null}
 
             <View style={styles.search}>
               <Search size={18} color="#6c7a72" />
@@ -261,7 +286,7 @@ export function ShopScreen({
             </View>
           </>
         }
-        data={products}
+        data={visibleProducts}
         numColumns={2}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.grid}
@@ -270,7 +295,9 @@ export function ShopScreen({
           <ProductCard
             item={item}
             quantity={cart.find((line) => line.productId === item.id)?.quantity ?? 0}
+            saved={wishlistIds.includes(item.id)}
             onAdd={() => void updateCart(item.id, 1)}
+            onToggleWishlist={() => void toggleWishlist(item.id)}
             onPress={() => onProductPress?.(item)}
           />
         )}
@@ -366,12 +393,16 @@ export function ShopScreen({
 function ProductCard({
   item,
   quantity,
+  saved,
   onAdd,
+  onToggleWishlist,
   onPress,
 }: {
   item: ShopProduct;
   quantity: number;
+  saved: boolean;
   onAdd: () => void;
+  onToggleWishlist: () => void;
   onPress?: () => void;
 }) {
   return (
@@ -383,7 +414,7 @@ function ProductCard({
           <ProductThumb product={item} large />
         )}
       </Pressable>
-      <Text style={styles.productStore}>@{item.storefrontSlug}</Text>
+      <View style={styles.productLabelRow}><Text style={styles.productStore}>@{item.storefrontSlug}</Text><Pressable accessibilityRole="button" accessibilityLabel={saved ? `Remove ${item.name} from wishlist` : `Save ${item.name} to wishlist`} onPress={onToggleWishlist} style={styles.wishlistButton}><Heart size={18} color={saved ? "#e11d48" : "#527060"} fill={saved ? "#e11d48" : "transparent"} /></Pressable></View>
       <Text style={styles.productName} numberOfLines={2}>
         {item.name}
       </Text>
@@ -478,6 +509,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 28, fontWeight: "800", color: ink },
   subtitle: { marginTop: 4, color: muted, fontSize: 13, lineHeight: 18 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   cartButton: {
     width: 46,
     height: 46,
@@ -631,6 +663,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "800",
   },
+  productLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  wishlistButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#f2f8f4", alignItems: "center", justifyContent: "center" },
   productName: {
     marginTop: 6,
     color: ink,

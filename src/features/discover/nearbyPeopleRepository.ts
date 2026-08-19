@@ -8,6 +8,13 @@ export type NearbyPreference = {
   hasApproximateLocation: boolean;
 };
 
+export type MyNearbyProfile = {
+  name: string;
+  username: string;
+  bio: string;
+  interests: string[];
+};
+
 export type NearbyPerson = {
   id: string;
   name: string;
@@ -50,36 +57,57 @@ const requestState = (requests: any[], viewerId: string, otherId: string): Nearb
   return pair.requester_id === viewerId ? "outgoing" : "incoming";
 };
 
-export async function getNearbyWorkspace(user: unknown) {
+export async function getNearbyWorkspace(user: unknown, radiusKm = 5) {
   const active = requireUser(user);
-  const [prefRes, profileRes, requestRes] = await Promise.all([
+  const [prefRes, requestRes, profileRes] = await Promise.all([
     supabase!.from("nearby_people_preferences").select("*").eq("user_id", active.id).maybeSingle(),
-    supabase!.from("profiles").select("id,username,display_name,bio,is_private").neq("id", active.id).limit(50),
     supabase!.from("connection_requests").select("id,requester_id,recipient_id,status,created_at").or(`requester_id.eq.${active.id},recipient_id.eq.${active.id}`),
+    supabase!.from("profiles").select("id,username,display_name,bio").eq("id", active.id).maybeSingle(),
   ]);
   if (prefRes.error) throw new Error(prefRes.error.message);
-  if (profileRes.error) throw new Error(profileRes.error.message);
   if (requestRes.error) throw new Error(requestRes.error.message);
+  if (profileRes.error) throw new Error(profileRes.error.message);
 
   const pref = prefRes.data;
   const preference: NearbyPreference = {
     enabled: Boolean(pref?.enabled),
     radiusKm: Number(pref?.radius_km ?? 5),
-    hasApproximateLocation: Boolean(pref?.approximate_lat && pref?.approximate_lng),
+    hasApproximateLocation: pref?.approximate_lat != null && pref?.approximate_lng != null,
   };
   const requests = requestRes.data ?? [];
-  const people = (profileRes.data ?? []).map((profile: any): NearbyPerson => ({
-    ...normalizeProfile(profile),
-    interests: [],
-    distanceKm: null,
-    requestStatus: requestState(requests, active.id, profile.id),
+  const friendIds = requests
+    .filter((request: any) => request.status === "accepted")
+    .map((request: any) => request.requester_id === active.id ? request.recipient_id : request.requester_id);
+  const [nearbyRes, friendProfilesRes, requestProfilesRes] = await Promise.all([
+    preference.enabled && preference.hasApproximateLocation
+      ? supabase!.rpc("get_nearby_people", { p_radius_km: radiusKm })
+      : Promise.resolve({ data: [], error: null }),
+    friendIds.length
+      ? supabase!.from("profiles").select("id,username,display_name,bio").in("id", friendIds)
+      : Promise.resolve({ data: [], error: null }),
+    requests.length
+      ? supabase!.from("profiles").select("id,username,display_name,bio").in("id", requests.map((request: any) => request.requester_id === active.id ? request.recipient_id : request.requester_id))
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (nearbyRes.error) throw new Error(nearbyRes.error.message);
+  if (friendProfilesRes.error) throw new Error(friendProfilesRes.error.message);
+  if (requestProfilesRes.error) throw new Error(requestProfilesRes.error.message);
+  const people = ((nearbyRes.data as any[] | null) ?? []).map((row): NearbyPerson => ({
+    id: row.id,
+    name: row.display_name || row.username || "Social 24x7 user",
+    username: row.username || row.id.slice(0, 8),
+    bio: row.bio || "",
+    interests: row.interests ?? [],
+    distanceKm: row.distance_km === null ? null : Number(row.distance_km),
+    requestStatus: row.request_status === "accepted" || row.request_status === "incoming" || row.request_status === "outgoing" ? row.request_status : "none",
   }));
+  const profileById = new Map([...(friendProfilesRes.data ?? []), ...(requestProfilesRes.data ?? [])].map((profile: any) => [profile.id, profile]));
 
   const requestCards: NearbyRequest[] = requests
     .filter((request: any) => request.status === "pending")
     .map((request: any) => {
       const otherId = request.requester_id === active.id ? request.recipient_id : request.requester_id;
-      const profile = people.find((item) => item.id === otherId);
+      const profile = profileById.get(otherId);
       return {
         id: request.id,
         otherUserId: otherId,
@@ -90,22 +118,36 @@ export async function getNearbyWorkspace(user: unknown) {
       };
     });
 
-  const friends = people.filter((person) => person.requestStatus === "accepted");
-  return { preference, people: preference.enabled ? people : [], requests: requestCards, friends };
+  const friends: NearbyPerson[] = friendIds.map((id): NearbyPerson | null => {
+    const profile = profileById.get(id);
+    return profile ? { ...normalizeProfile(profile), interests: [], distanceKm: null, requestStatus: "accepted" as const } : null;
+  }).filter((person): person is NearbyPerson => person !== null);
+  const profile = profileRes.data;
+  const myProfile: MyNearbyProfile = {
+    name: profile?.display_name || profile?.username || "Social 24x7 user",
+    username: profile?.username || active.id.slice(0, 8),
+    bio: profile?.bio || "",
+    interests: Array.isArray(pref?.interests) ? pref.interests : [],
+  };
+  return { preference, people: preference.enabled ? people : [], requests: requestCards, friends, myProfile };
 }
 
-export async function setNearbyEnabled(user: unknown, enabled: boolean, radiusKm: number) {
-  const active = requireUser(user);
-  const { error } = await supabase!.from("nearby_people_preferences").upsert(
-    {
-      user_id: active.id,
-      enabled,
-      radius_km: radiusKm,
-      last_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" },
-  );
+export async function saveNearbyPreference(input: {
+  user: unknown;
+  enabled: boolean;
+  radiusKm: number;
+  latitude?: number | null;
+  longitude?: number | null;
+  interests?: string[];
+}) {
+  requireUser(input.user);
+  const { error } = await supabase!.rpc("save_my_nearby_preference", {
+    p_enabled: input.enabled,
+    p_radius_km: input.radiusKm,
+    p_approximate_lat: input.latitude ?? null,
+    p_approximate_lng: input.longitude ?? null,
+    p_interests: input.interests ?? [],
+  });
   if (error) throw new Error(error.message);
 }
 

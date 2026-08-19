@@ -413,6 +413,35 @@ export function createSupabaseShopRepository({
       await AsyncStorage.setItem(cartKey, JSON.stringify(lines));
     },
 
+    async getWishlistProductIds() {
+      if (!user) {
+        const raw = await AsyncStorage.getItem(`${cartKey}:wishlist`);
+        try { return raw ? JSON.parse(raw) as string[] : []; } catch { return []; }
+      }
+      const { data, error } = await client
+        .from("product_wishlists")
+        .select("product_id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      return ((data as Array<{ product_id: string }> | null) ?? []).map((row) => row.product_id);
+    },
+
+    async toggleWishlist(productId) {
+      const current = await this.getWishlistProductIds();
+      if (!user) {
+        const next = current.includes(productId) ? current.filter((id) => id !== productId) : [...current, productId];
+        await AsyncStorage.setItem(`${cartKey}:wishlist`, JSON.stringify(next));
+        return next;
+      }
+      const saved = current.includes(productId);
+      const result = saved
+        ? await client.from("product_wishlists").delete().eq("user_id", user.id).eq("product_id", productId)
+        : await client.from("product_wishlists").insert({ user_id: user.id, product_id: productId });
+      if (result.error) throw new Error(result.error.message);
+      return saved ? current.filter((id) => id !== productId) : [...current, productId];
+    },
+
     async getSellerDashboard() {
       if (!user) {
         return {

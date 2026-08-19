@@ -1,15 +1,16 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, PanResponder, Pressable, SafeAreaView, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { ArrowLeft, Check, Filter, MapPin, Shield, UserPlus, Users, X } from "lucide-react-native";
+import * as Location from "expo-location";
 
 import { useAuth } from "../../lib/AuthContext";
 import {
   getNearbyWorkspace,
   respondNearbyRequest,
   sendNearbyRequest,
-  setNearbyEnabled,
+  saveNearbyPreference,
   type NearbyPerson,
   type NearbyRequest,
 } from "./nearbyPeopleRepository";
@@ -21,18 +22,34 @@ export default function NearbyPeopleScreen() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<(typeof tabs)[number]>("Discover");
   const [radiusKm, setRadiusKm] = useState(5);
+  const [passedIds, setPassedIds] = useState<string[]>([]);
 
   const workspaceQuery = useQuery({
     queryKey: ["nearby-people", user && "id" in user ? user.id : "guest"],
-    queryFn: () => getNearbyWorkspace(user),
+    queryFn: () => getNearbyWorkspace(user, radiusKm),
     enabled: initialized && Boolean(user && "id" in user),
   });
   const refresh = async () => queryClient.invalidateQueries({ queryKey: ["nearby-people"] });
   const preference = workspaceQuery.data?.preference;
   const enabled = Boolean(preference?.enabled);
+  useEffect(() => {
+    if (preference?.radiusKm) setRadiusKm(preference.radiusKm);
+  }, [preference?.radiusKm]);
 
   const toggleMutation = useMutation({
-    mutationFn: (nextEnabled: boolean) => setNearbyEnabled(user, nextEnabled, radiusKm),
+    mutationFn: async (nextEnabled: boolean) => {
+      if (!nextEnabled) return saveNearbyPreference({ user, enabled: false, radiusKm });
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) throw new Error("Location permission is needed to enable Nearby People.");
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      return saveNearbyPreference({
+        user,
+        enabled: true,
+        radiusKm,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      });
+    },
     onSuccess: refresh,
     onError: (error) => Alert.alert("Could not update Nearby People", error instanceof Error ? error.message : "Please try again."),
   });
@@ -46,8 +63,32 @@ export default function NearbyPeopleScreen() {
     onSuccess: refresh,
     onError: (error) => Alert.alert("Could not update request", error instanceof Error ? error.message : "Please try again."),
   });
+  const radiusMutation = useMutation({
+    mutationFn: async (nextRadiusKm: number) => {
+      if (!enabled) return;
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) throw new Error("Location permission is needed to update your Nearby radius.");
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      await saveNearbyPreference({
+        user,
+        enabled: true,
+        radiusKm: nextRadiusKm,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        interests: workspaceQuery.data?.myProfile.interests,
+      });
+    },
+    onSuccess: refresh,
+    onError: (error) => Alert.alert("Could not update radius", error instanceof Error ? error.message : "Please try again."),
+  });
+  const cycleRadius = () => {
+    const options = [1, 5, 10, 25, 50];
+    const nextRadiusKm = options[(options.indexOf(radiusKm) + 1) % options.length];
+    setRadiusKm(nextRadiusKm);
+    if (enabled) radiusMutation.mutate(nextRadiusKm);
+  };
 
-  const people = workspaceQuery.data?.people ?? [];
+  const people = (workspaceQuery.data?.people ?? []).filter((person) => !passedIds.includes(person.id));
   const requests = workspaceQuery.data?.requests ?? [];
   const friends = workspaceQuery.data?.friends ?? [];
 
@@ -76,11 +117,11 @@ export default function NearbyPeopleScreen() {
           <>
             <View style={styles.controlCard}>
               <Text style={styles.distance}>Distance: {radiusKm.toFixed(1)}km</Text>
-              <View style={styles.sliderTrack}><View style={[styles.sliderFill, { width: `${Math.min(100, radiusKm * 10)}%` }]} /><Pressable onPress={() => setRadiusKm((value) => (value >= 10 ? 1 : value + 1))} style={styles.sliderKnob} /></View>
+              <Pressable accessibilityRole="adjustable" accessibilityLabel="Nearby distance radius" onPress={cycleRadius} style={styles.sliderTrack}><View style={[styles.sliderFill, { width: `${Math.min(100, radiusKm * 2)}%` }]} /><View style={[styles.sliderKnob, { left: `${Math.max(0, Math.min(92, radiusKm * 2 - 2))}%` }]} /></Pressable>
               <View style={styles.switchRow}>
                 <View>
                   <Text style={styles.switchLabel}>Online only</Text>
-                  <Text style={styles.hint}>GPS package is not installed yet, so distance is approximate/offline-safe.</Text>
+                  <Text style={styles.hint}>We save only a rounded location and show other people an approximate distance, never your exact coordinates.</Text>
                 </View>
                 <Switch value={enabled} onValueChange={(value) => toggleMutation.mutate(value)} />
               </View>
@@ -88,7 +129,8 @@ export default function NearbyPeopleScreen() {
             {workspaceQuery.isLoading ? <Empty title="Loading nearby people" text="Checking discoverable profiles..." icon={<Users color="#98a2b3" size={56} />} /> : null}
             {!workspaceQuery.isLoading && !enabled ? <Empty title="Nearby is off" text="Turn on Nearby People to see discoverable profiles." icon={<MapPin color="#98a2b3" size={56} />} /> : null}
             {!workspaceQuery.isLoading && enabled && people.length === 0 ? <Empty title="No people found" text="No discoverable profiles are available yet." icon={<Users color="#98a2b3" size={56} />} /> : null}
-            {enabled ? people.map((person) => <PersonCard key={person.id} person={person} onConnect={() => requestMutation.mutate(person.id)} />) : null}
+            {enabled ? <View style={styles.myProfile}><Text style={styles.myProfileTitle}>My Nearby Profile</Text><Text style={styles.myProfileText}>{workspaceQuery.data?.myProfile.name} · @{workspaceQuery.data?.myProfile.username}</Text><Text style={styles.myProfileText}>{workspaceQuery.data?.myProfile.bio || "Your profile bio will be shown here."}</Text><Text style={styles.myProfileText}>{enabled ? "Visible to people within your selected radius" : "Hidden"}{workspaceQuery.data?.myProfile.interests.length ? ` · ${workspaceQuery.data.myProfile.interests.join(" · ")}` : ""}</Text></View> : null}
+            {enabled ? people.map((person) => <PersonCard key={person.id} person={person} onConnect={() => requestMutation.mutate(person.id)} onPass={() => setPassedIds((current) => [...current, person.id])} />) : null}
           </>
         ) : null}
 
@@ -104,10 +146,18 @@ export default function NearbyPeopleScreen() {
   );
 }
 
-function PersonCard({ person, onConnect }: { person: NearbyPerson; onConnect?: () => void }) {
+function PersonCard({ person, onConnect, onPass }: { person: NearbyPerson; onConnect?: () => void; onPass?: () => void }) {
   const label = person.requestStatus === "accepted" ? "Friend" : person.requestStatus === "outgoing" ? "Pending" : person.requestStatus === "incoming" ? "Respond" : "Connect";
+  const canConnect = Boolean(onConnect && label === "Connect");
+  const responder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) => canConnect && Math.abs(gesture.dx) > 14 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderRelease: (_, gesture) => {
+      if (gesture.dx >= 72) onConnect?.();
+      if (gesture.dx <= -72) onPass?.();
+    },
+  }), [canConnect, onConnect, onPass]);
   return (
-    <View style={styles.card}>
+    <View {...(canConnect ? responder.panHandlers : {})} style={styles.card}>
       <View style={styles.imageBox}><Text style={styles.initial}>{person.name.charAt(0).toUpperCase()}</Text></View>
       <View style={styles.cardBody}>
         <View style={styles.verified}><Text style={styles.verifiedText}>✓ Verified</Text></View>
@@ -115,7 +165,7 @@ function PersonCard({ person, onConnect }: { person: NearbyPerson; onConnect?: (
         <Text style={styles.meta}>{person.distanceKm ? `${person.distanceKm.toFixed(1)}km away` : "Distance hidden"} · @{person.username}</Text>
         <Text style={styles.meta}>{person.bio || "Social 24x7 member"}</Text>
         <View style={styles.tags}><Text style={styles.tag}>Community</Text><Text style={styles.tag}>Nearby</Text></View>
-        {onConnect ? <Pressable disabled={label !== "Connect"} onPress={onConnect} style={[styles.darkButton, label !== "Connect" && styles.disabled]}><Text style={styles.darkButtonText}>{label}</Text></Pressable> : null}
+        {onConnect ? <View style={styles.cardActions}><Pressable disabled={!canConnect} onPress={onConnect} style={[styles.darkButton, styles.cardAction, !canConnect && styles.disabled]}><Text style={styles.darkButtonText}>{label}</Text></Pressable>{canConnect ? <Pressable onPress={onPass} style={styles.passButton}><Text style={styles.passButtonText}>Pass</Text></Pressable> : null}</View> : null}
       </View>
     </View>
   );
@@ -163,7 +213,7 @@ const styles = StyleSheet.create({
   distance: { color: "#344054", fontSize: 18 },
   sliderTrack: { height: 28, borderRadius: 14, backgroundColor: "#e5e7eb", justifyContent: "center" },
   sliderFill: { height: 12, backgroundColor: "#05051a", borderRadius: 8 },
-  sliderKnob: { position: "absolute", left: "46%", width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: "#111827", backgroundColor: "#fff" },
+  sliderKnob: { position: "absolute", width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: "#111827", backgroundColor: "#fff" },
   switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 18 },
   switchLabel: { color: "#344054", fontSize: 18 },
   hint: { color: "#667085", fontSize: 12, maxWidth: 280 },
@@ -171,6 +221,10 @@ const styles = StyleSheet.create({
   imageBox: { height: 260, alignItems: "center", justifyContent: "center", backgroundColor: "#eef0f4" },
   initial: { color: "#111827", fontSize: 32, fontWeight: "800" },
   cardBody: { padding: 20, gap: 10 },
+  cardActions: { flexDirection: "row", gap: 10 },
+  cardAction: { flex: 1 },
+  passButton: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: "#d0d5dd", paddingHorizontal: 18, alignItems: "center", justifyContent: "center" },
+  passButtonText: { color: "#344054", fontSize: 16, fontWeight: "900" },
   verified: { alignSelf: "flex-start", borderRadius: 12, backgroundColor: "#dbeafe", paddingHorizontal: 12, paddingVertical: 8 },
   verifiedText: { color: "#1746d6", fontWeight: "900" },
   cardTitle: { color: "#111827", fontSize: 20, fontWeight: "900" },
@@ -184,6 +238,9 @@ const styles = StyleSheet.create({
   smallAvatar: { width: 58, height: 58, borderRadius: 29, backgroundColor: "#eef0f4", alignItems: "center", justifyContent: "center" },
   iconButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#16a34a", alignItems: "center", justifyContent: "center" },
   lightIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#eef0f4", alignItems: "center", justifyContent: "center" },
+  myProfile: { borderRadius: 16, borderWidth: 1, borderColor: "#b7ebce", backgroundColor: "#f0fdf4", padding: 16, gap: 5 },
+  myProfileTitle: { color: "#166534", fontSize: 17, fontWeight: "900" },
+  myProfileText: { color: "#166534", fontSize: 14, lineHeight: 20 },
   empty: { minHeight: 320, alignItems: "center", justifyContent: "center", gap: 10, padding: 24 },
   emptyTitle: { color: "#475467", fontSize: 20, fontWeight: "800", textAlign: "center" },
   emptyText: { color: "#98a2b3", fontSize: 15, textAlign: "center" },

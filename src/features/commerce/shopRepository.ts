@@ -210,6 +210,8 @@ export interface ShopRepository {
   ): Promise<ShopProduct | null>;
   getCart(): Promise<CartLine[]>;
   saveCart(lines: CartLine[]): Promise<void>;
+  getWishlistProductIds(): Promise<string[]>;
+  toggleWishlist(productId: string): Promise<string[]>;
   getSellerDashboard(): Promise<SellerDashboard>;
   getSellerAnalytics(): Promise<SellerAnalytics>;
   listSellerOrders(): Promise<SellerOrder[]>;
@@ -242,6 +244,7 @@ export interface ShopRepository {
 }
 
 const cartKey = "social24x7:commerce-cart:v2";
+const wishlistKey = "social24x7:commerce-wishlist:v1";
 
 const storefronts: StorefrontSummary[] = [
   {
@@ -456,6 +459,16 @@ export const localShopRepository: ShopRepository = {
   },
   async saveCart(lines) {
     await AsyncStorage.setItem(cartKey, JSON.stringify(lines));
+  },
+  async getWishlistProductIds() {
+    const raw = await AsyncStorage.getItem(wishlistKey);
+    try { return raw ? JSON.parse(raw) as string[] : []; } catch { return []; }
+  },
+  async toggleWishlist(productId) {
+    const current = await this.getWishlistProductIds();
+    const next = current.includes(productId) ? current.filter((id) => id !== productId) : [...current, productId];
+    await AsyncStorage.setItem(wishlistKey, JSON.stringify(next));
+    return next;
   },
   async getSellerDashboard() {
     return localDashboard;
