@@ -93,6 +93,7 @@ export type SellerApplication = {
   documentPath: string | null;
   exteriorEvidencePath: string | null;
   interiorEvidencePath: string | null;
+  businessVerificationVideoPath: string | null;
   locationLatitude: number | null;
   locationLongitude: number | null;
   applicationPayload: Record<string, unknown>;
@@ -132,6 +133,7 @@ export type ProfessionalVerificationRequest = {
   registrationNumber: string;
   credentialDocumentPath: string | null;
   supportingDocumentPath: string | null;
+  verificationVideoPath: string | null;
   creatorIdentityDocumentPath?: string | null;
   applicationPayload: Record<string, unknown>;
   socialHandles: Record<string, string>;
@@ -175,6 +177,7 @@ type SellerApplicationRow = {
   document_path: string | null;
   exterior_evidence_path: string | null;
   interior_evidence_path: string | null;
+  business_verification_video_path: string | null;
   location_latitude: number | null;
   location_longitude: number | null;
   application_payload: Record<string, unknown> | null;
@@ -214,6 +217,7 @@ type ProfessionalVerificationRow = {
   registration_number: string;
   credential_document_path: string | null;
   supporting_document_path: string | null;
+  verification_video_path: string | null;
   application_payload: Record<string, unknown> | null;
   social_handles: Record<string, string> | null;
   status: CommerceApprovalStatus;
@@ -275,6 +279,7 @@ const sellerFromRow = (row: SellerApplicationRow): SellerApplication => ({
   documentPath: row.document_path,
   exteriorEvidencePath: row.exterior_evidence_path,
   interiorEvidencePath: row.interior_evidence_path,
+  businessVerificationVideoPath: row.business_verification_video_path,
   locationLatitude: row.location_latitude,
   locationLongitude: row.location_longitude,
   applicationPayload: row.application_payload ?? {},
@@ -314,6 +319,7 @@ const professionalFromRow = (row: ProfessionalVerificationRow): ProfessionalVeri
   registrationNumber: row.registration_number,
   credentialDocumentPath: row.credential_document_path,
   supportingDocumentPath: row.supporting_document_path,
+  verificationVideoPath: row.verification_video_path,
   applicationPayload: row.application_payload ?? {},
   socialHandles: row.social_handles ?? {},
   status: row.status,
@@ -435,7 +441,7 @@ export async function uploadCommerceEvidence(
 export async function getMySellerApplication(client: SupabaseClient, userId: string) {
   const { data, error } = await client
     .from('seller_applications')
-    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,business_verification_video_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -464,6 +470,7 @@ export async function submitSellerApplication(
     documentPath?: string | null;
     exteriorEvidencePath?: string | null;
     interiorEvidencePath?: string | null;
+    businessVerificationVideoPath?: string | null;
     locationLatitude?: number | null;
     locationLongitude?: number | null;
     applicationPayload?: Record<string, unknown>;
@@ -495,6 +502,7 @@ export async function submitSellerApplication(
         document_path: input.documentPath ?? null,
         exterior_evidence_path: input.exteriorEvidencePath ?? null,
         interior_evidence_path: input.interiorEvidencePath ?? null,
+        business_verification_video_path: input.businessVerificationVideoPath ?? null,
         location_latitude: input.locationLatitude ?? null,
         location_longitude: input.locationLongitude ?? null,
         status: 'submitted',
@@ -504,7 +512,7 @@ export async function submitSellerApplication(
       },
       { onConflict: 'owner_id' },
     )
-    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,business_verification_video_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .single();
   if (error) throw error;
   return sellerFromRow(data as SellerApplicationRow);
@@ -525,7 +533,7 @@ export async function getMyCreatorApplication(client: SupabaseClient, userId: st
 export async function getMyProfessionalRequest(client: SupabaseClient, userId: string) {
   const { data, error } = await client
     .from('professional_verification_requests')
-    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,verification_video_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -583,6 +591,7 @@ export async function submitProfessionalVerification(
     registrationNumber: string;
     credentialDocumentPath?: string | null;
     supportingDocumentPath?: string | null;
+    verificationVideoPath?: string | null;
     socialHandles: Record<string, string>;
     applicationPayload?: Record<string, unknown>;
   },
@@ -601,6 +610,7 @@ export async function submitProfessionalVerification(
         registration_number: input.registrationNumber.trim(),
         credential_document_path: input.credentialDocumentPath ?? null,
         supporting_document_path: input.supportingDocumentPath ?? null,
+        verification_video_path: input.verificationVideoPath ?? null,
         social_handles: input.socialHandles,
         application_payload: input.applicationPayload ?? {},
         status: 'submitted',
@@ -608,7 +618,7 @@ export async function submitProfessionalVerification(
       },
       { onConflict: 'owner_id' },
     )
-    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,verification_video_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at')
     .single();
   if (error) throw error;
   return professionalFromRow(data as ProfessionalVerificationRow);
@@ -616,9 +626,9 @@ export async function submitProfessionalVerification(
 
 export async function listCommerceApplications(client: SupabaseClient): Promise<CommerceApplicationSummary[]> {
   const [sellerResult, creatorResult, professionalResult, documentsResult] = await Promise.all([
-    client.from('seller_applications').select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
+    client.from('seller_applications').select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,business_verification_video_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
     client.from('creator_applications').select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
-    client.from('professional_verification_requests').select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
+    client.from('professional_verification_requests').select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,verification_video_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
     client.from('creator_commerce_documents').select('id,owner_id,application_kind,application_id,document_kind,storage_path,file_name,mime_type,file_size,created_at').order('created_at', { ascending: false }).limit(250),
   ]);
   if (sellerResult.error) throw sellerResult.error;
@@ -646,7 +656,7 @@ export async function listCommerceApplications(client: SupabaseClient): Promise<
     ...((sellerResult.data as SellerApplicationRow[] | null) ?? []).map((row) => ({
       kind: 'seller' as const,
       ...sellerFromRow(row),
-      documents: docsFor([row.document_path, row.exterior_evidence_path, row.interior_evidence_path]),
+      documents: docsFor([row.document_path, row.exterior_evidence_path, row.interior_evidence_path, row.business_verification_video_path]),
     })),
     ...((creatorResult.data as CreatorApplicationRow[] | null) ?? []).map((row) => ({
       kind: 'creator' as const,
@@ -663,6 +673,7 @@ export async function listCommerceApplications(client: SupabaseClient): Promise<
         row.creator_application_id ? creatorsById.get(row.creator_application_id)?.identity_document_path ?? null : null,
         row.credential_document_path,
         row.supporting_document_path,
+        row.verification_video_path,
       ]),
     })),
   ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));

@@ -895,35 +895,42 @@ export async function uploadLifecycleOrderEvidence(
     orderId: string;
     orderItemId?: string | null;
     kind: 'packing' | 'unboxing';
+    source?: 'live_capture' | 'uploaded_file';
     asset: { uri: string; fileName?: string | null; mimeType?: string | null; fileSize?: number | null };
   },
 ) {
-  const userId = await requireSupabaseUserId(client);
   const response = await fetch(input.asset.uri);
   if (!response.ok) throw new Error('Could not read the selected evidence file.');
   const bytes = await response.arrayBuffer();
+  if (bytes.byteLength < 1 || bytes.byteLength > 26_214_400) throw new Error('Order evidence must be 25 MiB or smaller.');
+  const { data: intentData, error: intentError } = await client.rpc('begin_commerce_evidence_capture', {
+    p_order_id: input.orderId,
+    p_order_item_id: input.orderItemId ?? null,
+    p_evidence_kind: input.kind,
+    p_evidence_source: input.source ?? 'uploaded_file',
+  });
+  if (intentError) throw new Error(intentError.message);
+  const intent = (Array.isArray(intentData) ? intentData[0] : intentData) as { intent_id: string; path_prefix: string } | null;
+  if (!intent) throw new Error('Evidence capture could not be authorized.');
   const rawExtension = input.asset.fileName?.split('.').pop()?.toLowerCase();
   const fallbackExtension = input.asset.mimeType?.includes('video') ? 'mp4' : input.asset.mimeType?.includes('png') ? 'png' : 'jpg';
   const extension = rawExtension && /^[a-z0-9]{2,5}$/.test(rawExtension) ? rawExtension : fallbackExtension;
-  const path = `${userId}/orders/${input.orderId}/${input.kind}/${Date.now()}.${extension}`;
+  const path = `${intent.path_prefix}.${extension}`;
   const upload = await client.storage.from('creator-commerce-private').upload(path, bytes, {
     contentType: input.asset.mimeType ?? response.headers.get('content-type') ?? 'application/octet-stream',
     upsert: false,
   });
   if (upload.error) throw new Error(upload.error.message);
-  const inserted = await client.from('commerce_order_evidence').insert({
-    owner_id: userId,
-    order_id: input.orderId,
-    order_item_id: input.orderItemId ?? null,
-    evidence_kind: input.kind,
-    storage_path: path,
-    file_name: input.asset.fileName ?? null,
-    mime_type: input.asset.mimeType ?? null,
-    file_size: input.asset.fileSize ?? bytes.byteLength,
+  const { error: finalizeError } = await client.rpc('finalize_commerce_evidence_capture', {
+    p_intent_id: intent.intent_id,
+    p_storage_path: path,
+    p_file_name: input.asset.fileName ?? null,
+    p_mime_type: input.asset.mimeType ?? response.headers.get('content-type') ?? 'application/octet-stream',
+    p_file_size: input.asset.fileSize ?? bytes.byteLength,
   });
-  if (inserted.error) {
+  if (finalizeError) {
     await client.storage.from('creator-commerce-private').remove([path]);
-    throw new Error(inserted.error.message);
+    throw new Error(finalizeError.message);
   }
   return path;
 }

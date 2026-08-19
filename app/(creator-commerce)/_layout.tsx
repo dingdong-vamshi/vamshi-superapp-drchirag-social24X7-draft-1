@@ -15,6 +15,7 @@ function CommerceNavigator() {
       <Stack.Screen name="commerce/seller-onboarding" />
       <Stack.Screen name="commerce/creator-onboarding" />
       <Stack.Screen name="commerce/buyer" />
+      <Stack.Screen name="commerce/order/[id]" />
       <Stack.Protected guard={access?.sellerStatus === 'approved'}>
         <Stack.Screen name="commerce/seller" />
       </Stack.Protected>

@@ -39,7 +39,6 @@ import {
   submitLifecycleProduct,
   submitLifecycleReturn,
   uploadLifecycleProductMedia,
-  reviewAdminReturn,
   updateLifecycleFulfillment,
   uploadLifecycleOrderEvidence,
   type BuyerOrderItem,
@@ -898,7 +897,6 @@ export function AdminLifecycleOperationsPanel() {
   const [checkouts, setCheckouts] = useState<AdminCheckout[]>([]);
   const [accessRows, setAccessRows] = useState<AdminBuyerAccess[]>([]);
   const [returns, setReturns] = useState<AdminReturnRequest[]>([]);
-  const [reasonById, setReasonById] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -971,8 +969,7 @@ export function AdminLifecycleOperationsPanel() {
           <Text selectable style={styles.cardTitle}>Return {request.id.slice(0, 8)} · {request.status}</Text>
           <Text selectable style={styles.meta}>Buyer {request.buyerId} · Order {request.orderId.slice(0, 8)}</Text>
           <Text style={styles.meta}>{request.reason}</Text>
-          <Field label="Admin note" value={reasonById[request.id] ?? ''} onChangeText={(value) => setReasonById((current) => ({ ...current, [request.id]: value }))} multiline />
-          {request.status === 'submitted' || request.status === 'under_review' ? <View style={styles.actionRow}><SmallButton label="Approve return" disabled={loading} onPress={() => void mutate(() => reviewAdminReturn(supabase!, request.id, 'approved', reasonById[request.id] ?? ''), 'Return approved; refund remains with the external integration.')} /><SmallButton label="Reject return" destructive disabled={loading} onPress={() => void mutate(() => reviewAdminReturn(supabase!, request.id, 'rejected', reasonById[request.id] ?? ''), 'Return rejected.')} /></View> : null}
+          <Text style={styles.meta}>Seller decision is required in the buyer/seller Business Chat. Admin can monitor this audit record but does not approve or reject returns.</Text>
         </View>
       )) : <Text style={styles.emptyText}>No return requests yet.</Text>}
     </View>

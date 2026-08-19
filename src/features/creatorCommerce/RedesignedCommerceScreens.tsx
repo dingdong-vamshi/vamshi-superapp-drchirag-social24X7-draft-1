@@ -217,6 +217,7 @@ export function SellerOnboardingScreen() {
   const [documentPath, setDocumentPath] = useState<string | null>(null);
   const [exteriorPath, setExteriorPath] = useState<string | null>(null);
   const [interiorPath, setInteriorPath] = useState<string | null>(null);
+  const [verificationVideoPath, setVerificationVideoPath] = useState<string | null>(null);
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [bankHolder, setBankHolder] = useState('');
   const [bankAccount, setBankAccount] = useState('');
@@ -245,6 +246,7 @@ export function SellerOnboardingScreen() {
     setDocumentPath(next.documentPath || payloadString(payload, 'documentPath') || null);
     setExteriorPath(next.exteriorEvidencePath || payloadString(payload, 'exteriorEvidencePath') || null);
     setInteriorPath(next.interiorEvidencePath || payloadString(payload, 'interiorEvidencePath') || null);
+    setVerificationVideoPath(next.businessVerificationVideoPath || payloadString(payload, 'businessVerificationVideoPath') || null);
     const latitude = next.locationLatitude ?? (typeof payload.locationLatitude === 'number' ? payload.locationLatitude : null);
     const longitude = next.locationLongitude ?? (typeof payload.locationLongitude === 'number' ? payload.locationLongitude : null);
     if (latitude != null && longitude != null) setLocation({ latitude, longitude });
@@ -291,6 +293,7 @@ export function SellerOnboardingScreen() {
     documentPath,
     exteriorEvidencePath: exteriorPath,
     interiorEvidencePath: interiorPath,
+    businessVerificationVideoPath: verificationVideoPath,
     locationLatitude: location?.latitude ?? null,
     locationLongitude: location?.longitude ?? null,
     bankAccountHolder: bankHolder,
@@ -321,7 +324,7 @@ export function SellerOnboardingScreen() {
       const required = [legalName, businessName, storefrontName, registeredState, city, phone, email, sellerType === 'gst' ? gstin : panNumber, sellerType === 'non_gst' ? localSellerId : 'ok'];
       if (required.some((value) => !value.trim()) || (sellerType === 'non_gst' && !declarationAccepted)) return 'Complete the business and compliance information.';
     }
-    if (current === 2 && ([addressLine, pickupAddress, returnAddress, postalCode].some((value) => !value.trim()) || !documentPath || !exteriorPath || !interiorPath || !location)) return 'Add addresses, PIN code, location and all three evidence items.';
+    if (current === 2 && ([addressLine, pickupAddress, returnAddress, postalCode].some((value) => !value.trim()) || !documentPath || !exteriorPath || !interiorPath || !verificationVideoPath || !location)) return 'Add addresses, PIN code, location, three evidence items, and the short verification video.';
     if (current === 3 && [bankHolder, bankAccount, ifsc].some((value) => !value.trim())) return 'Add the payout bank information for manual verification.';
     return null;
   };
@@ -375,6 +378,7 @@ export function SellerOnboardingScreen() {
         sellerType, legalName, storefrontName, businessName, registeredState, city, phone, email,
         addressLine, pickupAddress, returnAddress, gstin, panNumber, documentPath,
         exteriorEvidencePath: exteriorPath, interiorEvidencePath: interiorPath,
+        businessVerificationVideoPath: verificationVideoPath,
         locationLatitude: location?.latitude, locationLongitude: location?.longitude,
         applicationPayload: payload(4, 5),
       });
@@ -425,6 +429,7 @@ export function SellerOnboardingScreen() {
           <UploadRow title="Government or business document" value={documentPath} disabled={busy} onPress={() => void pickEvidence('business-document', setDocumentPath)} />
           <UploadRow title="Exterior evidence" value={exteriorPath} disabled={busy} onPress={() => void pickEvidence('exterior-evidence', setExteriorPath)} />
           <UploadRow title="Interior / inventory evidence" value={interiorPath} disabled={busy} onPress={() => void pickEvidence('interior-evidence', setInteriorPath)} />
+          <UploadRow title="Short verification video" value={verificationVideoPath} disabled={busy} onPress={() => void pickEvidence('verification-video', setVerificationVideoPath)} />
           <Pressable accessibilityRole="button" disabled={busy} onPress={() => void captureLocation()} style={[styles.outlineButton, busy && styles.disabled]}>
             <MapPin size={18} color={green} /><Text style={styles.outlineButtonText}>{busy ? 'Capturing location…' : location ? 'Location captured' : 'Capture current location'}</Text>
           </Pressable>
@@ -444,7 +449,7 @@ export function SellerOnboardingScreen() {
           <SummaryRow label="Business" value={`${businessName || 'Incomplete'} · ${registeredState || 'State missing'}`} />
           <SummaryRow label="Store" value={storefrontName || 'Incomplete'} />
           <SummaryRow label="Pickup & return" value={pickupAddress && returnAddress ? 'Provided' : 'Incomplete'} />
-          <SummaryRow label="Evidence & location" value={documentPath && exteriorPath && interiorPath && location ? 'Complete' : 'Incomplete'} />
+          <SummaryRow label="Evidence, video & location" value={documentPath && exteriorPath && interiorPath && verificationVideoPath && location ? 'Complete' : 'Incomplete'} />
           <SummaryRow label="Bank" value={bankHolder && bankAccount && ifsc ? 'Pending manual verification' : 'Incomplete'} />
           <PrimaryButton label="Submit for Review" busy={busy} onPress={() => void submit()} />
         </Section>
@@ -489,6 +494,7 @@ export function CreatorOnboardingScreen() {
   const [institution, setInstitution] = useState('');
   const [registrationNumber, setRegistrationNumber] = useState('');
   const [credentialPath, setCredentialPath] = useState<string | null>(null);
+  const [professionalVideoPath, setProfessionalVideoPath] = useState<string | null>(null);
 
   const professionalRequired = creatorRequiresProfessionalVerification(specializations);
   const professionalRule = credentialRuleFor(specializations);
@@ -529,6 +535,7 @@ export function CreatorOnboardingScreen() {
       setInstitution(professionalRequest.institution);
       setRegistrationNumber(professionalRequest.registrationNumber);
       setCredentialPath(professionalRequest.credentialDocumentPath);
+      setProfessionalVideoPath(professionalRequest.verificationVideoPath);
     }
   }, []);
 
@@ -569,7 +576,7 @@ export function CreatorOnboardingScreen() {
     if (current === 0 && (!macroCategory || specializations.length < 1 || specializations.length > 3)) return 'Choose a category and one to three specializations.';
     if (current === 1 && !Object.values(socialHandles).some((value) => value.trim())) return 'Add at least one social profile or website.';
     if (current === 2 && ([identityName, panNumber].some((value) => !value.trim()) || !identityDocumentPath || (!payoutUpi.trim() && [bankHolder, bankAccount, ifsc].some((value) => !value.trim())))) return 'Complete identity and add either UPI or bank payout details.';
-    if (professionalRequired && current === 3 && ([professionalTitle, degree, institution, registrationNumber].some((value) => !value.trim()) || !credentialPath)) return 'Complete the professional credential information required for this specialization.';
+    if (professionalRequired && current === 3 && ([professionalTitle, degree, institution, registrationNumber].some((value) => !value.trim()) || !credentialPath || !professionalVideoPath)) return 'Complete the professional credential information and verification video required for this specialization.';
     return null;
   };
 
@@ -579,11 +586,11 @@ export function CreatorOnboardingScreen() {
     await persist(Math.min(reviewStep, step + 1));
   };
 
-  const pickEvidence = async (kind: ApplicationKind, documentKind: string, setter: (value: string) => void) => {
+  const pickEvidence = async (kind: ApplicationKind, documentKind: string, setter: (value: string) => void, mediaTypes: ImagePicker.MediaType[] = ['images']) => {
     if (!supabase || !user) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) { Alert.alert('Permission required', 'Allow media access to attach verification evidence.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.82 });
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes, quality: 0.82 });
     if (result.canceled) return;
     setBusy(true);
     try { setter(await uploadCommerceEvidence(supabase, user.id, kind, documentKind, result.assets[0])); }
@@ -614,6 +621,7 @@ export function CreatorOnboardingScreen() {
           institution,
           registrationNumber,
           credentialDocumentPath: credentialPath,
+          verificationVideoPath: professionalVideoPath,
           socialHandles,
           applicationPayload: { onboardingVersion: 2, macroCategory, specializations, credentialRule: professionalRule.specialization },
         });
@@ -676,6 +684,7 @@ export function CreatorOnboardingScreen() {
           <Field label={professionalRule?.institutionLabel ?? 'Institution'} value={institution} onChangeText={setInstitution} />
           <Field label={professionalRule?.registrationLabel ?? 'Registration number'} value={registrationNumber} onChangeText={setRegistrationNumber} />
           <UploadRow title={professionalRule?.credentialLabel ?? 'Credential document'} value={credentialPath} disabled={busy} onPress={() => void pickEvidence('professional', 'credential-document', setCredentialPath)} />
+          <UploadRow title="Short professional verification video" value={professionalVideoPath} disabled={busy} onPress={() => void pickEvidence('professional', 'verification-video', setProfessionalVideoPath, ['videos'])} />
           <Text style={styles.helper}>Uploading a credential does not grant a Blue Tick. Admin approval is required for Professional Credential status.</Text>
         </Section>
       ) : null}
@@ -685,7 +694,7 @@ export function CreatorOnboardingScreen() {
           <SummaryRow label="Social presence" value={`${audienceTier} · self-declared`} />
           <SummaryRow label="Identity" value={identityDocumentPath ? 'Provided · manual review' : 'Incomplete'} />
           <SummaryRow label="Payout" value={payoutUpi || (bankHolder && ifsc) ? 'Provided · manual review' : 'Incomplete'} />
-          <SummaryRow label="Professional credential" value={professionalRequired ? 'Required · separate Admin review' : 'Not applicable'} />
+          <SummaryRow label="Professional credential" value={professionalRequired ? credentialPath && professionalVideoPath ? 'Evidence and video provided · separate Admin review' : 'Incomplete' : 'Not applicable'} />
           <SummaryRow label="Blue Tick" value="Inactive · no payment provider configured" />
           <PrimaryButton label="Submit for Review" busy={busy} onPress={() => void submit()} />
         </Section>

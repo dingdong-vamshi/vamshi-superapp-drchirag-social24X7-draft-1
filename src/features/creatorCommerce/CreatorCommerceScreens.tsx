@@ -917,6 +917,7 @@ function evidenceForApplication(item: CommerceApplicationSummary): EvidenceAsset
         fromPath('Government/business document', item.documentPath),
         fromPath('Exterior shop/business evidence', item.exteriorEvidencePath),
         fromPath('Interior/inventory evidence', item.interiorEvidencePath),
+        fromPath('Seller verification video', item.businessVerificationVideoPath),
       ]
     : item.kind === 'creator'
       ? [fromPath('Government identity evidence', item.identityDocumentPath)]
@@ -924,6 +925,7 @@ function evidenceForApplication(item: CommerceApplicationSummary): EvidenceAsset
           fromPath('Government identity evidence', item.creatorIdentityDocumentPath ?? null),
           fromPath('Credential document', item.credentialDocumentPath),
           fromPath('Supporting document', item.supportingDocumentPath),
+          fromPath('Professional verification video', item.verificationVideoPath),
         ];
 
   return assets.filter((asset): asset is EvidenceAsset => Boolean(asset));
