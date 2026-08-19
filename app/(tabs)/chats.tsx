@@ -45,5 +45,5 @@ export default function ChatsPage() {
     return () => { mounted = false; };
   }, [user]);
 
-  return <ChatScreen dataSource={repository} callAdapter={callAdapter} viewer={viewer} onOpenOwnProfile={() => router.push('/profile')} sharedPost={sharedPost} onShareComplete={() => router.replace('/chats')} onOpenQr={() => router.push('/profile-qr')} onBusinessSearch={() => router.push('/business-directory')} onViewStore={(slug) => router.push({ pathname: '/store/[slug]', params: { slug } })} onViewOrder={(orderId) => router.push({ pathname: '/commerce/order/[id]', params: { id: orderId } })} onViewProfile={(userId) => router.push({ pathname: '/social-profile', params: { userId } })} />;
+  return <ChatScreen dataSource={repository} callAdapter={callAdapter} viewer={viewer} onOpenOwnProfile={() => router.push('/profile')} sharedPost={sharedPost} onShareComplete={() => router.replace('/chats')} onOpenQr={() => router.push('/profile-qr')} onBusinessSearch={() => router.push('/business-directory')} onViewStore={(slug) => router.push({ pathname: '/store/[slug]', params: { slug } })} onViewOrder={(orderId) => router.push(`/commerce/order/${orderId}`)} onViewProfile={(userId) => router.push({ pathname: '/social-profile', params: { userId } })} />;
 }

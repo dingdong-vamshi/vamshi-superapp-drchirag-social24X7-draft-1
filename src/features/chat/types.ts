@@ -257,6 +257,14 @@ export type ChatDataSource = {
   keepMemo?(messageId: string): Promise<void>;
   scheduleMessage?(input: { conversationId: string; body: string; sendAt: string; timezone: string }): Promise<void>;
   setVanishMode?(conversationId: string, seconds: 86400 | 604800 | 2592000 | null): Promise<void>;
+  getWallpaper?(conversationId: string): Promise<{ style: 'neutral' | 'sky' | 'forest' | 'warm' | 'paper'; imageUrl?: string | null }>;
+  setWallpaper?(conversationId: string, style: 'neutral' | 'sky' | 'forest' | 'warm' | 'paper'): Promise<void>;
+  setWallpaperImage?(input: {
+    conversationId: string;
+    bytes: ArrayBuffer;
+    filename: string;
+    mimeType: string;
+  }): Promise<string>;
   markConversationRead(conversationId: string): Promise<void>;
   searchContacts(query: string): Promise<ChatContact[]>;
   openDirectConversation(contactId: string): Promise<Conversation>;

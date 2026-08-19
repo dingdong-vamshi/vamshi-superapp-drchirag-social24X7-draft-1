@@ -10,6 +10,7 @@ import {
   type AlertButton,
   FlatList,
   Image,
+  ImageBackground,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -139,6 +140,7 @@ const formatMinor = (value: number, currency = "INR") =>
     currency,
     maximumFractionDigits: 2,
   }).format(value / 100);
+const TRANSPARENT_WALLPAPER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const preview = (conversation: Conversation) =>
   conversation.lastMessage?.text ||
   conversation.requestMessage ||
@@ -956,7 +958,25 @@ function ConversationView({
   const [returnReason, setReturnReason] = useState("");
   const [commerceActionPending, setCommerceActionPending] = useState(false);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
+  const [wallpaper, setWallpaper] = useState<'neutral' | 'sky' | 'forest' | 'warm' | 'paper'>('neutral');
+  const [wallpaperImageUrl, setWallpaperImageUrl] = useState<string | null>(null);
+  const [wallpaperPickerOpen, setWallpaperPickerOpen] = useState(false);
+  const [wallpaperSaving, setWallpaperSaving] = useState(false);
+  const [wallpaperFeedback, setWallpaperFeedback] = useState<string | null>(null);
   const list = useRef<FlatList<ChatMessage>>(null);
+
+  useEffect(() => {
+    let active = true;
+    setWallpaper('neutral');
+    setWallpaperImageUrl(null);
+    setWallpaperFeedback(null);
+    void dataSource.getWallpaper?.(conversation.id).then((saved) => {
+      if (!active || !saved) return;
+      setWallpaper(saved.style);
+      setWallpaperImageUrl(saved.imageUrl ?? null);
+    }).catch(() => active && setWallpaper('neutral'));
+    return () => { active = false; };
+  }, [conversation.id, dataSource]);
 
   useEffect(() => {
     if (!contactOpen || contactQuery.trim().length < 2) {
@@ -1077,12 +1097,15 @@ function ConversationView({
     }
   };
 
-  const reviewReturnFromChat = async (returnRequestId: string, decision: "approved" | "rejected") => {
+  const reviewReturnFromChat = async (returnRequestId: string, decision: "approved" | "rejected" | "under_review") => {
     if (!dataSource.reviewOrderReturn || commerceActionPending) return;
     setCommerceActionPending(true);
     try {
       await dataSource.reviewOrderReturn({ returnRequestId, decision });
-      Alert.alert(decision === "approved" ? "Return approved" : "Return rejected", "The buyer and commission status have been updated.");
+      Alert.alert(
+        decision === "approved" ? "Return approved" : decision === "rejected" ? "Return rejected" : "More information requested",
+        decision === "under_review" ? "The buyer can reply in this Business Chat with the additional information." : "The buyer and commission status have been updated.",
+      );
     } catch (cause) {
       Alert.alert("Return not updated", cause instanceof Error ? cause.message : "Please retry.");
     } finally {
@@ -1246,6 +1269,55 @@ function ConversationView({
       { text: "7 days", onPress: () => setMode(604800) },
       { text: "Cancel", style: "cancel" },
     ]);
+  };
+  const chooseWallpaper = () => {
+    if (!dataSource.setWallpaper) return;
+    setAttachmentMenuOpen(false);
+    setWallpaperPickerOpen(true);
+  };
+
+  const applyWallpaper = async (style: 'neutral' | 'sky' | 'forest' | 'warm' | 'paper') => {
+    if (!dataSource.setWallpaper || wallpaperSaving) return;
+    setWallpaperSaving(true);
+    try {
+      await dataSource.setWallpaper(conversation.id, style);
+      setWallpaper(style);
+      setWallpaperImageUrl(null);
+      setWallpaperFeedback(`${style === 'neutral' ? 'Neutral' : style[0].toUpperCase() + style.slice(1)} wallpaper applied.`);
+      setWallpaperPickerOpen(false);
+    } catch (cause) {
+      setWallpaperFeedback(cause instanceof Error ? cause.message : 'Wallpaper not updated. Please retry.');
+    } finally {
+      setWallpaperSaving(false);
+    }
+  };
+
+  const chooseWallpaperImage = async () => {
+    if (!dataSource.setWallpaperImage || wallpaperSaving) return;
+    setWallpaperSaving(true);
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) throw new Error('Photo library permission is required.');
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.75 });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      const response = await fetch(asset.uri);
+      if (!response.ok) throw new Error('The wallpaper image could not be read.');
+      const imageUrl = await dataSource.setWallpaperImage({
+        conversationId: conversation.id,
+        bytes: await response.arrayBuffer(),
+        filename: asset.fileName || `wallpaper-${Date.now()}.jpg`,
+        mimeType: asset.mimeType || 'image/jpeg',
+      });
+      setWallpaper('paper');
+      setWallpaperImageUrl(imageUrl);
+      setWallpaperFeedback('Image wallpaper applied.');
+      setWallpaperPickerOpen(false);
+    } catch (cause) {
+      setWallpaperFeedback(cause instanceof Error ? cause.message : 'Wallpaper not updated. Please retry.');
+    } finally {
+      setWallpaperSaving(false);
+    }
   };
   const send = async () => {
     if (conversation.requestStatus && conversation.requestStatus !== "accepted")
@@ -1497,6 +1569,8 @@ function ConversationView({
             <Ellipsis color="#475467" size={20} />
           </Pressable>
         </View>
+        <ImageBackground source={{ uri: wallpaperImageUrl ?? TRANSPARENT_WALLPAPER }} imageStyle={styles.wallpaperImage} style={[styles.wallpaperArea, wallpaper === 'sky' && styles.wallpaperSky, wallpaper === 'forest' && styles.wallpaperForest, wallpaper === 'warm' && styles.wallpaperWarm, wallpaper === 'paper' && styles.wallpaperPaper]}>
+        {wallpaperFeedback ? <View accessibilityLiveRegion="polite" style={styles.wallpaperFeedback}><Text style={styles.wallpaperFeedbackText}>{wallpaperFeedback}</Text></View> : null}
         {sharedPost &&
           (!conversation.requestStatus ||
             conversation.requestStatus === "accepted") && (
@@ -1571,20 +1645,8 @@ function ConversationView({
             }
           />
         )}
+        </ImageBackground>
         <View style={styles.composer}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open attachment menu"
-            disabled={composerLocked}
-            accessibilityState={{ disabled: composerLocked }}
-            onPress={() => setAttachmentMenuOpen(true)}
-            style={[
-              styles.composerAccessory,
-              composerLocked && styles.disabledAction,
-            ]}
-          >
-            <Plus color="#667085" size={22} />
-          </Pressable>
           <View style={styles.inputShell}>
             <Pressable
               accessibilityRole="button"
@@ -1646,6 +1708,16 @@ function ConversationView({
               <MicOff color="#fff" size={19} />
             )}
           </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open attachment menu"
+            disabled={composerLocked}
+            accessibilityState={{ disabled: composerLocked }}
+            onPress={() => setAttachmentMenuOpen(true)}
+            style={[styles.composerAccessory, composerLocked && styles.disabledAction]}
+          >
+            <Plus color="#667085" size={22} />
+          </Pressable>
         </View>
         <EmojiPicker
           open={emojiOpen}
@@ -1679,6 +1751,15 @@ function ConversationView({
           event={() => { setAttachmentMenuOpen(false); setEventOpen(true); }}
           schedule={() => { setAttachmentMenuOpen(false); setScheduleOpen(true); }}
           vanish={chooseVanishMode}
+          wallpaper={chooseWallpaper}
+        />
+        <WallpaperPicker
+          visible={wallpaperPickerOpen}
+          current={wallpaper}
+          saving={wallpaperSaving}
+          close={() => !wallpaperSaving && setWallpaperPickerOpen(false)}
+          apply={(style) => void applyWallpaper(style)}
+          chooseImage={() => void chooseWallpaperImage()}
         />
         <AttachmentPreview
           attachment={pendingAttachment}
@@ -1931,7 +2012,7 @@ function MessageBubble({
   onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
   onAddEvidence?: (orderId: string, orderItemId: string | undefined, title: string, kind: "packing" | "unboxing") => void;
   onRequestReturn?: (orderItemId: string, title: string) => void;
-  onReviewReturn?: (returnRequestId: string, decision: "approved" | "rejected") => void;
+  onReviewReturn?: (returnRequestId: string, decision: "approved" | "rejected" | "under_review") => void;
 }) {
   const systemEvent = message.type === "order_event";
   const mine = !systemEvent && message.senderId === CURRENT_USER_ID;
@@ -2093,6 +2174,9 @@ function MessageBubble({
                   <Pressable accessibilityRole="button" accessibilityLabel="Reject buyer return" onPress={() => onReviewReturn(message.order!.returnRequestId!, "rejected")} style={[styles.orderCommerceButton, styles.returnCommerceButton]}>
                     <Text style={[styles.orderCommerceButtonText, styles.returnCommerceButtonText]}>Reject return</Text>
                   </Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="Request more return information" onPress={() => onReviewReturn(message.order!.returnRequestId!, "under_review")} style={styles.orderCommerceButton}>
+                    <Text style={styles.orderCommerceButtonText}>Request more information</Text>
+                  </Pressable>
                 </View>
               ) : null}
               {showOrderEvidence && message.order.canRequestReturn && onRequestReturn ? (
@@ -2251,6 +2335,69 @@ function MessageBubble({
   );
 }
 
+function WallpaperPicker({
+  visible,
+  current,
+  saving,
+  close,
+  apply,
+  chooseImage,
+}: {
+  visible: boolean;
+  current: 'neutral' | 'sky' | 'forest' | 'warm' | 'paper';
+  saving: boolean;
+  close: () => void;
+  apply: (style: 'neutral' | 'sky' | 'forest' | 'warm' | 'paper') => void;
+  chooseImage: () => void;
+}) {
+  const choices: Array<{ style: 'neutral' | 'sky' | 'forest' | 'warm' | 'paper'; label: string; color: string }> = [
+    { style: 'neutral', label: 'Neutral', color: '#f4f1ea' },
+    { style: 'sky', label: 'Sky', color: '#eaf4ff' },
+    { style: 'forest', label: 'Forest', color: '#edf7ef' },
+    { style: 'warm', label: 'Warm', color: '#fff4ea' },
+    { style: 'paper', label: 'Paper', color: '#fbfaf5' },
+  ];
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+      <View style={styles.wallpaperModalBackdrop}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close wallpaper picker" onPress={close} style={StyleSheet.absoluteFill} />
+        <View accessibilityViewIsModal style={styles.wallpaperModalCard}>
+          <View style={styles.wallpaperModalHeader}>
+            <View>
+              <Text style={styles.wallpaperModalTitle}>Chat wallpaper</Text>
+              <Text style={styles.wallpaperModalSubtitle}>Only this conversation changes. Messages stay readable.</Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close wallpaper picker" onPress={close} disabled={saving} style={styles.wallpaperModalClose}>
+              <X color="#344054" size={20} />
+            </Pressable>
+          </View>
+          <View style={styles.wallpaperChoiceGrid}>
+            {choices.map((choice) => (
+              <Pressable
+                key={choice.style}
+                accessibilityRole="button"
+                accessibilityLabel={`Apply ${choice.label} wallpaper`}
+                accessibilityState={{ selected: current === choice.style, disabled: saving }}
+                disabled={saving}
+                onPress={() => apply(choice.style)}
+                style={[styles.wallpaperChoice, { backgroundColor: choice.color }, current === choice.style && styles.wallpaperChoiceActive]}
+              >
+                <Text style={styles.wallpaperChoiceLabel}>{choice.label}</Text>
+                {current === choice.style ? <CheckCircle2 color="#087443" size={17} /> : null}
+              </Pressable>
+            ))}
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Choose image wallpaper" disabled={saving} onPress={chooseImage} style={[styles.wallpaperImageButton, saving && styles.disabledAction]}>
+            {saving ? <ActivityIndicator color="#087443" /> : <ImageIcon color="#087443" size={19} />}
+            <Text style={styles.wallpaperImageButtonText}>Choose image</Text>
+          </Pressable>
+          <Text style={styles.wallpaperModalHint}>Image selection opens your device photo library.</Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function AttachmentMenu({
   visible,
   close,
@@ -2264,6 +2411,7 @@ function AttachmentMenu({
   event,
   schedule,
   vanish,
+  wallpaper,
 }: {
   visible: boolean;
   close: () => void;
@@ -2277,6 +2425,7 @@ function AttachmentMenu({
   event: () => void;
   schedule: () => void;
   vanish: () => void;
+  wallpaper: () => void;
 }) {
   const actions = [
     { label: "Gallery", icon: ImageIcon, action: gallery },
@@ -2287,6 +2436,7 @@ function AttachmentMenu({
     { label: "Event", icon: Bell, action: event },
     { label: "Schedule", icon: Send, action: schedule },
     { label: "Vanish Mode", icon: X, action: vanish },
+    { label: "Chat wallpaper", icon: ImageIcon, action: wallpaper },
     { label: "Sticker", icon: MessageCircle, action: sticker },
     { label: "Scan Document", icon: Camera, action: scan },
   ];
@@ -3310,6 +3460,27 @@ function NewChatModal({
 }
 
 const styles = StyleSheet.create({
+  wallpaperArea: { flex: 1, backgroundColor: '#f4f1ea' },
+  wallpaperSky: { backgroundColor: '#eaf4ff' },
+  wallpaperForest: { backgroundColor: '#edf7ef' },
+  wallpaperWarm: { backgroundColor: '#fff4ea' },
+  wallpaperPaper: { backgroundColor: '#fbfaf5' },
+  wallpaperImage: { opacity: 0.22 },
+  wallpaperFeedback: { alignSelf: 'center', marginTop: 10, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 999, backgroundColor: '#083f2b' },
+  wallpaperFeedbackText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  wallpaperModalBackdrop: { flex: 1, backgroundColor: '#10182880', justifyContent: 'center', padding: 24 },
+  wallpaperModalCard: { backgroundColor: '#ffffff', borderRadius: 24, padding: 20, maxWidth: 540, width: '100%', alignSelf: 'center', gap: 16 },
+  wallpaperModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14 },
+  wallpaperModalTitle: { color: '#101828', fontSize: 22, fontWeight: '800' },
+  wallpaperModalSubtitle: { color: '#667085', fontSize: 14, lineHeight: 20, marginTop: 4, maxWidth: 380 },
+  wallpaperModalClose: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#f2f4f7', alignItems: 'center', justifyContent: 'center' },
+  wallpaperChoiceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  wallpaperChoice: { minWidth: 124, flexGrow: 1, minHeight: 62, borderRadius: 14, borderWidth: 1, borderColor: '#d0d5dd', paddingHorizontal: 13, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  wallpaperChoiceActive: { borderWidth: 2, borderColor: '#087443' },
+  wallpaperChoiceLabel: { color: '#344054', fontSize: 15, fontWeight: '800' },
+  wallpaperImageButton: { minHeight: 50, borderWidth: 1, borderColor: '#b7ebcd', backgroundColor: '#effbf3', borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  wallpaperImageButtonText: { color: '#087443', fontSize: 16, fontWeight: '800' },
+  wallpaperModalHint: { color: '#667085', fontSize: 12, lineHeight: 17, textAlign: 'center' },
   safe: { flex: 1, backgroundColor: "#ffffff" },
   fill: { flex: 1 },
   header: {

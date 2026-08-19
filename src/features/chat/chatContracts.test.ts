@@ -104,6 +104,14 @@ test("migrations keep authoritative events and private media behind RLS", () => 
     new URL("../../../supabase/migrations/20260817142344_seller_owned_commerce_rearchitecture.sql", import.meta.url),
     "utf8",
   );
+  const wallpaperImageMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260819103000_chat_wallpaper_images.sql", import.meta.url),
+    "utf8",
+  );
+  const clearWallpaperImageMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260819103500_clear_chat_wallpaper_image.sql", import.meta.url),
+    "utf8",
+  );
 
   assert.match(orderMigration, /revoke\s+all\s+on\s+table\s+public\.commerce_order_chat_events/i);
   assert.match(orderMigration, /unique\s*\(order_id,\s*event_type\)/i);
@@ -119,4 +127,10 @@ test("migrations keep authoritative events and private media behind RLS", () => 
   assert.match(commerceFinalizationMigration, /seller_review_creator_commerce_return/i);
   assert.match(commerceFinalizationMigration, /creator_commerce_private_order_participant_read/i);
   assert.match(commerceFinalizationMigration, /get_public_creator_recommendations/i);
+  assert.match(wallpaperImageMigration, /wallpaper_image_path/i);
+  assert.match(wallpaperImageMigration, /private\.can_read_chat_media_path/i);
+  assert.match(wallpaperImageMigration, /public\.is_conversation_member\(target_conversation\)/i);
+  assert.match(wallpaperImageMigration, /object\.owner_id\s*=\s*viewer/i);
+  assert.match(wallpaperImageMigration, /revoke\s+all\s+on\s+function\s+public\.set_chat_wallpaper_image/i);
+  assert.match(clearWallpaperImageMigration, /wallpaper_image_path\s*=\s*null/i);
 });

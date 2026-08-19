@@ -146,7 +146,7 @@ type OrderReturnRow = {
   id: string;
   order_id: string;
   status: string;
-  created_at: string;
+  requested_at: string;
 };
 
 const SUPPORTED_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'] as const;
@@ -521,9 +521,9 @@ export const createSupabaseChatRepository = ({
           .order('created_at', { ascending: false }),
         client
           .from('return_requests')
-          .select('id,order_id,status,created_at')
+          .select('id,order_id,status,requested_at')
           .in('order_id', orderIds)
-          .order('created_at', { ascending: false }),
+          .order('requested_at', { ascending: false }),
       ]);
       if (ordersResult.error) throw new Error(ordersResult.error.message);
       if (evidenceResult.error) throw new Error(evidenceResult.error.message);
@@ -1197,6 +1197,64 @@ export const createSupabaseChatRepository = ({
         target_seconds: seconds,
       });
       if (error) throw new Error(error.message);
+    },
+
+    async getWallpaper(conversationId) {
+      if (!viewerId) return { style: 'neutral', imageUrl: null };
+      const resolvedConversationId = await resolveConversationId(conversationId);
+      const { data, error } = await client.from('chat_conversation_settings')
+        .select('wallpaper_style, wallpaper_image_path').eq('conversation_id', resolvedConversationId).maybeSingle();
+      if (error) throw new Error(error.message);
+      const settings = data as { wallpaper_style?: string; wallpaper_image_path?: string | null } | null;
+      const style = settings?.wallpaper_style;
+      const imagePath = settings?.wallpaper_image_path;
+      const signed = imagePath
+        ? await client.storage.from('chat-media').createSignedUrl(imagePath, 60 * 60)
+        : null;
+      if (signed?.error) throw new Error(signed.error.message);
+      return {
+        style: style === 'sky' || style === 'forest' || style === 'warm' || style === 'paper' ? style : 'neutral',
+        imageUrl: signed?.data?.signedUrl ?? null,
+      };
+    },
+
+    async setWallpaper(conversationId, style) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(conversationId);
+      const { error } = await client.rpc('set_chat_wallpaper', {
+        target_conversation: resolvedConversationId,
+        target_wallpaper: style,
+      });
+      if (error) throw new Error(error.message);
+    },
+
+    async setWallpaperImage(input) {
+      if (!viewerId) throw new Error('Authentication required.');
+      const resolvedConversationId = await resolveConversationId(input.conversationId);
+      if (input.bytes.byteLength < 1 || input.bytes.byteLength > 10_485_760) {
+        throw new Error('Wallpaper images must be 10 MiB or smaller.');
+      }
+      if (!input.mimeType.startsWith('image/')) throw new Error('Choose an image for the wallpaper.');
+      const extension = input.filename.toLowerCase().match(/\.([a-z0-9]{1,8})$/)?.[1]
+        ?? input.mimeType.split('/')[1]?.replace('jpeg', 'jpg')
+        ?? 'jpg';
+      const storagePath = `${resolvedConversationId}/${viewerId}/wallpaper-${createClientMessageId()}.${extension}`;
+      const upload = await client.storage.from('chat-media').upload(storagePath, input.bytes, {
+        contentType: input.mimeType,
+        upsert: false,
+      });
+      if (upload.error) throw new Error(upload.error.message);
+      const { error } = await client.rpc('set_chat_wallpaper_image', {
+        target_conversation: resolvedConversationId,
+        target_storage_path: storagePath,
+      });
+      if (error) {
+        await client.storage.from('chat-media').remove([storagePath]);
+        throw new Error(error.message);
+      }
+      const signed = await client.storage.from('chat-media').createSignedUrl(storagePath, 60 * 60);
+      if (signed.error || !signed.data?.signedUrl) throw new Error(signed.error?.message || 'Wallpaper could not be opened.');
+      return signed.data.signedUrl;
     },
 
     async markConversationRead(conversationId) {
