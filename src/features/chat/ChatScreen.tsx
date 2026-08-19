@@ -193,7 +193,7 @@ export default function ChatScreen({
   const shownRequestSignatureRef = useRef<string | null>(null);
   const initialConversationOpenedRef = useRef(false);
 
-  const loadConversations = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
+  const loadConversations = useCallback(async (mode: "initial" | "refresh" | "silent" = "refresh") => {
     const loadId = ++loadSeqRef.current;
     const shouldBlock =
       mode === "initial" &&
@@ -202,7 +202,7 @@ export default function ChatScreen({
     try {
       setError(null);
       if (shouldBlock) setState("loading");
-      else setIsRefreshing(true);
+      else if (mode === "refresh") setIsRefreshing(true);
       const next = await dataSource.listConversations();
       if (loadId !== loadSeqRef.current) return;
       conversationsRef.current = next;
@@ -276,7 +276,7 @@ export default function ChatScreen({
   const runRealtimeRefresh = useCallback(() => {
     const active = selectedRef.current;
     if (active) void refreshSelectedMessages(active.id);
-    else void loadConversations("refresh");
+    else void loadConversations("silent");
   }, [loadConversations, refreshSelectedMessages]);
 
   const scheduleRealtimeRefresh = useCallback(() => {
@@ -1640,9 +1640,6 @@ function ConversationView({
                 onReviewReturn={(returnRequestId, decision) => void reviewReturnFromChat(returnRequestId, decision)}
               />
             )}
-            onContentSizeChange={() =>
-              list.current?.scrollToEnd({ animated: false })
-            }
           />
         )}
         </ImageBackground>

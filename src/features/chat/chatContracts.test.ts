@@ -134,3 +134,16 @@ test("migrations keep authoritative events and private media behind RLS", () => 
   assert.match(wallpaperImageMigration, /revoke\s+all\s+on\s+function\s+public\.set_chat_wallpaper_image/i);
   assert.match(clearWallpaperImageMigration, /wallpaper_image_path\s*=\s*null/i);
 });
+
+test("background chat sync does not force visible refreshes or reset scroll", () => {
+  const chatScreen = readFileSync(
+    new URL("./ChatScreen.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(chatScreen, /loadConversations\("silent"\)/);
+  assert.doesNotMatch(
+    chatScreen,
+    /onContentSizeChange=\{\(\)\s*=>\s*list\.current\?\.scrollToEnd/,
+  );
+});
