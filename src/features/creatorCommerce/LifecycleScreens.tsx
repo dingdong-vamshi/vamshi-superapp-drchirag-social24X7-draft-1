@@ -17,7 +17,6 @@ import {
   listAdminProductQueue,
   listAdminBuyerAccess,
   listAdminCheckouts,
-  listAdminReturns,
   listBuyerOrderItems,
   listCreatorCommissions,
   listCreatorMarketplaceProducts,
@@ -44,7 +43,6 @@ import {
   type BuyerOrderItem,
   type AdminBuyerAccess,
   type AdminCheckout,
-  type AdminReturnRequest,
   type AdminProductDecision,
   type CartLine,
   type CheckoutSummary,
@@ -505,7 +503,7 @@ export function CreatorLifecycleScreen() {
     try {
       await submitLifecycleReturn(supabase, itemId, returnReason);
       await load();
-      setFeedback({ tone: 'success', message: 'Return request submitted and is now admin-controlled.' });
+      setFeedback({ tone: 'success', message: 'Return request submitted for the seller to review in Business Chat.' });
     } catch (cause) {
       const message = messageFor(cause);
       setFeedback({ tone: 'error', message });
@@ -609,7 +607,6 @@ export function BuyerLifecycleScreen() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkouts, setCheckouts] = useState<CheckoutSummary[]>([]);
   const [buyerItems, setBuyerItems] = useState<BuyerOrderItem[]>([]);
-  const [evidence, setEvidence] = useState<LifecycleOrderEvidence[]>([]);
   const [trackingCode, setTrackingCode] = useState(initialCode);
   const [recipientName, setRecipientName] = useState('Vamshi Test Buyer');
   const [phone, setPhone] = useState('9000000000');
@@ -617,25 +614,22 @@ export function BuyerLifecycleScreen() {
   const [city, setCity] = useState('Bengaluru');
   const [stateCode, setStateCode] = useState('KARNATAKA');
   const [postalCode, setPostalCode] = useState('560102');
-  const [returnReason, setReturnReason] = useState('Manual QA return request for delivered test order.');
 
   const load = useCallback(async () => {
     setState('loading');
     setError(null);
     try {
       if (!supabase) throw new Error('Supabase is not configured.');
-      const [nextMarket, nextCart, nextCheckouts, nextItems, nextEvidence] = await Promise.all([
+      const [nextMarket, nextCart, nextCheckouts, nextItems] = await Promise.all([
         listCreatorMarketplaceProducts(supabase),
         listLifecycleCart(supabase),
         listMyCheckouts(supabase),
         listBuyerOrderItems(supabase),
-        listLifecycleOrderEvidence(supabase),
       ]);
       setMarketplace(nextMarket);
       setCart(nextCart);
       setCheckouts(nextCheckouts);
       setBuyerItems(nextItems);
-      setEvidence(nextEvidence);
       setState('ready');
     } catch (cause) {
       setError(messageFor(cause));
@@ -701,53 +695,12 @@ export function BuyerLifecycleScreen() {
     }
   };
 
-  const requestReturn = async (itemId: string) => {
-    if (!supabase) return;
-    setBusy(true);
-    setFeedback(null);
-    try {
-      await submitLifecycleReturn(supabase, itemId, returnReason);
-      await load();
-      setFeedback({ tone: 'success', message: 'Return request submitted and persisted.' });
-    } catch (cause) {
-      const message = messageFor(cause);
-      setFeedback({ tone: 'error', message });
-      Alert.alert('Return blocked', message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const uploadUnboxingEvidence = async (item: BuyerOrderItem) => {
-    if (!supabase) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setFeedback({ tone: 'error', message: 'Media permission is required to attach unboxing evidence.' });
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.82 });
-    if (result.canceled) return;
-    setBusy(true);
-    setFeedback(null);
-    try {
-      await uploadLifecycleOrderEvidence(supabase, { orderId: item.orderId, orderItemId: item.id, kind: 'unboxing', asset: result.assets[0] });
-      await load();
-      setFeedback({ tone: 'success', message: 'Private unboxing evidence uploaded and persisted.' });
-    } catch (cause) {
-      const message = messageFor(cause);
-      setFeedback({ tone: 'error', message });
-      Alert.alert('Unboxing evidence failed', message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const cartByProduct = useMemo(() => new Map(cart.map((line) => [line.productId, line])), [cart]);
   const cartTotal = cart.reduce((total, line) => total + line.unitPriceMinor * line.quantity, 0);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Header title="Buyer commerce" subtitle="Open creator referrals, manage the real cart, checkout safely, and request returns." />
+      <Header title="Buyer commerce" subtitle="Open creator referrals, manage the real cart, checkout safely, and view order status." />
       <StateBanner state={state} error={error} onRetry={load} />
       <MutationFeedback feedback={feedback} />
       <Panel title="Creator attribution">
@@ -780,12 +733,15 @@ export function BuyerLifecycleScreen() {
         <Field label="Postal code" value={postalCode} onChangeText={setPostalCode} keyboardType="number-pad" />
         <View style={styles.actionRow}><SmallButton label="Checkout external" disabled={busy || !cart.length} onPress={() => void checkout('external')} /><SmallButton label="Checkout COD" disabled={busy || !cart.length} onPress={() => void checkout('cod')} /></View>
       </Panel>
-      <Panel title="Buyer orders and returns">
-        <Field label="Return reason" value={returnReason} onChangeText={setReturnReason} multiline />
-        {buyerItems.length ? buyerItems.map((item) => {
-          const unboxing = evidence.find((asset) => asset.orderItemId === item.id && asset.kind === 'unboxing');
-          return <View key={item.id} style={styles.card}><Text style={styles.cardTitle}>{item.title}</Text><Text style={styles.meta}>{item.storefrontName} · {item.orderStatus} · Qty {item.quantity} · {formatMinor(item.subtotalMinor)}</Text><Text style={styles.meta}>Commission {item.commissionStatus} · Return until {item.returnWindowEndsAt ? new Date(item.returnWindowEndsAt).toLocaleDateString() : 'after delivery'}</Text><EvidencePreview evidence={unboxing} emptyLabel="No unboxing evidence attached." /><SmallButton label={unboxing ? 'Replace unboxing evidence' : 'Submit unboxing evidence'} disabled={busy || !['delivered', 'return_requested'].includes(item.orderStatus)} onPress={() => void uploadUnboxingEvidence(item)} /><SmallButton label="Submit return request" disabled={busy || item.orderStatus !== 'delivered'} onPress={() => void requestReturn(item.id)} /></View>;
-        }) : <Text style={styles.emptyText}>No buyer order items yet.</Text>}
+      <Panel title="Buyer orders">
+        <Text style={styles.meta}>For unboxing evidence or a return, open the linked order in the seller Business Chat. Evidence and return decisions stay private to the buyer and seller there.</Text>
+        {buyerItems.length ? buyerItems.map((item) => (
+          <View key={item.id} style={styles.card}>
+            <Text style={styles.cardTitle}>{item.title}</Text>
+            <Text style={styles.meta}>{item.storefrontName} · {item.orderStatus} · Qty {item.quantity} · {formatMinor(item.subtotalMinor)}</Text>
+            <Text style={styles.meta}>Commission {item.commissionStatus} · Return until {item.returnWindowEndsAt ? new Date(item.returnWindowEndsAt).toLocaleDateString() : 'after delivery'}</Text>
+          </View>
+        )) : <Text style={styles.emptyText}>No buyer order items yet.</Text>}
       </Panel>
       <Panel title="Checkouts">
         {checkouts.length ? checkouts.map((item) => <View key={item.id} style={styles.cardCompact}><Text selectable style={styles.cardTitle}>Checkout {item.id.slice(0, 8)}</Text><Text style={styles.meta}>{item.status} · {item.paymentMethod} · {item.paymentStatus} · {formatMinor(item.totalMinor)}</Text></View>) : <Text style={styles.emptyText}>No checkouts yet.</Text>}
@@ -896,7 +852,6 @@ export function AdminLifecycleOperationsPanel() {
   const [loading, setLoading] = useState(false);
   const [checkouts, setCheckouts] = useState<AdminCheckout[]>([]);
   const [accessRows, setAccessRows] = useState<AdminBuyerAccess[]>([]);
-  const [returns, setReturns] = useState<AdminReturnRequest[]>([]);
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -904,14 +859,12 @@ export function AdminLifecycleOperationsPanel() {
     setLoading(true);
     setFeedback(null);
     try {
-      const [nextCheckouts, nextAccess, nextReturns] = await Promise.all([
+      const [nextCheckouts, nextAccess] = await Promise.all([
         listAdminCheckouts(supabase),
         listAdminBuyerAccess(supabase),
-        listAdminReturns(supabase),
       ]);
       setCheckouts(nextCheckouts);
       setAccessRows(nextAccess);
-      setReturns(nextReturns);
     } catch (cause) {
       setFeedback({ tone: 'error', message: messageFor(cause) });
     } finally {
@@ -940,7 +893,7 @@ export function AdminLifecycleOperationsPanel() {
   return (
     <View style={styles.panel}>
       <View style={styles.rowBetween}>
-        <View style={{ flex: 1 }}><Text style={styles.panelTitle}>Checkout, KYC, and returns test controls</Text><Text style={styles.meta}>Server-authorized controls are available only to Commerce Admin while backend test mode is enabled.</Text></View>
+        <View style={{ flex: 1 }}><Text style={styles.panelTitle}>Checkout and KYC test controls</Text><Text style={styles.meta}>Server-authorized test controls are available only to Commerce Admin while backend test mode is enabled. Buyer returns are reviewed by the seller in Business Chat.</Text></View>
         <Pressable accessibilityRole="button" disabled={loading} onPress={() => void load()} style={styles.iconButton}>{loading ? <ActivityIndicator color="#08713d" /> : <RefreshCcw size={16} color="#08713d" />}</Pressable>
       </View>
       <MutationFeedback feedback={feedback} />
@@ -963,15 +916,6 @@ export function AdminLifecycleOperationsPanel() {
           </View>
         </View>
       )) : <Text style={styles.emptyText}>No buyer access rows.</Text>}
-      <Text style={styles.cardTitle}>Return requests</Text>
-      {returns.length ? returns.map((request) => (
-        <View key={request.id} style={styles.card}>
-          <Text selectable style={styles.cardTitle}>Return {request.id.slice(0, 8)} · {request.status}</Text>
-          <Text selectable style={styles.meta}>Buyer {request.buyerId} · Order {request.orderId.slice(0, 8)}</Text>
-          <Text style={styles.meta}>{request.reason}</Text>
-          <Text style={styles.meta}>Seller decision is required in the buyer/seller Business Chat. Admin can monitor this audit record but does not approve or reject returns.</Text>
-        </View>
-      )) : <Text style={styles.emptyText}>No return requests yet.</Text>}
     </View>
   );
 }

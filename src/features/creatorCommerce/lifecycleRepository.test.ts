@@ -39,9 +39,9 @@ test('seller can edit and publish Seller-controlled product states', () => {
   }
 });
 
-test('admin actions follow the authoritative review state machine', () => {
-  assert.deepEqual(adminProductDecisionsFor('submitted'), ['under_review', 'approved', 'changes_required', 'rejected']);
-  assert.deepEqual(adminProductDecisionsFor('under_review'), ['approved', 'changes_required', 'rejected']);
+test('admin product actions are limited to suspend and reinstate moderation', () => {
+  assert.deepEqual(adminProductDecisionsFor('submitted'), []);
+  assert.deepEqual(adminProductDecisionsFor('under_review'), []);
   assert.deepEqual(adminProductDecisionsFor('approved'), ['suspended']);
   assert.deepEqual(adminProductDecisionsFor('suspended'), ['approved']);
   assert.deepEqual(adminProductDecisionsFor('draft'), []);

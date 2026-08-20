@@ -50,6 +50,7 @@ type AuthContextValue = {
     password: string;
     name?: string;
     username?: string;
+    referralCode?: string;
   }) => Promise<AuthResponse>;
   signUpDemo: (input: {
     phone: string;
@@ -264,6 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string;
       name?: string;
       username?: string;
+      referralCode?: string;
     }) => {
       if (!supabase) {
         throw authNotReady;
@@ -275,6 +277,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           data: {
             name: input.name?.trim() || undefined,
             preferred_username: input.username?.trim() || undefined,
+            reward_referral_code: /^[A-Z0-9]{12}$/.test(input.referralCode?.trim().toUpperCase() || '')
+              ? input.referralCode?.trim().toUpperCase()
+              : undefined,
           },
         },
       });

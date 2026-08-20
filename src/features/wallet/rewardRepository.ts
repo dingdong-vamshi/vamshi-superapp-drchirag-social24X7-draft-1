@@ -12,9 +12,10 @@ export type RewardSnapshot = {
 };
 
 export type RewardNetwork = {
-  totalFriends: number;
-  activeFriends: number;
+  totalReferred: number;
+  activeReferred: number;
   bonusBps: number;
+  referralCode: string;
 };
 
 export type WalletContact = {
@@ -39,7 +40,8 @@ export type RewardRepository = {
   getNetwork(): Promise<RewardNetwork>;
   getContacts(): Promise<WalletContact[]>;
   getReceiveCode(): Promise<string>;
-  transferCoins(input: { recipientId: string; amountMicrounits: number; note?: string }): Promise<void>;
+  openChat(contactId: string): Promise<string>;
+  transferCoins(input: { recipientId: string; amountMicrounits: number; note?: string; idempotencyKey?: string }): Promise<void>;
 };
 
 const unavailable = (): never => {
@@ -55,15 +57,35 @@ export const unavailableRewardRepository: RewardRepository = {
   async getNetwork() { return unavailable(); },
   async getContacts() { return unavailable(); },
   async getReceiveCode() { return unavailable(); },
+  async openChat() { return unavailable(); },
   async transferCoins() { return unavailable(); },
 };
 
 const asNumber = (value: unknown) => Number(value || 0);
 
+export const coinInputToMicrounits = (value: string) => {
+  const clean = value.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(clean)) return null;
+  const [whole, fraction = ""] = clean.split(".");
+  const amount = Number(whole) * 1_000_000 + Number((fraction + "000000").slice(0, 6));
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+};
+
+export const readWalletRecipient = (raw: string) => {
+  try {
+    const parsed = new URL(raw);
+    const id = parsed.searchParams.get("user");
+    const validId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id || "");
+    return parsed.protocol === "social24:" && parsed.hostname === "wallet" && parsed.pathname === "/receive" && validId ? id : null;
+  } catch {
+    return null;
+  }
+};
+
 // Native runtimes do not all expose crypto.randomUUID. The idempotency key is
 // still generated client-side only to make a repeated submit retry-safe; the
 // database remains the authority for the transfer itself.
-const createTransferIdempotencyKey = () => {
+export const createTransferIdempotencyKey = () => {
   const nativeUuid = globalThis.crypto?.randomUUID?.();
   if (nativeUuid) return nativeUuid;
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
@@ -114,13 +136,14 @@ export function createSupabaseRewardRepository(client: SupabaseClient): RewardRe
       return asNumber(data);
     },
     async getNetwork() {
-      const { data, error } = await client.rpc("get_my_reward_network");
+      const { data, error } = await client.rpc("get_my_reward_referral_network");
       if (error) throw new Error(error.message);
       const row = Array.isArray(data) ? data[0] : data;
       return {
-        totalFriends: asNumber(row?.total_friends),
-        activeFriends: asNumber(row?.active_friends),
+        totalReferred: asNumber(row?.total_referred),
+        activeReferred: asNumber(row?.active_referred),
         bonusBps: asNumber(row?.bonus_bps),
+        referralCode: typeof row?.referral_code === "string" ? row.referral_code : "",
       } satisfies RewardNetwork;
     },
     async getContacts() {
@@ -154,6 +177,12 @@ export function createSupabaseRewardRepository(client: SupabaseClient): RewardRe
       if (error || !data.user) throw new Error("Sign in to receive Social24 Coins.");
       return `social24://wallet/receive?user=${encodeURIComponent(data.user.id)}`;
     },
+    async openChat(contactId) {
+      const { data, error } = await client.rpc("open_personal_conversation", { participant: contactId });
+      if (error) throw new Error(error.message);
+      if (typeof data !== "string" || !data) throw new Error("This friend chat could not be opened.");
+      return data;
+    },
     async transferCoins(input) {
       if (!Number.isSafeInteger(input.amountMicrounits) || input.amountMicrounits <= 0) {
         throw new Error("Enter a positive coin amount.");
@@ -162,7 +191,7 @@ export function createSupabaseRewardRepository(client: SupabaseClient): RewardRe
         p_recipient_id: input.recipientId,
         p_amount_microunits: input.amountMicrounits,
         p_note: input.note?.trim() || null,
-        p_idempotency_key: createTransferIdempotencyKey(),
+        p_idempotency_key: input.idempotencyKey || createTransferIdempotencyKey(),
       });
       if (error) throw new Error(error.message);
     },
@@ -171,4 +200,4 @@ export function createSupabaseRewardRepository(client: SupabaseClient): RewardRe
 
 export const formatCoins = (microunits: number) =>
   new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })
-    .format(Math.max(0, microunits) / 1_000_000);
+    .format(microunits / 1_000_000);

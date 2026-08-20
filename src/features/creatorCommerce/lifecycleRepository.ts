@@ -356,8 +356,6 @@ export const canSubmitLifecycleProduct = canEditLifecycleProduct;
 export type AdminProductDecision = 'under_review' | 'approved' | 'changes_required' | 'rejected' | 'suspended';
 
 export const adminProductDecisionsFor = (status: ProductApprovalStatus): AdminProductDecision[] => {
-  if (status === 'submitted') return ['under_review', 'approved', 'changes_required', 'rejected'];
-  if (status === 'under_review') return ['approved', 'changes_required', 'rejected'];
   if (status === 'approved') return ['suspended'];
   if (status === 'suspended') return ['approved'];
   return [];

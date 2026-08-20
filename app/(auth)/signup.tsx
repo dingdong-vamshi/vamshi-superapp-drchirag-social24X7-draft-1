@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Link, router } from "expo-router";
+import { Link, router, useLocalSearchParams } from "expo-router";
 import {
   ArrowRight,
   AtSign,
@@ -41,6 +41,8 @@ function sanitizeHandle(value: string) {
 
 export default function SignupScreen() {
   const { signUp, signUpDemo, configured } = useAuth();
+  const params = useLocalSearchParams<{ ref?: string | string[] }>();
+  const referralCode = typeof params.ref === "string" ? params.ref.trim().toUpperCase() : "";
   const [mode, setMode] = useState<"demo" | "email">("demo");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -103,6 +105,7 @@ export default function SignupScreen() {
         password,
         name: name.trim(),
         username: cleanUsername,
+        referralCode,
       });
       if (result.error) {
         Alert.alert("Sign up failed", result.error.message);

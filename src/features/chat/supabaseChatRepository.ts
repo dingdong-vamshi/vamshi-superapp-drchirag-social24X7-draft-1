@@ -576,7 +576,7 @@ export const createSupabaseChatRepository = ({
             canRequestReturn: viewerRole === 'buyer' && liveStatus === 'delivered' && unboxingEvidence.length > 0 && !returnRequest,
             returnRequestId: returnRequest?.id,
             returnStatus: returnRequest?.status,
-            canReviewReturn: viewerRole === 'seller' && returnRequest?.status === 'submitted',
+            canReviewReturn: viewerRole === 'seller' && ['submitted', 'under_review'].includes(returnRequest?.status ?? ''),
           },
         };
       });
