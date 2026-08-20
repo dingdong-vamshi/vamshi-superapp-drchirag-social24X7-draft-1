@@ -23,6 +23,7 @@ export type NearbyPerson = {
   interests: string[];
   distanceKm: number | null;
   requestStatus: "none" | "incoming" | "outgoing" | "accepted";
+  isOnline: boolean;
 };
 
 export type NearbyRequest = {
@@ -57,7 +58,7 @@ const requestState = (requests: any[], viewerId: string, otherId: string): Nearb
   return pair.requester_id === viewerId ? "outgoing" : "incoming";
 };
 
-export async function getNearbyWorkspace(user: unknown, radiusKm = 5) {
+export async function getNearbyWorkspace(user: unknown, radiusKm = 5, onlineOnly = false) {
   const active = requireUser(user);
   const [prefRes, requestRes, profileRes] = await Promise.all([
     supabase!.from("nearby_people_preferences").select("*").eq("user_id", active.id).maybeSingle(),
@@ -80,7 +81,7 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5) {
     .map((request: any) => request.requester_id === active.id ? request.recipient_id : request.requester_id);
   const [nearbyRes, friendProfilesRes, requestProfilesRes] = await Promise.all([
     preference.enabled && preference.hasApproximateLocation
-      ? supabase!.rpc("get_nearby_people", { p_radius_km: radiusKm })
+      ? supabase!.rpc("get_nearby_people", { p_radius_km: radiusKm, p_online_only: onlineOnly })
       : Promise.resolve({ data: [], error: null }),
     friendIds.length
       ? supabase!.from("profiles").select("id,username,display_name,bio").in("id", friendIds)
@@ -100,6 +101,7 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5) {
     interests: row.interests ?? [],
     distanceKm: row.distance_km === null ? null : Number(row.distance_km),
     requestStatus: row.request_status === "accepted" || row.request_status === "incoming" || row.request_status === "outgoing" ? row.request_status : "none",
+    isOnline: Boolean(row.is_online),
   }));
   const profileById = new Map([...(friendProfilesRes.data ?? []), ...(requestProfilesRes.data ?? [])].map((profile: any) => [profile.id, profile]));
 
@@ -111,7 +113,7 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5) {
       return {
         id: request.id,
         otherUserId: otherId,
-        name: profile?.name ?? "Social 24x7 user",
+        name: profile?.display_name || profile?.username || "Social 24x7 user",
         username: profile?.username ?? otherId.slice(0, 8),
         status: request.requester_id === active.id ? "outgoing" : "incoming",
         createdAt: request.created_at,
@@ -120,7 +122,7 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5) {
 
   const friends: NearbyPerson[] = friendIds.map((id): NearbyPerson | null => {
     const profile = profileById.get(id);
-    return profile ? { ...normalizeProfile(profile), interests: [], distanceKm: null, requestStatus: "accepted" as const } : null;
+    return profile ? { ...normalizeProfile(profile), interests: [], distanceKm: null, requestStatus: "accepted" as const, isOnline: false } : null;
   }).filter((person): person is NearbyPerson => person !== null);
   const profile = profileRes.data;
   const myProfile: MyNearbyProfile = {
@@ -130,6 +132,12 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5) {
     interests: Array.isArray(pref?.interests) ? pref.interests : [],
   };
   return { preference, people: preference.enabled ? people : [], requests: requestCards, friends, myProfile };
+}
+
+export async function touchNearbyPresence(user: unknown) {
+  requireUser(user);
+  const { error } = await supabase!.rpc("touch_my_nearby_presence");
+  if (error) throw new Error(error.message);
 }
 
 export async function saveNearbyPreference(input: {

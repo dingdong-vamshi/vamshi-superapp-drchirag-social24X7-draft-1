@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Alert, PanResponder, Pressable, SafeAreaView, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
@@ -11,6 +11,7 @@ import {
   respondNearbyRequest,
   sendNearbyRequest,
   saveNearbyPreference,
+  touchNearbyPresence,
   type NearbyPerson,
   type NearbyRequest,
 } from "./nearbyPeopleRepository";
@@ -22,19 +23,32 @@ export default function NearbyPeopleScreen() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<(typeof tabs)[number]>("Discover");
   const [radiusKm, setRadiusKm] = useState(5);
+  const [committedRadiusKm, setCommittedRadiusKm] = useState(5);
+  const [onlineOnly, setOnlineOnly] = useState(false);
   const [passedIds, setPassedIds] = useState<string[]>([]);
 
   const workspaceQuery = useQuery({
-    queryKey: ["nearby-people", user && "id" in user ? user.id : "guest"],
-    queryFn: () => getNearbyWorkspace(user, radiusKm),
+    queryKey: ["nearby-people", user && "id" in user ? user.id : "guest", committedRadiusKm, onlineOnly],
+    queryFn: () => getNearbyWorkspace(user, committedRadiusKm, onlineOnly),
     enabled: initialized && Boolean(user && "id" in user),
+    refetchInterval: 60_000,
   });
   const refresh = async () => queryClient.invalidateQueries({ queryKey: ["nearby-people"] });
   const preference = workspaceQuery.data?.preference;
   const enabled = Boolean(preference?.enabled);
   useEffect(() => {
-    if (preference?.radiusKm) setRadiusKm(preference.radiusKm);
+    if (preference?.radiusKm) {
+      setRadiusKm(preference.radiusKm);
+      setCommittedRadiusKm(preference.radiusKm);
+    }
   }, [preference?.radiusKm]);
+  useEffect(() => {
+    if (!enabled || !user || !("id" in user)) return;
+    const touch = () => void touchNearbyPresence(user).catch(() => undefined);
+    touch();
+    const heartbeat = setInterval(touch, 60_000);
+    return () => clearInterval(heartbeat);
+  }, [enabled, user]);
 
   const toggleMutation = useMutation({
     mutationFn: async (nextEnabled: boolean) => {
@@ -66,25 +80,19 @@ export default function NearbyPeopleScreen() {
   const radiusMutation = useMutation({
     mutationFn: async (nextRadiusKm: number) => {
       if (!enabled) return;
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (!permission.granted) throw new Error("Location permission is needed to update your Nearby radius.");
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       await saveNearbyPreference({
         user,
         enabled: true,
         radiusKm: nextRadiusKm,
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
         interests: workspaceQuery.data?.myProfile.interests,
       });
     },
     onSuccess: refresh,
     onError: (error) => Alert.alert("Could not update radius", error instanceof Error ? error.message : "Please try again."),
   });
-  const cycleRadius = () => {
-    const options = [1, 5, 10, 25, 50];
-    const nextRadiusKm = options[(options.indexOf(radiusKm) + 1) % options.length];
+  const commitRadius = (nextRadiusKm: number) => {
     setRadiusKm(nextRadiusKm);
+    setCommittedRadiusKm(nextRadiusKm);
     if (enabled) radiusMutation.mutate(nextRadiusKm);
   };
 
@@ -117,13 +125,20 @@ export default function NearbyPeopleScreen() {
           <>
             <View style={styles.controlCard}>
               <Text style={styles.distance}>Distance: {radiusKm.toFixed(1)}km</Text>
-              <Pressable accessibilityRole="adjustable" accessibilityLabel="Nearby distance radius" onPress={cycleRadius} style={styles.sliderTrack}><View style={[styles.sliderFill, { width: `${Math.min(100, radiusKm * 2)}%` }]} /><View style={[styles.sliderKnob, { left: `${Math.max(0, Math.min(92, radiusKm * 2 - 2))}%` }]} /></Pressable>
+              <RadiusSlider value={radiusKm} onChange={setRadiusKm} onCommit={commitRadius} />
+              <View style={styles.switchRow}>
+                <View>
+                  <Text style={styles.switchLabel}>Nearby visibility</Text>
+                  <Text style={styles.hint}>Share only a rounded location with people inside your selected radius.</Text>
+                </View>
+                <Switch value={enabled} disabled={toggleMutation.isPending} onValueChange={(value) => toggleMutation.mutate(value)} />
+              </View>
               <View style={styles.switchRow}>
                 <View>
                   <Text style={styles.switchLabel}>Online only</Text>
-                  <Text style={styles.hint}>We save only a rounded location and show other people an approximate distance, never your exact coordinates.</Text>
+                  <Text style={styles.hint}>Show only people active in Nearby during the last three minutes.</Text>
                 </View>
-                <Switch value={enabled} onValueChange={(value) => toggleMutation.mutate(value)} />
+                <Switch value={onlineOnly} disabled={!enabled} onValueChange={setOnlineOnly} />
               </View>
             </View>
             {workspaceQuery.isLoading ? <Empty title="Loading nearby people" text="Checking discoverable profiles..." icon={<Users color="#98a2b3" size={56} />} /> : null}
@@ -162,13 +177,44 @@ function PersonCard({ person, onConnect, onPass }: { person: NearbyPerson; onCon
       <View style={styles.cardBody}>
         <View style={styles.verified}><Text style={styles.verifiedText}>✓ Verified</Text></View>
         <Text style={styles.cardTitle}>{person.name}</Text>
-        <Text style={styles.meta}>{person.distanceKm ? `${person.distanceKm.toFixed(1)}km away` : "Distance hidden"} · @{person.username}</Text>
+        <Text style={styles.meta}>{person.distanceKm ? `${person.distanceKm.toFixed(1)}km away` : "Distance hidden"} · @{person.username} · {person.isOnline ? "Online" : "Recently seen"}</Text>
         <Text style={styles.meta}>{person.bio || "Social 24x7 member"}</Text>
         <View style={styles.tags}><Text style={styles.tag}>Community</Text><Text style={styles.tag}>Nearby</Text></View>
         {onConnect ? <View style={styles.cardActions}><Pressable disabled={!canConnect} onPress={onConnect} style={[styles.darkButton, styles.cardAction, !canConnect && styles.disabled]}><Text style={styles.darkButtonText}>{label}</Text></Pressable>{canConnect ? <Pressable onPress={onPass} style={styles.passButton}><Text style={styles.passButtonText}>Pass</Text></Pressable> : null}</View> : null}
       </View>
     </View>
   );
+}
+
+function RadiusSlider({ value, onChange, onCommit }: { value: number; onChange: (value: number) => void; onCommit: (value: number) => void }) {
+  const widthRef = useRef(1);
+  const currentRef = useRef(value);
+  currentRef.current = value;
+  const updateFromPosition = (position: number, commit: boolean) => {
+    const next = Math.max(1, Math.min(50, Math.round(1 + (Math.max(0, Math.min(widthRef.current, position)) / widthRef.current) * 49)));
+    currentRef.current = next;
+    onChange(next);
+    if (commit) onCommit(next);
+  };
+  const responder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderGrant: (event) => updateFromPosition(event.nativeEvent.locationX, false),
+    onPanResponderMove: (event) => updateFromPosition(event.nativeEvent.locationX, false),
+    onPanResponderRelease: (event) => updateFromPosition(event.nativeEvent.locationX, true),
+    onPanResponderTerminate: () => onCommit(currentRef.current),
+  }), [onChange, onCommit]);
+  const percent = ((value - 1) / 49) * 100;
+  return <View
+    {...responder.panHandlers}
+    accessibilityRole="adjustable"
+    accessibilityLabel="Nearby distance radius"
+    accessibilityValue={{ min: 1, max: 50, now: value, text: `${value} kilometres` }}
+    accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
+    onAccessibilityAction={(event) => onCommit(Math.max(1, Math.min(50, value + (event.nativeEvent.actionName === "increment" ? 1 : -1))))}
+    onLayout={(event) => { widthRef.current = Math.max(1, event.nativeEvent.layout.width); }}
+    style={styles.sliderTrack}
+  ><View style={[styles.sliderFill, { width: `${percent}%` }]} /><View style={[styles.sliderKnob, { left: `${Math.max(0, Math.min(94, percent - 2))}%` }]} /></View>;
 }
 
 function RequestCard({ request, onAccept, onDecline }: { request: NearbyRequest; onAccept: () => void; onDecline: () => void }) {

@@ -28,7 +28,7 @@ export default function BusinessConversationPage() {
       onViewStore={(slug) =>
         router.push({ pathname: "/store/[slug]", params: { slug } })
       }
-      onViewOrder={(orderId) => router.push(`/commerce/order/${orderId}`)}
+      onViewOrder={(orderId) => router.push({ pathname: "/commerce/order/[id]", params: { id: orderId, from: "chats" } })}
       onViewProfile={(userId) =>
         router.push({ pathname: "/social-profile", params: { userId } })
       }

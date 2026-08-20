@@ -9,7 +9,7 @@ import { useAuth } from '../../src/lib/AuthContext';
 import { supabase } from '../../src/lib/supabase';
 
 export default function ChatsPage() {
-  const params = useLocalSearchParams<{ sharedId?: string; sharedAuthor?: string; sharedCaption?: string }>();
+  const params = useLocalSearchParams<{ sharedId?: string; sharedAuthor?: string; sharedCaption?: string; conversationId?: string }>();
   const { user } = useAuth();
   const [viewer, setViewer] = useState<ChatContact | null>(null);
   const sharedPost = params.sharedId && params.sharedAuthor && params.sharedCaption ? { id: params.sharedId, author: params.sharedAuthor, caption: params.sharedCaption } : undefined;
@@ -45,5 +45,5 @@ export default function ChatsPage() {
     return () => { mounted = false; };
   }, [user]);
 
-  return <ChatScreen dataSource={repository} callAdapter={callAdapter} viewer={viewer} onOpenOwnProfile={() => router.push('/profile')} sharedPost={sharedPost} onShareComplete={() => router.replace('/chats')} onOpenQr={() => router.push('/profile-qr')} onBusinessSearch={() => router.push('/business-directory')} onViewStore={(slug) => router.push({ pathname: '/store/[slug]', params: { slug } })} onViewOrder={(orderId) => router.push(`/commerce/order/${orderId}`)} onViewProfile={(userId) => router.push({ pathname: '/social-profile', params: { userId } })} />;
+  return <ChatScreen dataSource={repository} callAdapter={callAdapter} viewer={viewer} initialConversationId={params.conversationId} onOpenOwnProfile={() => router.push('/profile')} sharedPost={sharedPost} onShareComplete={() => router.replace('/chats')} onOpenQr={() => router.push('/profile-qr')} onBusinessSearch={() => router.push('/business-directory')} onViewStore={(slug) => router.push({ pathname: '/store/[slug]', params: { slug } })} onViewOrder={(orderId) => router.push({ pathname: '/commerce/order/[id]', params: { id: orderId, from: 'chats' } })} onViewProfile={(userId) => router.push({ pathname: '/social-profile', params: { userId } })} />;
 }

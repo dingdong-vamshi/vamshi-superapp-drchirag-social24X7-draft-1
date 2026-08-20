@@ -134,6 +134,24 @@ const formatTime = (date: string) =>
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(date));
+const formatCaptureTimestamp = (date: string) =>
+  new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  })
+    .format(new Date(date))
+    .replace(",", " •");
+const trustedCaptureLabel = (mimeType: string, capturedAt: string) =>
+  `${mimeType.startsWith("video/") ? "TRUE VIDEO" : "TRUE PHOTO"} • ${formatCaptureTimestamp(capturedAt)}`;
+// Storage signed URLs are deliberately short lived and can be regenerated on
+// every background refresh. They are not a message change, so including them
+// in the comparison causes a needless list replacement (and a scroll jump).
+const messageRefreshSignature = (messages: ChatMessage[]) =>
+  JSON.stringify(messages, (key, value) => (key === "signedUrl" ? undefined : value));
 const formatMinor = (value: number, currency = "INR") =>
   new Intl.NumberFormat(undefined, {
     style: "currency",
@@ -192,6 +210,15 @@ export default function ChatScreen({
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownRequestSignatureRef = useRef<string | null>(null);
   const initialConversationOpenedRef = useRef(false);
+  const messageSignatureRef = useRef("");
+  const selectedRefreshInFlightRef = useRef(false);
+
+  const replaceMessagesIfChanged = useCallback((next: ChatMessage[]) => {
+    const signature = messageRefreshSignature(next);
+    if (signature === messageSignatureRef.current) return;
+    messageSignatureRef.current = signature;
+    setMessages(next);
+  }, []);
 
   const loadConversations = useCallback(async (mode: "initial" | "refresh" | "silent" = "refresh") => {
     const loadId = ++loadSeqRef.current;
@@ -229,6 +256,7 @@ export default function ChatScreen({
   const openConversation = useCallback(
     async (conversation: Conversation) => {
       setSelected(conversation);
+      messageSignatureRef.current = "";
       if (
         conversation.requestStatus &&
         conversation.requestStatus !== "accepted"
@@ -240,7 +268,7 @@ export default function ChatScreen({
       setState("loading");
       try {
         await dataSource.markConversationRead(conversation.id);
-        setMessages(await dataSource.listMessages(conversation.id));
+        replaceMessagesIfChanged(await dataSource.listMessages(conversation.id));
         setState("ready");
       } catch {
         setError(
@@ -249,21 +277,30 @@ export default function ChatScreen({
         setState("error");
       }
     },
-    [dataSource],
+    [dataSource, replaceMessagesIfChanged],
   );
 
   const refreshSelectedMessages = useCallback(
     async (conversationId: string) => {
+      if (selectedRefreshInFlightRef.current) return;
+      selectedRefreshInFlightRef.current = true;
       try {
-        setMessages(await dataSource.listMessages(conversationId));
+        const next = await dataSource.listMessages(conversationId);
+        if (selectedRef.current?.id === conversationId) {
+          replaceMessagesIfChanged(next);
+        }
         setState("ready");
       } catch {
         setError(
           "Messages could not be refreshed. Check your connection and try again.",
         );
+      } finally {
+        selectedRefreshInFlightRef.current = false;
+        // A refresh fetches the latest complete message list. Subsequent realtime
+        // signals are debounced and only replace the list when its content changed.
       }
     },
-    [dataSource],
+    [dataSource, replaceMessagesIfChanged],
   );
 
   useEffect(() => {
@@ -281,7 +318,7 @@ export default function ChatScreen({
 
   const scheduleRealtimeRefresh = useCallback(() => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = setTimeout(runRealtimeRefresh, 250);
+    refreshTimerRef.current = setTimeout(runRealtimeRefresh, 450);
   }, [runRealtimeRefresh]);
 
   useEffect(() => {
@@ -1113,10 +1150,12 @@ function ConversationView({
     }
   };
 
-  const pickDocument = async () => {
+  const pickDocument = async (includeImages = false) => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ["application/pdf", "text/plain", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        type: includeImages
+          ? ["application/pdf", "image/*"]
+          : ["application/pdf", "text/plain", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
         copyToCacheDirectory: true,
         multiple: false,
       });
@@ -1135,6 +1174,16 @@ function ConversationView({
     }
   };
 
+  const scanDocument = async () => {
+    if (Platform.OS === "web") {
+      // Web does not offer reliable edge-detection or native document camera APIs.
+      // This is an honest, useful image/PDF capture-upload fallback rather than a fake scan.
+      await pickDocument(true);
+      return;
+    }
+    await captureMedia("document_scan");
+  };
+
   const sendPendingAttachment = async () => {
     if (!pendingAttachment || !dataSource.sendAttachment || attachmentSending) return;
     setAttachmentSending(true);
@@ -1142,9 +1191,7 @@ function ConversationView({
       const response = await fetch(pendingAttachment.uri);
       if (!response.ok) throw new Error("The selected file could not be read.");
       const bytes = await response.arrayBuffer();
-      if (pendingAttachment.size && pendingAttachment.size !== bytes.byteLength) {
-        throw new Error("The selected file changed before upload. Please select it again.");
-      }
+      if (!bytes.byteLength) throw new Error("The selected file is empty. Please select it again.");
       await dataSource.sendAttachment({
         conversationId: conversation.id,
         bytes,
@@ -1743,7 +1790,7 @@ function ConversationView({
           location={() => void shareLocation()}
           contact={() => { setAttachmentMenuOpen(false); setContactOpen(true); }}
           sticker={() => { setAttachmentMenuOpen(false); setStickersOpen(true); }}
-          scan={() => void captureMedia("document_scan")}
+          scan={() => void scanDocument()}
           poll={() => { setAttachmentMenuOpen(false); setPollOpen(true); }}
           event={() => { setAttachmentMenuOpen(false); setEventOpen(true); }}
           schedule={() => { setAttachmentMenuOpen(false); setScheduleOpen(true); }}
@@ -2063,10 +2110,10 @@ function MessageBubble({
         ) : null}
         <MessageSurface
           systemEvent={systemEvent}
-          accessibilityRole={systemEvent || message.poll || message.event ? undefined : "button"}
+          accessibilityRole={!systemEvent && !message.poll && !message.event && !message.order && !message.attachment && openStructured ? "button" : undefined}
           accessibilityLabel={systemEvent ? "System order update" : `${mine ? "Your" : "Received"} message. Long press for actions.`}
           onLongPress={systemEvent ? undefined : onLongPress}
-          onPress={systemEvent || message.poll || message.event ? undefined : openStructured}
+          onPress={systemEvent || message.poll || message.event || message.order || message.attachment ? undefined : openStructured}
           webLongPressProps={systemEvent ? {} : webLongPressProps}
           style={[
             styles.message,
@@ -2118,7 +2165,7 @@ function MessageBubble({
                     <Pressable accessibilityRole="button" accessibilityLabel={`View private packing evidence ${evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => evidence.signedUrl ? void Linking.openURL(evidence.signedUrl) : undefined} style={styles.orderEvidenceRow}>
                       <View style={styles.grow}>
                         <Text style={styles.orderEvidenceTitle} numberOfLines={1}>{evidence.filename}</Text>
-                        <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? "Live Capture" : "Uploaded file"} · Buyer and seller only</Text>
+                        <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? trustedCaptureLabel(evidence.mimeType, evidence.createdAt) : "Uploaded file"} · Buyer and seller only</Text>
                       </View>
                       {evidence.signedUrl ? <Text style={styles.orderEventAction}>View</Text> : null}
                     </Pressable>
@@ -2142,7 +2189,7 @@ function MessageBubble({
                       <Pressable accessibilityRole="button" accessibilityLabel={`View private unboxing evidence for ${item?.title ?? evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => evidence.signedUrl ? void Linking.openURL(evidence.signedUrl) : undefined} style={styles.orderEvidenceRow}>
                         <View style={styles.grow}>
                           <Text style={styles.orderEvidenceTitle} numberOfLines={1}>{item?.title ?? evidence.filename}</Text>
-                          <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? "Live capture" : "Uploaded file"} · Buyer, seller and admin only</Text>
+                          <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? trustedCaptureLabel(evidence.mimeType, evidence.createdAt) : "Uploaded file"} · Buyer and seller only</Text>
                         </View>
                         {evidence.signedUrl ? <Text style={styles.orderEventAction}>View</Text> : null}
                       </Pressable>
@@ -2206,11 +2253,22 @@ function MessageBubble({
                 {message.attachment.attachmentType} · {(message.attachment.bytes / 1_048_576).toFixed(1)} MiB
               </Text>
               {message.attachment.source === "camera_capture" ? (
-                <Text style={styles.liveCaptureBadge}>Captured Live · app provenance</Text>
+                <Text style={styles.liveCaptureBadge}>{trustedCaptureLabel(message.attachment.mimeType, message.createdAt)}</Text>
               ) : message.attachment.source === "document_scan" ? (
                 <Text style={styles.scanBadge}>Scanned in app</Text>
               ) : null}
-              {message.attachment.signedUrl ? <Text style={styles.orderEventAction}>Open attachment</Text> : null}
+              {message.attachment.attachmentType === "video" && message.attachment.signedUrl && Platform.OS === "web" ? (
+                createElement("video", {
+                  controls: true,
+                  src: message.attachment.signedUrl,
+                  style: { width: "100%", maxWidth: 300, borderRadius: 14, marginTop: 4, backgroundColor: "#17241c" },
+                })
+              ) : null}
+              {message.attachment.signedUrl ? (
+                <Pressable accessibilityRole="button" accessibilityLabel={`Open attachment ${message.attachment.filename}`} onPress={() => void Linking.openURL(message.attachment!.signedUrl!)}>
+                  <Text style={styles.orderEventAction}>Open attachment</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
           {message.location ? (
@@ -2476,7 +2534,7 @@ function AttachmentPreview({ attachment, sending, cancel, send }: {
           <Text style={styles.sheetTitle}>Preview attachment</Text>
           {attachment?.mimeType.startsWith("image/") ? <Image source={{ uri: attachment.uri }} style={styles.previewImage} resizeMode="contain" /> : <View style={styles.previewFile}><FileText color="#087c43" size={42} /></View>}
           <Text style={styles.previewName}>{attachment?.filename}</Text>
-          <Text style={styles.sheetSubtitle}>{attachment?.mimeType}{attachment?.source === "camera_capture" ? " · Captured Live (app provenance)" : ""}</Text>
+          <Text style={styles.sheetSubtitle}>{attachment?.mimeType}{attachment?.source === "camera_capture" ? " · TRUE camera capture" : ""}</Text>
           <View style={styles.previewActions}>
             <Pressable accessibilityRole="button" disabled={sending} onPress={cancel} style={styles.previewCancel}><Text style={styles.previewCancelText}>Cancel</Text></Pressable>
             <Pressable accessibilityRole="button" disabled={sending} onPress={send} style={styles.previewSend}>{sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Send</Text>}</Pressable>
@@ -2613,7 +2671,7 @@ function UnboxingEvidenceModal({ target, pending, close, choose }: {
         <Text style={styles.evidenceHelp}>Choose how this evidence was created. The source is stored and shown clearly on the order card.</Text>
         <Pressable accessibilityRole="button" disabled={pending} onPress={() => choose("live_capture")} style={styles.evidenceChoice}>
           <View style={styles.evidenceChoiceIcon}><Camera color="#087c43" size={24} /></View>
-          <View style={styles.grow}><Text style={styles.evidenceChoiceTitle}>Use Camera — Live evidence</Text><Text style={styles.evidenceChoiceText}>Capture a new photo or video now. It will be labelled Live capture.</Text></View>
+          <View style={styles.grow}><Text style={styles.evidenceChoiceTitle}>Use Camera — TRUE capture</Text><Text style={styles.evidenceChoiceText}>Capture a new photo or video now. Server-issued evidence metadata will show TRUE PHOTO or TRUE VIDEO with a timestamp.</Text></View>
         </Pressable>
         <Pressable accessibilityRole="button" disabled={pending} onPress={() => choose("uploaded_file")} style={styles.evidenceChoice}>
           <View style={styles.evidenceChoiceIcon}><ImageIcon color="#087c43" size={24} /></View>
@@ -3457,12 +3515,12 @@ function NewChatModal({
 }
 
 const styles = StyleSheet.create({
-  wallpaperArea: { flex: 1, backgroundColor: '#f4f1ea' },
+  wallpaperArea: { flex: 1, backgroundColor: '#edf6ef' },
   wallpaperSky: { backgroundColor: '#eaf4ff' },
   wallpaperForest: { backgroundColor: '#edf7ef' },
   wallpaperWarm: { backgroundColor: '#fff4ea' },
   wallpaperPaper: { backgroundColor: '#fbfaf5' },
-  wallpaperImage: { opacity: 0.22 },
+  wallpaperImage: { opacity: 1 },
   wallpaperFeedback: { alignSelf: 'center', marginTop: 10, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 999, backgroundColor: '#083f2b' },
   wallpaperFeedbackText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   wallpaperModalBackdrop: { flex: 1, backgroundColor: '#10182880', justifyContent: 'center', padding: 24 },
@@ -3947,7 +4005,7 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
   },
   retryText: { color: "#FFFFFF", fontWeight: "600" },
-  conversationScreen: { backgroundColor: "#ebe7df" },
+  conversationScreen: { backgroundColor: "#edf6ef" },
   conversationHeader: {
     minHeight: 60,
     paddingHorizontal: 12,
@@ -4014,7 +4072,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   pendingShareButtonText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
-  messageList: { padding: 16, paddingBottom: 24, gap: 8 },
+  messageList: { padding: 12, paddingBottom: 20, gap: 6 },
   messageWrap: { alignItems: "flex-start" },
   grow: { flex: 1 },
   mineWrap: { alignItems: "flex-end" },
@@ -4028,10 +4086,10 @@ const styles = StyleSheet.create({
   messagePressRowMine: { justifyContent: "flex-end" },
   systemEventPressRow: { width: "100%", justifyContent: "center" },
   message: {
-    maxWidth: "82%",
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    maxWidth: "76%",
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     shadowColor: "#0f172a",
     shadowOpacity: 0.06,
     shadowOffset: { width: 0, height: 3 },
@@ -4067,7 +4125,7 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "900",
   },
-  messageText: { color: "#111111", fontSize: 16, lineHeight: 24 },
+  messageText: { color: "#111111", fontSize: 15, lineHeight: 21 },
   hiddenMessageBody: { display: "none" },
   orderEventCard: {
     minWidth: 238,

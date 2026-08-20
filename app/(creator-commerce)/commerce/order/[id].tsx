@@ -39,7 +39,7 @@ const money = (minor: number, currency: string) => new Intl.NumberFormat(undefin
 }).format(minor / 100);
 
 export default function CommerceOrderDetailPage() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, from } = useLocalSearchParams<{ id: string; from?: string }>();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [items, setItems] = useState<OrderItem[]>([]);
   const [fulfillment, setFulfillment] = useState<Fulfillment | null>(null);
@@ -91,7 +91,7 @@ export default function CommerceOrderDetailPage() {
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <View style={styles.header}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.back}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.canGoBack() ? router.back() : router.replace(from === 'chats' ? '/chats' : '/commerce/buyer')} style={styles.back}>
           <ArrowLeft color="#087c43" size={24} />
         </Pressable>
         <View style={styles.headerCopy}>

@@ -3,5 +3,5 @@
   "compilerOptions": {
     "strict": true
   },
-  "exclude": ["dist", "src/**/*.test.ts"]
+  "exclude": ["dist", "output", "src/**/*.test.ts"]
 }
