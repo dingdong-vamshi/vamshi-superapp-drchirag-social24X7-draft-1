@@ -189,6 +189,7 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
   const [city, setCity] = useState("");
   const [stateCode, setStateCode] = useState("");
   const [postalCode, setPostalCode] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -226,12 +227,13 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
 
   const placeOrder = async () => {
     if (submitting) return;
+    setErrorMessage(null);
     if (!recipientName.trim() || !phone.trim() || !addressLine1.trim() || !city.trim() || !stateCode.trim() || !postalCode.trim()) {
-      Alert.alert("Delivery address required", "Complete every delivery field before placing the order.");
+      setErrorMessage("Complete every delivery field before placing the order.");
       return;
     }
     if (!cart.length) {
-      Alert.alert("Your bag is empty", "Return to Shop and add a product.");
+      setErrorMessage("Your bag is empty. Return to Shop and add a product.");
       return;
     }
     setSubmitting(true);
@@ -251,9 +253,9 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Please try again.";
       if (paymentMethod === "cod" && /kyc|verification|verified buyer/i.test(message)) {
-        Alert.alert("Buyer KYC required for COD", "Cash on delivery is available after Buyer KYC is verified. Complete Buyer KYC in Earn & Sell, or choose Test online payment for this order.");
+        setErrorMessage("Cash on delivery requires verified Buyer KYC. Complete Buyer KYC in Earn & Sell, or choose Online Payment / UPI (Demo).");
       } else {
-        Alert.alert("Order not placed", message);
+        setErrorMessage(message);
       }
     } finally {
       setSubmitting(false);
@@ -266,6 +268,12 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
     <View style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <PageHeader title="Checkout" subtitle="Delivery, payment and order review." onBack={onBack} />
+        {errorMessage ? (
+          <View accessibilityRole="alert" style={styles.errorBanner}>
+            <Text style={styles.errorTitle}>Order not placed</Text>
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeading}><MapPin size={20} color={green} /><Text style={styles.sectionTitle}>Delivery address</Text></View>
           <Field label="Recipient name" value={recipientName} onChangeText={setRecipientName} />
@@ -280,8 +288,8 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
 
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeading}><CreditCard size={20} color={green} /><Text style={styles.sectionTitle}>Payment method</Text></View>
-          <PaymentOption selected={paymentMethod === "external"} title="Test online payment" subtitle="Secure provider integration is represented by the current test flow." icon={<CreditCard size={20} color={green} />} onPress={() => setPaymentMethod("external")} />
-          <PaymentOption selected={paymentMethod === "cod"} title="Cash on delivery" subtitle="Pay when the seller’s shipment reaches you." icon={<Banknote size={20} color={green} />} onPress={() => setPaymentMethod("cod")} />
+          <PaymentOption selected={paymentMethod === "external"} title="Online Payment / UPI (Demo)" subtitle="Demo checkout only. No real payment provider or monetary charge is used." icon={<CreditCard size={20} color={green} />} onPress={() => { setPaymentMethod("external"); setErrorMessage(null); }} />
+          <PaymentOption selected={paymentMethod === "cod"} title="Cash on delivery" subtitle="Available after Buyer KYC verification. Pay when the shipment arrives." icon={<Banknote size={20} color={green} />} onPress={() => { setPaymentMethod("cod"); setErrorMessage(null); }} />
         </View>
 
         <View style={styles.sectionCard}>
@@ -302,7 +310,7 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
       <View style={styles.bottomBar}>
         <View><Text style={styles.payLabel}>TOTAL</Text><Text style={styles.payTotal}>{formatInr(total)}</Text></View>
         <Pressable accessibilityRole="button" disabled={submitting || !cart.length} onPress={() => void placeOrder()} style={[styles.primaryButton, styles.payButton, (submitting || !cart.length) && styles.disabledButton]}>
-          {submitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{paymentMethod === "cod" ? "Place COD Order" : "Proceed to Test Payment"}</Text>}
+          {submitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>{paymentMethod === "cod" ? "Place COD Order" : "Place Demo Online Order"}</Text>}
         </Pressable>
       </View>
     </View>
@@ -313,8 +321,8 @@ export function CheckoutSuccessScreen({ paymentMethod, totalMinor, reference, on
   return (
     <View style={styles.successScreen}>
       <View style={styles.successIcon}><CheckCircle2 size={44} color={green} /></View>
-      <Text style={styles.successTitle}>{paymentMethod === "cod" ? "Order placed" : "Checkout created"}</Text>
-      <Text style={styles.successText}>{paymentMethod === "cod" ? "The seller can now confirm and fulfil your COD order." : "The test checkout is waiting for the configured payment confirmation step."}</Text>
+      <Text style={styles.successTitle}>Order placed</Text>
+      <Text style={styles.successText}>{paymentMethod === "cod" ? "The seller can now confirm and fulfil your COD order." : "Demo online payment recorded. No real charge was made, and the seller can now confirm and fulfil the order."}</Text>
       <View style={styles.successCard}>
         <SummaryRow label="Amount" value={formatInr(totalMinor)} strong />
         <SummaryRow label="Reference" value={`#${reference.slice(0, 8)}`} />
@@ -388,6 +396,9 @@ const styles = StyleSheet.create({
   emptyTitle: { color: ink, fontSize: 18, fontWeight: "900", marginTop: 12 },
   emptyText: { color: muted, fontSize: 13, marginTop: 5, textAlign: "center" },
   sectionCard: { gap: 12, padding: 17, borderRadius: 18, borderWidth: 1, borderColor: line, backgroundColor: "#ffffff" },
+  errorBanner: { gap: 4, padding: 15, borderRadius: 16, borderWidth: 1, borderColor: "#f1b8b4", backgroundColor: "#fff1f0" },
+  errorTitle: { color: "#b42318", fontSize: 14, fontWeight: "900" },
+  errorText: { color: "#7a271a", fontSize: 13, lineHeight: 19 },
   sectionHeading: { flexDirection: "row", alignItems: "center", gap: 9 },
   sectionTitle: { color: ink, fontSize: 18, fontWeight: "900" },
   field: { gap: 6 },
