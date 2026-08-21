@@ -41,6 +41,7 @@ export type RewardRepository = {
   getContacts(): Promise<WalletContact[]>;
   getReceiveCode(): Promise<string>;
   openChat(contactId: string): Promise<string>;
+  shareReferralToChat(contactId: string, referralUrl: string): Promise<string>;
   transferCoins(input: { recipientId: string; amountMicrounits: number; note?: string; idempotencyKey?: string }): Promise<void>;
 };
 
@@ -58,6 +59,7 @@ export const unavailableRewardRepository: RewardRepository = {
   async getContacts() { return unavailable(); },
   async getReceiveCode() { return unavailable(); },
   async openChat() { return unavailable(); },
+  async shareReferralToChat() { return unavailable(); },
   async transferCoins() { return unavailable(); },
 };
 
@@ -182,6 +184,27 @@ export function createSupabaseRewardRepository(client: SupabaseClient): RewardRe
       if (error) throw new Error(error.message);
       if (typeof data !== "string" || !data) throw new Error("This friend chat could not be opened.");
       return data;
+    },
+    async shareReferralToChat(contactId, referralUrl) {
+      const cleanUrl = referralUrl.trim();
+      if (!cleanUrl) throw new Error("Referral link is unavailable.");
+      const { data: conversationId, error: openError } = await client.rpc(
+        "open_personal_conversation",
+        { participant: contactId },
+      );
+      if (openError) throw new Error(openError.message);
+      if (typeof conversationId !== "string" || !conversationId) {
+        throw new Error("This friend chat could not be opened.");
+      }
+      const { error: sendError } = await client.rpc("send_personal_message", {
+        target_conversation: conversationId,
+        message_body: `Join me on Social24: ${cleanUrl}`,
+        message_kind: "text",
+        message_payload: { referral_url: cleanUrl },
+        message_client_id: createTransferIdempotencyKey(),
+      });
+      if (sendError) throw new Error(sendError.message);
+      return conversationId;
     },
     async transferCoins(input) {
       if (!Number.isSafeInteger(input.amountMicrounits) || input.amountMicrounits <= 0) {
