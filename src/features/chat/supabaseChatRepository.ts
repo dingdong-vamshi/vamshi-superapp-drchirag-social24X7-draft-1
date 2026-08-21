@@ -1034,8 +1034,8 @@ export const createSupabaseChatRepository = ({
     async sendAttachment(input) {
       if (!viewerId) throw new Error('Authentication required.');
       const resolvedConversationId = await resolveConversationId(input.conversationId);
-      if (input.bytes.byteLength < 1 || input.bytes.byteLength > 26_214_400) {
-        throw new Error('Attachment must be 25 MiB or smaller.');
+      if (input.bytes.byteLength < 1 || input.bytes.byteLength > 104_857_600) {
+        throw new Error('Attachment must be 100 MiB or smaller.');
       }
       const extension = input.filename.toLowerCase().match(/\.([a-z0-9]{1,8})$/)?.[1]
         ?? input.mimeType.split('/')[1]?.replace('jpeg', 'jpg')
@@ -1202,8 +1202,11 @@ export const createSupabaseChatRepository = ({
     async getWallpaper(conversationId) {
       if (!viewerId) return { style: 'neutral', imageUrl: null };
       const resolvedConversationId = await resolveConversationId(conversationId);
-      const { data, error } = await client.from('chat_conversation_settings')
-        .select('wallpaper_style, wallpaper_image_path').eq('conversation_id', resolvedConversationId).maybeSingle();
+      const { data, error } = await client.from('chat_wallpaper_preferences')
+        .select('wallpaper_style, wallpaper_image_path')
+        .eq('conversation_id', resolvedConversationId)
+        .eq('user_id', viewerId)
+        .maybeSingle();
       if (error) throw new Error(error.message);
       const settings = data as { wallpaper_style?: string; wallpaper_image_path?: string | null } | null;
       const style = settings?.wallpaper_style;
@@ -1221,7 +1224,7 @@ export const createSupabaseChatRepository = ({
     async setWallpaper(conversationId, style) {
       if (!viewerId) throw new Error('Authentication required.');
       const resolvedConversationId = await resolveConversationId(conversationId);
-      const { error } = await client.rpc('set_chat_wallpaper', {
+      const { error } = await client.rpc('set_my_chat_wallpaper', {
         target_conversation: resolvedConversationId,
         target_wallpaper: style,
       });
@@ -1244,7 +1247,7 @@ export const createSupabaseChatRepository = ({
         upsert: false,
       });
       if (upload.error) throw new Error(upload.error.message);
-      const { error } = await client.rpc('set_chat_wallpaper_image', {
+      const { error } = await client.rpc('set_my_chat_wallpaper_image', {
         target_conversation: resolvedConversationId,
         target_storage_path: storagePath,
       });

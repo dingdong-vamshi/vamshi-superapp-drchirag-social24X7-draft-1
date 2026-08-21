@@ -1674,6 +1674,7 @@ function ConversationView({
             renderItem={({ item }) => (
               <MessageBubble
                 message={item}
+                showTrustedCapture={Boolean(conversation.storefront)}
                 onLongPress={() => setActionMessage(item)}
                 onReactPress={() => setActionMessage(item)}
                 reactionPending={reactionPendingId === item.id}
@@ -1807,6 +1808,7 @@ function ConversationView({
         />
         <AttachmentPreview
           attachment={pendingAttachment}
+          showTrustedCapture={Boolean(conversation.storefront)}
           sending={attachmentSending}
           cancel={() => !attachmentSending && setPendingAttachment(null)}
           send={() => void sendPendingAttachment()}
@@ -2033,6 +2035,7 @@ function MessageSurface({
 
 function MessageBubble({
   message,
+  showTrustedCapture,
   onLongPress,
   onReactPress,
   reactionPending,
@@ -2046,6 +2049,7 @@ function MessageBubble({
   onReviewReturn,
 }: {
   message: ChatMessage;
+  showTrustedCapture: boolean;
   onLongPress: () => void;
   onReactPress: () => void;
   reactionPending: boolean;
@@ -2252,7 +2256,7 @@ function MessageBubble({
               <Text style={[styles.attachmentMeta, mine && styles.mineText]}>
                 {message.attachment.attachmentType} · {(message.attachment.bytes / 1_048_576).toFixed(1)} MiB
               </Text>
-              {message.attachment.source === "camera_capture" ? (
+              {message.attachment.source === "camera_capture" && showTrustedCapture ? (
                 <Text style={styles.liveCaptureBadge}>{trustedCaptureLabel(message.attachment.mimeType, message.createdAt)}</Text>
               ) : message.attachment.source === "document_scan" ? (
                 <Text style={styles.scanBadge}>Scanned in app</Text>
@@ -2521,8 +2525,9 @@ function AttachmentMenu({
   );
 }
 
-function AttachmentPreview({ attachment, sending, cancel, send }: {
+function AttachmentPreview({ attachment, showTrustedCapture, sending, cancel, send }: {
   attachment: PendingChatAttachment | null;
+  showTrustedCapture: boolean;
   sending: boolean;
   cancel: () => void;
   send: () => void;
@@ -2534,7 +2539,7 @@ function AttachmentPreview({ attachment, sending, cancel, send }: {
           <Text style={styles.sheetTitle}>Preview attachment</Text>
           {attachment?.mimeType.startsWith("image/") ? <Image source={{ uri: attachment.uri }} style={styles.previewImage} resizeMode="contain" /> : <View style={styles.previewFile}><FileText color="#087c43" size={42} /></View>}
           <Text style={styles.previewName}>{attachment?.filename}</Text>
-          <Text style={styles.sheetSubtitle}>{attachment?.mimeType}{attachment?.source === "camera_capture" ? " · TRUE camera capture" : ""}</Text>
+          <Text style={styles.sheetSubtitle}>{attachment?.mimeType}{attachment?.source === "camera_capture" ? (showTrustedCapture ? " · TRUE camera capture" : " · Camera capture") : ""}</Text>
           <View style={styles.previewActions}>
             <Pressable accessibilityRole="button" disabled={sending} onPress={cancel} style={styles.previewCancel}><Text style={styles.previewCancelText}>Cancel</Text></Pressable>
             <Pressable accessibilityRole="button" disabled={sending} onPress={send} style={styles.previewSend}>{sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Send</Text>}</Pressable>

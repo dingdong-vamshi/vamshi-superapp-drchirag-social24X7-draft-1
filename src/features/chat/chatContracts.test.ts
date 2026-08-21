@@ -112,6 +112,10 @@ test("migrations keep authoritative events and private media behind RLS", () => 
     new URL("../../../supabase/migrations/20260819103500_clear_chat_wallpaper_image.sql", import.meta.url),
     "utf8",
   );
+  const privateWallpaperMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260821143000_private_wallpapers_and_chat_video_limit.sql", import.meta.url),
+    "utf8",
+  );
 
   assert.match(orderMigration, /revoke\s+all\s+on\s+table\s+public\.commerce_order_chat_events/i);
   assert.match(orderMigration, /unique\s*\(order_id,\s*event_type\)/i);
@@ -133,6 +137,11 @@ test("migrations keep authoritative events and private media behind RLS", () => 
   assert.match(wallpaperImageMigration, /object\.owner_id\s*=\s*viewer/i);
   assert.match(wallpaperImageMigration, /revoke\s+all\s+on\s+function\s+public\.set_chat_wallpaper_image/i);
   assert.match(clearWallpaperImageMigration, /wallpaper_image_path\s*=\s*null/i);
+  assert.match(privateWallpaperMigration, /primary key\s*\(conversation_id,\s*user_id\)/i);
+  assert.match(privateWallpaperMigration, /user_id\s*=\s*\(select auth\.uid\(\)\)/i);
+  assert.match(privateWallpaperMigration, /preference\.user_id\s*=\s*auth\.uid\(\)/i);
+  assert.match(privateWallpaperMigration, /target_bytes not between 1 and 104857600/i);
+  assert.match(privateWallpaperMigration, /object\.owner_id\s*=\s*viewer::text/i);
 });
 
 test("background chat sync does not force visible refreshes or reset scroll", () => {
@@ -146,4 +155,15 @@ test("background chat sync does not force visible refreshes or reset scroll", ()
     chatScreen,
     /onContentSizeChange=\{\(\)\s*=>\s*list\.current\?\.scrollToEnd/,
   );
+});
+
+test("TRUE capture labels remain restricted to business chat", () => {
+  const chatScreen = readFileSync(
+    new URL("./ChatScreen.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(chatScreen, /showTrustedCapture=\{Boolean\(conversation\.storefront\)\}/);
+  assert.match(chatScreen, /attachment\.source === "camera_capture" && showTrustedCapture/);
+  assert.match(chatScreen, /showTrustedCapture \? " · TRUE camera capture" : " · Camera capture"/);
 });
