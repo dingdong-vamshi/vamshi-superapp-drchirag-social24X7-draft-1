@@ -41,6 +41,9 @@ export type StorefrontSummary = {
   description: string;
   sellerTier: SellerTier;
   stateCode: string;
+  city: string;
+  supportPhone: string;
+  supportEmail: string;
   primaryCategory: Exclude<ShopCategory, "All">;
   logoUrl?: string | null;
   bannerUrl?: string | null;
@@ -112,7 +115,7 @@ export type SellerApplicationDraft = {
 
 export type StorefrontDraft = Omit<
   SellerApplicationDraft,
-  "legalName" | "phone" | "email" | "addressLine" | "gstin"
+  "legalName" | "addressLine" | "gstin"
 >;
 
 export type ProductDraft = {
@@ -256,6 +259,9 @@ const storefronts: StorefrontSummary[] = [
       "A soft-goods and home ritual storefront for travel, tea, and everyday calm.",
     sellerTier: "gst",
     stateCode: "KA",
+    city: "Bengaluru",
+    supportPhone: "",
+    supportEmail: "",
     primaryCategory: "Home",
     seoTitle: "Ritual Living on Social 24x7",
     seoDescription:
@@ -272,6 +278,9 @@ const storefronts: StorefrontSummary[] = [
       "Functional products for workdays, coffee rituals, and steady movement.",
     sellerTier: "local",
     stateCode: "TN",
+    city: "Chennai",
+    supportPhone: "",
+    supportEmail: "",
     primaryCategory: "Wellness",
     seoTitle: "Common Ground on Social 24x7",
     seoDescription:

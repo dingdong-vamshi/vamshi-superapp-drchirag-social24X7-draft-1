@@ -12,6 +12,7 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { Asset } from "expo-asset";
@@ -194,6 +195,8 @@ export function SellerStudioScreen({
   pickProductImages,
   persistenceKey,
 }: Props) {
+  const { width: viewportWidth } = useWindowDimensions();
+  const mobileLayout = viewportWidth < 900;
   const [dashboard, setDashboard] = useState<SellerDashboard | null>(null);
   const [sellerDraft, setSellerDraft] =
     useState<SellerApplicationDraft>(defaultSellerDraft);
@@ -279,6 +282,9 @@ export function SellerStudioScreen({
             description: next.storefront?.description ?? current.description,
             sellerTier: next.storefront?.sellerTier ?? current.sellerTier,
             stateCode: next.storefront?.stateCode ?? current.stateCode,
+            city: next.storefront?.city ?? current.city,
+            phone: next.storefront?.supportPhone ?? current.phone,
+            email: next.storefront?.supportEmail ?? current.email,
             primaryCategory:
               next.storefront?.primaryCategory ?? current.primaryCategory,
             seoTitle:
@@ -414,6 +420,8 @@ export function SellerStudioScreen({
             sellerTier: payload.sellerTier,
             stateCode: payload.stateCode,
             city: payload.city,
+            phone: payload.phone,
+            email: payload.email,
             tagline: payload.tagline,
             description: payload.description,
             primaryCategory: payload.primaryCategory,
@@ -597,19 +605,19 @@ export function SellerStudioScreen({
   }
 
   return (
-    <View style={styles.page}>
-      <View style={[styles.sidebar, sidebarCollapsed && styles.sidebarCollapsed]}>
-        <View style={styles.brandBlock}>
+    <View style={[styles.page, mobileLayout && styles.pageMobile]}>
+      <View style={[styles.sidebar, sidebarCollapsed && !mobileLayout && styles.sidebarCollapsed, mobileLayout && styles.sidebarMobile]}>
+        <View style={[styles.brandBlock, mobileLayout && styles.brandBlockMobile]}>
           <View style={styles.logoMark}>
             <MessageCircle size={21} color="#ffffff" fill="#ffffff" />
           </View>
-          {!sidebarCollapsed ? (
+          {!sidebarCollapsed || mobileLayout ? (
             <View style={{ flex: 1 }}>
               <Text style={styles.brandTitle}>Social Chat 24/7</Text>
               <Text style={styles.brandMeta}>Seller Central</Text>
             </View>
           ) : null}
-          <Pressable
+          {!mobileLayout ? <Pressable
             accessibilityLabel={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             onPress={() => setSidebarCollapsed((value) => !value)}
             style={styles.sidebarToggle}
@@ -619,10 +627,10 @@ export function SellerStudioScreen({
             ) : (
               <PanelLeftClose size={17} color={muted} />
             )}
-          </Pressable>
+          </Pressable> : null}
         </View>
 
-        {!sidebarCollapsed ? (
+        {!sidebarCollapsed && !mobileLayout ? (
           <View style={styles.sidebarStatus}>
             <Text style={styles.sidebarStatusEyebrow}>YOUR STORE</Text>
             <Text style={styles.sidebarStatusTitle}>
@@ -636,7 +644,7 @@ export function SellerStudioScreen({
           </View>
         ) : null}
 
-        <View style={styles.navList}>
+        <ScrollView horizontal={mobileLayout} showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.navList, mobileLayout && styles.navListMobile]}>
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = item.key === activeSection;
@@ -653,7 +661,7 @@ export function SellerStudioScreen({
                     strokeWidth={2.2}
                   />
                 </View>
-                {!sidebarCollapsed ? (
+                {!sidebarCollapsed || mobileLayout ? (
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.navLabel, active && styles.navLabelActive]}>
                       {item.label}
@@ -668,9 +676,9 @@ export function SellerStudioScreen({
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
 
-        {!sidebarCollapsed ? (
+        {!sidebarCollapsed && !mobileLayout ? (
           <View style={styles.sidebarFooter}>
             <Text style={styles.sidebarFooterTitle}>Need help?</Text>
             <Text style={styles.sidebarFooterCopy}>
@@ -680,7 +688,7 @@ export function SellerStudioScreen({
         ) : null}
       </View>
 
-      <ScrollView style={styles.main} contentContainerStyle={styles.mainContent}>
+      <ScrollView style={[styles.main, mobileLayout && styles.mainMobile]} contentContainerStyle={[styles.mainContent, mobileLayout && styles.mainContentMobile]}>
         <View style={styles.topBar}>
           <View>
             <Text style={styles.topBarTitle}>{navItems.find((item) => item.key === activeSection)?.label}</Text>
@@ -1501,10 +1509,39 @@ export function SellerStudioScreen({
                 title="Support profile"
                 body="The contact details below are used to coordinate commerce operations and storefront trust."
               >
-                <InfoRow label="Support email" value={sellerDraft.email || "Not set"} />
-                <InfoRow label="Phone" value={sellerDraft.phone || "Not set"} />
-                <InfoRow label="City" value={sellerDraft.city || "Not set"} />
-                <InfoRow label="State" value={sellerDraft.stateCode || "Not set"} />
+                <Field
+                  label="Support email"
+                  value={sellerDraft.email}
+                  onChangeText={(email) =>
+                    setSellerDraft((current) => ({ ...current, email }))
+                  }
+                />
+                <Field
+                  label="Phone"
+                  value={sellerDraft.phone}
+                  onChangeText={(phone) =>
+                    setSellerDraft((current) => ({ ...current, phone }))
+                  }
+                />
+                <Field
+                  label="City"
+                  value={sellerDraft.city}
+                  onChangeText={(city) =>
+                    setSellerDraft((current) => ({ ...current, city }))
+                  }
+                />
+                <Field
+                  label="State"
+                  value={sellerDraft.stateCode}
+                  onChangeText={(stateCode) =>
+                    setSellerDraft((current) => ({ ...current, stateCode }))
+                  }
+                />
+                <PrimaryButton
+                  label="Save support details"
+                  busy={busy}
+                  onPress={() => void saveSeller()}
+                />
               </PreviewCard>
 
               <PreviewCard
@@ -1926,6 +1963,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f6f7f8",
     flexDirection: "row",
   },
+  pageMobile: { flexDirection: "column" },
   sidebar: {
     width: 258,
     backgroundColor: "#ffffff",
@@ -1936,6 +1974,7 @@ const styles = StyleSheet.create({
     borderRightColor: "#e7e9ea",
   },
   sidebarCollapsed: { width: 76, paddingHorizontal: 12 },
+  sidebarMobile: { width: "100%", paddingTop: 10, paddingBottom: 8, borderRightWidth: 0, borderBottomWidth: 1, borderBottomColor: "#e7e9ea" },
   brandBlock: {
     flexDirection: "row",
     alignItems: "center",
@@ -1945,6 +1984,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#edf0ef",
   },
+  brandBlockMobile: { paddingBottom: 8 },
   sidebarToggle: { width: 28, height: 28, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "#f7f8f8" },
   logoMark: {
     width: 46,
@@ -1991,6 +2031,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   navList: { marginTop: 18, gap: 4 },
+  navListMobile: { marginTop: 4, flexDirection: "row", paddingRight: 10 },
   navItem: {
     borderRadius: 12,
     paddingHorizontal: 10,
@@ -2034,7 +2075,9 @@ const styles = StyleSheet.create({
   sidebarFooterTitle: { color: ink, fontWeight: "800", fontSize: 12 },
   sidebarFooterCopy: { color: muted, marginTop: 5, fontSize: 11, lineHeight: 16 },
   main: { flex: 1 },
+  mainMobile: { width: "100%" },
   mainContent: { padding: 22, gap: 18, paddingBottom: 44, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  mainContentMobile: { padding: 12, gap: 12 },
   topBar: {
     minHeight: 46,
     flexDirection: "row",
@@ -2231,7 +2274,7 @@ const styles = StyleSheet.create({
   },
   featurePillText: { color: "#45545d", fontWeight: "700", fontSize: 11 },
   twoCol: { flexDirection: "row", gap: 18, flexWrap: "wrap" },
-  column: { flex: 1, minWidth: 360, gap: 14 },
+  column: { flex: 1, minWidth: 280, gap: 14 },
   fieldWrap: { gap: 8 },
   fieldLabel: { color: "#34414d", fontWeight: "700", fontSize: 12 },
   field: {

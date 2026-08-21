@@ -37,6 +37,9 @@ type StorefrontRow = {
   description: string | null;
   seller_tier: "local" | "gst";
   state_code: string | null;
+  city: string | null;
+  support_phone: string | null;
+  support_email: string | null;
   primary_category: Exclude<ShopCategory, "All"> | null;
   logo_path: string | null;
   banner_path: string | null;
@@ -167,6 +170,9 @@ const storefrontFromRow = (
   description: row.description ?? "",
   sellerTier: row.seller_tier,
   stateCode: row.state_code ?? "",
+  city: row.city ?? "",
+  supportPhone: row.support_phone ?? "",
+  supportEmail: row.support_email ?? "",
   primaryCategory: row.primary_category ?? "Everyday",
   logoUrl: toPublicUrl(client, row.logo_path),
   bannerUrl: toPublicUrl(client, row.banner_path),
@@ -320,7 +326,7 @@ export function createSupabaseShopRepository({
       const { data, error } = await client
         .from("storefronts")
         .select(
-          "id,name,slug,tagline,description,seller_tier,state_code,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary,indexable,geo_enabled",
+          "id,name,slug,tagline,description,seller_tier,state_code,city,support_phone,support_email,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary,indexable,geo_enabled",
         )
         .eq("active", true)
         .order("featured", { ascending: false })
@@ -334,7 +340,7 @@ export function createSupabaseShopRepository({
       const { data, error } = await client
         .from("storefronts")
         .select(
-          "id,name,slug,tagline,description,seller_tier,state_code,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
+          "id,name,slug,tagline,description,seller_tier,state_code,city,support_phone,support_email,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
         )
         .eq("slug", slug)
         .eq("active", true)
@@ -456,7 +462,7 @@ export function createSupabaseShopRepository({
           client
             .from("storefronts")
             .select(
-              "id,name,slug,tagline,description,seller_tier,state_code,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
+              "id,name,slug,tagline,description,seller_tier,state_code,city,support_phone,support_email,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
             )
             .eq("owner_id", user.id)
             .order("updated_at", { ascending: false })
@@ -741,7 +747,7 @@ export function createSupabaseShopRepository({
         .from("storefronts")
         .upsert(storefrontPayload, { onConflict: "owner_id" })
         .select(
-          "id,name,slug,tagline,description,seller_tier,state_code,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
+          "id,name,slug,tagline,description,seller_tier,state_code,city,support_phone,support_email,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
         )
         .single();
       if (storefrontError) throw new Error(storefrontError.message);
@@ -783,6 +789,8 @@ export function createSupabaseShopRepository({
         business_type: draft.businessType.trim() || "independent",
         state_code: draft.stateCode.trim().toUpperCase(),
         city: draft.city.trim(),
+        support_phone: draft.phone.trim(),
+        support_email: draft.email.trim().toLowerCase(),
         primary_category: draft.primaryCategory,
         seo_title: draft.seoTitle.trim(),
         seo_description: draft.seoDescription.trim(),
@@ -795,7 +803,7 @@ export function createSupabaseShopRepository({
         .from("storefronts")
         .upsert(payload, { onConflict: "owner_id" })
         .select(
-          "id,name,slug,tagline,description,seller_tier,state_code,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
+          "id,name,slug,tagline,description,seller_tier,state_code,city,support_phone,support_email,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary",
         )
         .single();
       if (error) throw new Error(error.message);
@@ -806,7 +814,7 @@ export function createSupabaseShopRepository({
       const authUser = requireUser();
       const { data: storefrontData, error: storefrontError } = await client
         .from("storefronts")
-        .select("id,name,slug,tagline,description,seller_tier,state_code,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary")
+        .select("id,name,slug,tagline,description,seller_tier,state_code,city,support_phone,support_email,primary_category,logo_path,banner_path,seo_title,seo_description,llm_summary")
         .eq("owner_id", authUser.id)
         .limit(1)
         .single();
