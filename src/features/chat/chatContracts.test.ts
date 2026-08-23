@@ -116,6 +116,10 @@ test("migrations keep authoritative events and private media behind RLS", () => 
     new URL("../../../supabase/migrations/20260821143000_private_wallpapers_and_chat_video_limit.sql", import.meta.url),
     "utf8",
   );
+  const returnEvidenceMigration = readFileSync(
+    new URL("../../../supabase/migrations/20260823153316_complete_return_evidence_flow.sql", import.meta.url),
+    "utf8",
+  );
 
   assert.match(orderMigration, /revoke\s+all\s+on\s+table\s+public\.commerce_order_chat_events/i);
   assert.match(orderMigration, /unique\s*\(order_id,\s*event_type\)/i);
@@ -142,6 +146,29 @@ test("migrations keep authoritative events and private media behind RLS", () => 
   assert.match(privateWallpaperMigration, /preference\.user_id\s*=\s*auth\.uid\(\)/i);
   assert.match(privateWallpaperMigration, /target_bytes not between 1 and 104857600/i);
   assert.match(privateWallpaperMigration, /object\.owner_id\s*=\s*viewer::text/i);
+  assert.match(returnEvidenceMigration, /unique index[\s\S]*return_requests\s*\(order_item_id\)/i);
+  assert.match(returnEvidenceMigration, /return_request_id uuid[\s\S]*references public\.return_requests/i);
+  assert.match(returnEvidenceMigration, /captured_at[\s\S]*live_capture[\s\S]*v_intent\.created_at/i);
+  assert.match(returnEvidenceMigration, /begin_trusted_commerce_evidence_capture/i);
+  assert.match(returnEvidenceMigration, /begin_uploaded_commerce_evidence_capture/i);
+  assert.match(returnEvidenceMigration, /revoke execute on function public\.begin_commerce_evidence_capture[\s\S]*from authenticated/i);
+  assert.match(returnEvidenceMigration, /buyer_id = p_owner_id[\s\S]*status in \('submitted', 'under_review'\)/i);
+});
+
+test("return evidence and scanner remain explicit UI flows", () => {
+  const chatScreen = readFileSync(new URL("./ChatScreen.tsx", import.meta.url), "utf8");
+  const scanner = readFileSync(new URL("./DocumentScannerModal.tsx", import.meta.url), "utf8");
+
+  assert.match(chatScreen, /Add return evidence/i);
+  assert.match(chatScreen, /evidence\.capturedAt[\s\S]*trustedCaptureLabel/i);
+  assert.match(chatScreen, /Uploaded evidence · not a TRUE capture/i);
+  assert.match(scanner, /Capture page/);
+  assert.match(scanner, /Import image/);
+  assert.match(scanner, /Crop edges/);
+  assert.match(scanner, /Rotate/);
+  assert.match(scanner, /Retake/);
+  assert.match(scanner, /Confirm page/);
+  assert.doesNotMatch(scanner, /edge detection[^\n]*enabled/i);
 });
 
 test("background chat sync does not force visible refreshes or reset scroll", () => {

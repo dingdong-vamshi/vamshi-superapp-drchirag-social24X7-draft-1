@@ -44,7 +44,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test:chat": "node --test --experimental-strip-types src/features/chat/chatContracts.test.ts",
+    "test:chat": "node --test --experimental-strip-types src/features/chat/chatContracts.test.ts src/features/chat/chatMediaUtils.test.ts src/features/chat/documentScannerUtils.test.ts",
     "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts",
     "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts src/features/creatorCommerce/onboardingRules.test.ts",
     "test:checkout": "node --test --experimental-strip-types src/features/commerce/checkoutRecovery.test.ts",
