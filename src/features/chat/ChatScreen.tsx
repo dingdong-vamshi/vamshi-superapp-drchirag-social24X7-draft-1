@@ -1,8 +1,10 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
+import { File as ExpoFile } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
+import { useVideoPlayer, VideoView } from "expo-video";
 import EmojiPicker, { type EmojiType } from "rn-emoji-keyboard";
 import {
   ActivityIndicator,
@@ -57,6 +59,8 @@ import {
 } from "lucide-react-native";
 
 import { unconfiguredCallAdapter } from "./callAdapter";
+import DocumentScannerModal, { type ScannedDocumentPage } from "./DocumentScannerModal";
+import { normalizeChatMedia, normalizeImagePickerDurationMs, readWebMediaBlob } from "./chatMediaUtils";
 import {
   CURRENT_USER_ID,
   type CallAdapter,
@@ -67,6 +71,7 @@ import {
   type ChatMessage,
   type Conversation,
   type MessageReaction,
+  type OrderChatEvidence,
   type SharedPost,
 } from "./types";
 
@@ -89,6 +94,7 @@ type LoadState = "loading" | "ready" | "error";
 type ChatListFilter = "all" | "unread" | "requests" | "archived";
 type PendingChatAttachment = {
   uri: string;
+  webFile?: Blob;
   filename: string;
   mimeType: string;
   size?: number;
@@ -96,6 +102,20 @@ type PendingChatAttachment = {
   height?: number;
   durationMs?: number;
   source: "camera_capture" | "gallery" | "document_picker" | "document_scan";
+};
+
+const readLocalMediaBytes = async (uri: string, unavailableMessage: string, webFile?: Blob) => {
+  if (Platform.OS !== "web") {
+    const file = new ExpoFile(uri);
+    if (!file.exists) throw new Error(unavailableMessage);
+    return file.arrayBuffer();
+  }
+
+  if (webFile) return readWebMediaBlob(webFile);
+
+  const response = await fetch(uri);
+  if (!response.ok) throw new Error(unavailableMessage);
+  return response.arrayBuffer();
 };
 
 const unavailableChatRepository: ChatDataSource = {
@@ -982,6 +1002,8 @@ function ConversationView({
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PendingChatAttachment | null>(null);
   const [attachmentSending, setAttachmentSending] = useState(false);
+  const [attachmentStage, setAttachmentStage] = useState<'preparing' | 'uploading' | 'finalizing'>('preparing');
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [contactOpen, setContactOpen] = useState(false);
   const [contactQuery, setContactQuery] = useState("");
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
@@ -990,9 +1012,12 @@ function ConversationView({
   const [eventOpen, setEventOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [structuredPending, setStructuredPending] = useState(false);
-  const [evidenceTarget, setEvidenceTarget] = useState<{ orderId: string; orderItemId?: string; title: string; kind: "packing" | "unboxing" } | null>(null);
+  const [evidenceTarget, setEvidenceTarget] = useState<{ orderId: string; orderItemId?: string; returnRequestId?: string; title: string; kind: "packing" | "unboxing" | "return" } | null>(null);
   const [returnTarget, setReturnTarget] = useState<{ orderItemId: string; title: string } | null>(null);
   const [returnReason, setReturnReason] = useState("");
+  const [returnDetails, setReturnDetails] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [viewingEvidence, setViewingEvidence] = useState<OrderChatEvidence | null>(null);
   const [commerceActionPending, setCommerceActionPending] = useState(false);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [wallpaper, setWallpaper] = useState<'neutral' | 'sky' | 'forest' | 'warm' | 'paper'>('neutral');
@@ -1043,15 +1068,40 @@ function ConversationView({
       });
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
+      const kind = asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" : "image";
+      const normalized = normalizeChatMedia({
+        filename: asset.fileName,
+        mimeType: asset.mimeType,
+        kind,
+        fallbackStem: `${source === "document_scan" ? "scan" : "capture"}-${Date.now()}`,
+      });
+      const durationMs = normalizeImagePickerDurationMs(asset.duration, Platform.OS === "web" ? "web" : "native");
+      if (__DEV__) console.info("[chat-attachment] Camera asset ready", {
+        platform: Platform.OS,
+        browser: Platform.OS === "web" && typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+        source,
+        assetType: asset.type,
+        payloadType: asset.file?.constructor.name ?? "native-uri",
+        reportedFilename: asset.fileName,
+        reportedMimeType: asset.mimeType,
+        reportedSize: asset.fileSize,
+        reportedDuration: asset.duration,
+        normalizedFilename: normalized.filename,
+        normalizedMimeType: normalized.mimeType,
+        normalizedDurationMs: durationMs,
+        lastModified: asset.file?.lastModified,
+      });
       setAttachmentMenuOpen(false);
+      setAttachmentError(null);
       setPendingAttachment({
         uri: asset.uri,
-        filename: asset.fileName || `${source === "document_scan" ? "scan" : "capture"}-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`,
-        mimeType: asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg"),
+        webFile: asset.file,
+        filename: normalized.filename,
+        mimeType: normalized.mimeType,
         size: asset.fileSize,
         width: asset.width,
         height: asset.height,
-        durationMs: asset.duration ?? undefined,
+        durationMs,
         source,
       });
     } catch (cause) {
@@ -1066,15 +1116,37 @@ function ConversationView({
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images", "videos"], quality: 0.84 });
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
+      const kind = asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" : "image";
+      const normalized = normalizeChatMedia({
+        filename: asset.fileName,
+        mimeType: asset.mimeType,
+        kind,
+        fallbackStem: `gallery-${Date.now()}`,
+      });
+      const durationMs = normalizeImagePickerDurationMs(asset.duration, Platform.OS === "web" ? "web" : "native");
+      if (__DEV__) console.info("[chat-attachment] Gallery asset ready", {
+        platform: Platform.OS,
+        payloadType: asset.file?.constructor.name ?? "native-uri",
+        reportedFilename: asset.fileName,
+        reportedMimeType: asset.mimeType,
+        reportedSize: asset.fileSize,
+        reportedDuration: asset.duration,
+        normalizedFilename: normalized.filename,
+        normalizedMimeType: normalized.mimeType,
+        normalizedDurationMs: durationMs,
+        lastModified: asset.file?.lastModified,
+      });
       setAttachmentMenuOpen(false);
+      setAttachmentError(null);
       setPendingAttachment({
         uri: asset.uri,
-        filename: asset.fileName || `gallery-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`,
-        mimeType: asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg"),
+        webFile: asset.file,
+        filename: normalized.filename,
+        mimeType: normalized.mimeType,
         size: asset.fileSize,
         width: asset.width,
         height: asset.height,
-        durationMs: asset.duration ?? undefined,
+        durationMs,
         source: "gallery",
       });
     } catch (cause) {
@@ -1095,16 +1167,18 @@ function ConversationView({
         : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images", "videos"], quality: 0.84 });
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
-      const response = await fetch(asset.uri);
-      if (!response.ok) throw new Error("The selected evidence could not be read.");
-      const bytes = await response.arrayBuffer();
+      const bytes = await readLocalMediaBytes(asset.uri, "The selected evidence could not be read.", asset.file);
       setCommerceActionPending(true);
-      const filename = asset.fileName || `${evidenceTarget.kind}-${source === "live_capture" ? "live" : "upload"}-${Date.now()}.${asset.type === "video" ? "mp4" : "jpg"}`;
-      const mimeType = asset.mimeType || (asset.type === "video" ? "video/mp4" : "image/jpeg");
+      const normalized = normalizeChatMedia({
+        filename: asset.fileName,
+        mimeType: asset.mimeType,
+        kind: asset.type === "video" || asset.mimeType?.startsWith("video/") ? "video" : "image",
+        fallbackStem: `${evidenceTarget.kind}-${source === "live_capture" ? "live" : "upload"}-${Date.now()}`,
+      });
       if (dataSource.submitOrderEvidence) {
-        await dataSource.submitOrderEvidence({ orderId: evidenceTarget.orderId, orderItemId: evidenceTarget.orderItemId, kind: evidenceTarget.kind, bytes, filename, mimeType, source });
+        await dataSource.submitOrderEvidence({ orderId: evidenceTarget.orderId, orderItemId: evidenceTarget.orderItemId, returnRequestId: evidenceTarget.returnRequestId, kind: evidenceTarget.kind, bytes, filename: normalized.filename, mimeType: normalized.mimeType, source });
       } else if (evidenceTarget.orderItemId && dataSource.submitUnboxingEvidence) {
-        await dataSource.submitUnboxingEvidence({ orderId: evidenceTarget.orderId, orderItemId: evidenceTarget.orderItemId, bytes, filename, mimeType, source });
+        await dataSource.submitUnboxingEvidence({ orderId: evidenceTarget.orderId, orderItemId: evidenceTarget.orderItemId, bytes, filename: normalized.filename, mimeType: normalized.mimeType, source });
       }
       setEvidenceTarget(null);
       Alert.alert("Evidence submitted", source === "live_capture" ? "Private live-capture evidence is attached to this order." : "Your private uploaded file is attached to this order.");
@@ -1123,9 +1197,10 @@ function ConversationView({
     }
     setCommerceActionPending(true);
     try {
-      await dataSource.submitOrderReturn({ orderItemId: returnTarget.orderItemId, reason: returnReason });
+      await dataSource.submitOrderReturn({ orderItemId: returnTarget.orderItemId, reason: returnReason, details: returnDetails });
       setReturnTarget(null);
       setReturnReason("");
+      setReturnDetails("");
       Alert.alert("Return requested", "The request is now available for the seller to review.");
     } catch (cause) {
       Alert.alert("Return not submitted", cause instanceof Error ? cause.message : "Please retry.");
@@ -1138,7 +1213,11 @@ function ConversationView({
     if (!dataSource.reviewOrderReturn || commerceActionPending) return;
     setCommerceActionPending(true);
     try {
-      await dataSource.reviewOrderReturn({ returnRequestId, decision });
+      await dataSource.reviewOrderReturn({
+        returnRequestId,
+        decision,
+        reason: decision === "under_review" ? "Please provide more information in this Business Chat." : undefined,
+      });
       Alert.alert(
         decision === "approved" ? "Return approved" : decision === "rejected" ? "Return rejected" : "More information requested",
         decision === "under_review" ? "The buyer can reply in this Business Chat with the additional information." : "The buyer and commission status have been updated.",
@@ -1162,6 +1241,7 @@ function ConversationView({
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
       setAttachmentMenuOpen(false);
+      setAttachmentError(null);
       setPendingAttachment({
         uri: asset.uri,
         filename: asset.name,
@@ -1175,23 +1255,28 @@ function ConversationView({
   };
 
   const scanDocument = async () => {
-    if (Platform.OS === "web") {
-      // Web does not offer reliable edge-detection or native document camera APIs.
-      // This is an honest, useful image/PDF capture-upload fallback rather than a fake scan.
-      await pickDocument(true);
-      return;
-    }
-    await captureMedia("document_scan");
+    setAttachmentMenuOpen(false);
+    setScannerOpen(true);
+  };
+
+  const confirmScannedDocument = (page: ScannedDocumentPage) => {
+    setScannerOpen(false);
+    setAttachmentError(null);
+    setPendingAttachment({ ...page, source: "document_scan" });
   };
 
   const sendPendingAttachment = async () => {
     if (!pendingAttachment || !dataSource.sendAttachment || attachmentSending) return;
     setAttachmentSending(true);
+    setAttachmentStage('preparing');
+    setAttachmentError(null);
     try {
-      const response = await fetch(pendingAttachment.uri);
-      if (!response.ok) throw new Error("The selected file could not be read.");
-      const bytes = await response.arrayBuffer();
-      if (!bytes.byteLength) throw new Error("The selected file is empty. Please select it again.");
+      const bytes = pendingAttachment.webFile
+        ? new Blob([pendingAttachment.webFile], { type: pendingAttachment.mimeType })
+        : await readLocalMediaBytes(pendingAttachment.uri, "The selected file could not be read.");
+      const byteLength = bytes instanceof ArrayBuffer ? bytes.byteLength : bytes.size;
+      if (!byteLength) throw new Error("The selected file is empty. Please select it again.");
+      if (byteLength > 104_857_600) throw new Error("Attachment must be 100 MiB or smaller.");
       await dataSource.sendAttachment({
         conversationId: conversation.id,
         bytes,
@@ -1201,10 +1286,14 @@ function ConversationView({
         height: pendingAttachment.height,
         durationMs: pendingAttachment.durationMs,
         source: pendingAttachment.source,
+        onStage: setAttachmentStage,
       });
       setPendingAttachment(null);
     } catch (cause) {
-      Alert.alert("Attachment not sent", cause instanceof Error ? cause.message : "Retry when your connection is restored.");
+      const message = cause instanceof Error ? cause.message : "Retry when your connection is restored.";
+      if (__DEV__) console.error("[chat-attachment] Send failed", cause);
+      setAttachmentError(message);
+      if (Platform.OS !== "web") Alert.alert("Attachment not sent", message);
     } finally {
       setAttachmentSending(false);
     }
@@ -1348,11 +1437,10 @@ function ConversationView({
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.75 });
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
-      const response = await fetch(asset.uri);
-      if (!response.ok) throw new Error('The wallpaper image could not be read.');
+      const bytes = await readLocalMediaBytes(asset.uri, 'The wallpaper image could not be read.', asset.file);
       const imageUrl = await dataSource.setWallpaperImage({
         conversationId: conversation.id,
-        bytes: await response.arrayBuffer(),
+        bytes,
         filename: asset.fileName || `wallpaper-${Date.now()}.jpg`,
         mimeType: asset.mimeType || 'image/jpeg',
       });
@@ -1683,8 +1771,9 @@ function ConversationView({
                 onViewProfile={onViewProfile}
                 onVotePoll={(pollId, optionId) => void votePoll(pollId, optionId)}
                 onRsvpEvent={(eventId, response) => void rsvpEvent(eventId, response)}
-                onAddEvidence={(orderId, orderItemId, title, kind) => setEvidenceTarget({ orderId, orderItemId, title, kind })}
-                onRequestReturn={(orderItemId, title) => { setReturnTarget({ orderItemId, title }); setReturnReason(""); }}
+                onAddEvidence={(orderId, orderItemId, title, kind, returnRequestId) => setEvidenceTarget({ orderId, orderItemId, title, kind, returnRequestId })}
+                onViewEvidence={setViewingEvidence}
+                onRequestReturn={(orderItemId, title) => { setReturnTarget({ orderItemId, title }); setReturnReason(""); setReturnDetails(""); }}
                 onReviewReturn={(returnRequestId, decision) => void reviewReturnFromChat(returnRequestId, decision)}
               />
             )}
@@ -1810,9 +1899,21 @@ function ConversationView({
           attachment={pendingAttachment}
           showTrustedCapture={Boolean(conversation.storefront)}
           sending={attachmentSending}
-          cancel={() => !attachmentSending && setPendingAttachment(null)}
+          stage={attachmentStage}
+          error={attachmentError}
+          cancel={() => {
+            if (attachmentSending) return;
+            setPendingAttachment(null);
+            setAttachmentError(null);
+          }}
           send={() => void sendPendingAttachment()}
         />
+        <DocumentScannerModal
+          visible={scannerOpen}
+          close={() => setScannerOpen(false)}
+          confirm={confirmScannedDocument}
+        />
+        <EvidenceViewer evidence={viewingEvidence} close={() => setViewingEvidence(null)} />
         <ContactShareModal
           visible={contactOpen}
           query={contactQuery}
@@ -1835,6 +1936,8 @@ function ConversationView({
           target={returnTarget}
           reason={returnReason}
           setReason={setReturnReason}
+          details={returnDetails}
+          setDetails={setReturnDetails}
           pending={commerceActionPending}
           close={() => !commerceActionPending && setReturnTarget(null)}
           submit={() => void submitReturnFromChat()}
@@ -2045,6 +2148,7 @@ function MessageBubble({
   onVotePoll,
   onRsvpEvent,
   onAddEvidence,
+  onViewEvidence,
   onRequestReturn,
   onReviewReturn,
 }: {
@@ -2058,7 +2162,8 @@ function MessageBubble({
   onViewProfile?: (profileId: string) => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
   onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
-  onAddEvidence?: (orderId: string, orderItemId: string | undefined, title: string, kind: "packing" | "unboxing") => void;
+  onAddEvidence?: (orderId: string, orderItemId: string | undefined, title: string, kind: "packing" | "unboxing" | "return", returnRequestId?: string) => void;
+  onViewEvidence?: (evidence: OrderChatEvidence) => void;
   onRequestReturn?: (orderItemId: string, title: string) => void;
   onReviewReturn?: (returnRequestId: string, decision: "approved" | "rejected" | "under_review") => void;
 }) {
@@ -2166,7 +2271,7 @@ function MessageBubble({
                 <View style={styles.orderEvidenceList}>
                   <Text style={styles.orderEvidenceEyebrow}>PRIVATE PACKING EVIDENCE</Text>
                   {message.order.packingEvidence.map((evidence) => (
-                    <Pressable accessibilityRole="button" accessibilityLabel={`View private packing evidence ${evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => evidence.signedUrl ? void Linking.openURL(evidence.signedUrl) : undefined} style={styles.orderEvidenceRow}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`View private packing evidence ${evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => onViewEvidence?.(evidence)} style={styles.orderEvidenceRow}>
                       <View style={styles.grow}>
                         <Text style={styles.orderEvidenceTitle} numberOfLines={1}>{evidence.filename}</Text>
                         <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? trustedCaptureLabel(evidence.mimeType, evidence.createdAt) : "Uploaded file"} · Buyer and seller only</Text>
@@ -2190,7 +2295,7 @@ function MessageBubble({
                   {message.order.unboxingEvidence.map((evidence) => {
                     const item = message.order!.items.find((candidate) => candidate.orderItemId === evidence.orderItemId);
                     return (
-                      <Pressable accessibilityRole="button" accessibilityLabel={`View private unboxing evidence for ${item?.title ?? evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => evidence.signedUrl ? void Linking.openURL(evidence.signedUrl) : undefined} style={styles.orderEvidenceRow}>
+                      <Pressable accessibilityRole="button" accessibilityLabel={`View private unboxing evidence for ${item?.title ?? evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => onViewEvidence?.(evidence)} style={styles.orderEvidenceRow}>
                         <View style={styles.grow}>
                           <Text style={styles.orderEvidenceTitle} numberOfLines={1}>{item?.title ?? evidence.filename}</Text>
                           <Text style={styles.orderEvidenceSource}>{evidence.source === "live_capture" ? trustedCaptureLabel(evidence.mimeType, evidence.createdAt) : "Uploaded file"} · Buyer and seller only</Text>
@@ -2211,25 +2316,58 @@ function MessageBubble({
                   ))}
                 </View>
               ) : null}
-              {message.order.returnStatus ? (
-                <Text style={[styles.orderEventMeta, mine && styles.mineText]}>Return: {message.order.returnStatus.replaceAll("_", " ")}</Text>
-              ) : null}
-              {message.order.canReviewReturn && message.order.returnRequestId && onReviewReturn ? (
-                <View style={styles.orderCommerceActions}>
-                  <Pressable accessibilityRole="button" accessibilityLabel="Approve buyer return" onPress={() => onReviewReturn(message.order!.returnRequestId!, "approved")} style={styles.orderCommerceButton}>
-                    <Text style={styles.orderCommerceButtonText}>Approve return</Text>
-                  </Pressable>
-                  <Pressable accessibilityRole="button" accessibilityLabel="Reject buyer return" onPress={() => onReviewReturn(message.order!.returnRequestId!, "rejected")} style={[styles.orderCommerceButton, styles.returnCommerceButton]}>
-                    <Text style={[styles.orderCommerceButtonText, styles.returnCommerceButtonText]}>Reject return</Text>
-                  </Pressable>
-                  <Pressable accessibilityRole="button" accessibilityLabel="Request more return information" onPress={() => onReviewReturn(message.order!.returnRequestId!, "under_review")} style={styles.orderCommerceButton}>
-                    <Text style={styles.orderCommerceButtonText}>Request more information</Text>
-                  </Pressable>
-                </View>
-              ) : null}
+              {showOrderEvidence && message.order.returnRequests?.map((request) => {
+                const item = message.order!.items.find((candidate) => candidate.orderItemId === request.orderItemId);
+                const openReturn = ["submitted", "under_review"].includes(request.status);
+                return (
+                  <View key={request.id} style={styles.returnRequestCard}>
+                    <View style={styles.returnRequestHeader}>
+                      <Text style={styles.orderEvidenceEyebrow}>RETURN · {item?.title ?? request.orderItemId.slice(0, 8)}</Text>
+                      <Text style={styles.returnRequestStatus}>{request.status.replaceAll("_", " ")}</Text>
+                    </View>
+                    <Text style={styles.returnRequestReason}>{request.reason}</Text>
+                    {request.details ? <Text style={styles.orderEventMeta}>{request.details}</Text> : null}
+                    {request.sellerNote ? <Text style={styles.returnRequestNote}>Seller: {request.sellerNote}</Text> : null}
+                    {request.evidence.map((evidence) => (
+                      <Pressable accessibilityRole="button" accessibilityLabel={`View return evidence ${evidence.filename}`} key={evidence.id} disabled={!evidence.signedUrl} onPress={() => onViewEvidence?.(evidence)} style={styles.orderEvidenceRow}>
+                        <View style={styles.grow}>
+                          <Text style={styles.orderEvidenceTitle} numberOfLines={1}>{evidence.filename}</Text>
+                          <Text style={styles.orderEvidenceSource}>
+                            {evidence.source === "live_capture" && evidence.capturedAt
+                              ? trustedCaptureLabel(evidence.mimeType, evidence.capturedAt)
+                              : "Uploaded file"} · Buyer and seller only
+                          </Text>
+                        </View>
+                        {evidence.signedUrl ? <Text style={styles.orderEventAction}>View</Text> : null}
+                      </Pressable>
+                    ))}
+                    {message.order!.viewerRole === "buyer" && openReturn && onAddEvidence ? (
+                      <View style={styles.orderCommerceActions}>
+                        <Pressable accessibilityRole="button" accessibilityLabel={`Add evidence to return for ${item?.title ?? "item"}`} onPress={() => onAddEvidence(message.order!.orderId, request.orderItemId, item?.title ?? "Return evidence", "return", request.id)} style={styles.orderCommerceButton}>
+                          <Camera size={14} color="#087c43" />
+                          <Text style={styles.orderCommerceButtonText}>Add return evidence</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                    {message.order!.viewerRole === "seller" && openReturn && onReviewReturn ? (
+                      <View style={styles.orderCommerceActions}>
+                        <Pressable accessibilityRole="button" accessibilityLabel="Approve buyer return" onPress={() => onReviewReturn(request.id, "approved")} style={styles.orderCommerceButton}>
+                          <Text style={styles.orderCommerceButtonText}>Approve return</Text>
+                        </Pressable>
+                        <Pressable accessibilityRole="button" accessibilityLabel="Reject buyer return" onPress={() => onReviewReturn(request.id, "rejected")} style={[styles.orderCommerceButton, styles.returnCommerceButton]}>
+                          <Text style={[styles.orderCommerceButtonText, styles.returnCommerceButtonText]}>Reject return</Text>
+                        </Pressable>
+                        <Pressable accessibilityRole="button" accessibilityLabel="Request more return information" onPress={() => onReviewReturn(request.id, "under_review")} style={styles.orderCommerceButton}>
+                          <Text style={styles.orderCommerceButtonText}>Request more information</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
               {showOrderEvidence && message.order.canRequestReturn && onRequestReturn ? (
                 <View style={styles.orderCommerceActions}>
-                  {message.order.items.filter((item) => message.order!.unboxingEvidence?.some((evidence) => evidence.orderItemId === item.orderItemId)).map((item) => (
+                  {message.order.items.filter((item) => !message.order!.returnRequests?.some((request) => request.orderItemId === item.orderItemId)).map((item) => (
                     <Pressable accessibilityRole="button" accessibilityLabel={`Request return for ${item.title}`} key={item.orderItemId} onPress={() => onRequestReturn(item.orderItemId, item.title)} style={[styles.orderCommerceButton, styles.returnCommerceButton]}>
                       <Text style={[styles.orderCommerceButtonText, styles.returnCommerceButtonText]}>Request return · {item.title}</Text>
                     </Pressable>
@@ -2246,27 +2384,30 @@ function MessageBubble({
           {message.attachment ? (
             <View style={[styles.attachmentCard, mine && styles.attachmentCardMine]}>
               {message.attachment.attachmentType === "image" && message.attachment.signedUrl ? (
-                <Image source={{ uri: message.attachment.signedUrl }} style={styles.attachmentImage} resizeMode="cover" />
+                <View style={styles.trustedMediaFrame}>
+                  <Image source={{ uri: message.attachment.signedUrl }} style={styles.attachmentImage} resizeMode="cover" />
+                  {message.attachment.source === "camera_capture" && showTrustedCapture ? (
+                    <TrustedMediaOverlay label={trustedCaptureLabel(message.attachment.mimeType, message.createdAt)} />
+                  ) : null}
+                </View>
+              ) : message.attachment.attachmentType === "video" && message.attachment.signedUrl ? (
+                <TrustedVideoPlayer
+                  url={message.attachment.signedUrl}
+                  watermark={message.attachment.source === "camera_capture" && showTrustedCapture
+                    ? trustedCaptureLabel(message.attachment.mimeType, message.createdAt)
+                    : undefined}
+                />
               ) : (
                 <View style={styles.attachmentFileIcon}>
-                  {message.attachment.attachmentType === "video" ? <Video color="#087c43" size={24} /> : <FileText color="#087c43" size={24} />}
+                  <FileText color="#087c43" size={24} />
                 </View>
               )}
               <Text style={[styles.attachmentName, mine && styles.mineText]} numberOfLines={2}>{message.attachment.filename}</Text>
               <Text style={[styles.attachmentMeta, mine && styles.mineText]}>
                 {message.attachment.attachmentType} · {(message.attachment.bytes / 1_048_576).toFixed(1)} MiB
               </Text>
-              {message.attachment.source === "camera_capture" && showTrustedCapture ? (
-                <Text style={styles.liveCaptureBadge}>{trustedCaptureLabel(message.attachment.mimeType, message.createdAt)}</Text>
-              ) : message.attachment.source === "document_scan" ? (
+              {message.attachment.source === "document_scan" ? (
                 <Text style={styles.scanBadge}>Scanned in app</Text>
-              ) : null}
-              {message.attachment.attachmentType === "video" && message.attachment.signedUrl && Platform.OS === "web" ? (
-                createElement("video", {
-                  controls: true,
-                  src: message.attachment.signedUrl,
-                  style: { width: "100%", maxWidth: 300, borderRadius: 14, marginTop: 4, backgroundColor: "#17241c" },
-                })
               ) : null}
               {message.attachment.signedUrl ? (
                 <Pressable accessibilityRole="button" accessibilityLabel={`Open attachment ${message.attachment.filename}`} onPress={() => void Linking.openURL(message.attachment!.signedUrl!)}>
@@ -2525,10 +2666,75 @@ function AttachmentMenu({
   );
 }
 
-function AttachmentPreview({ attachment, showTrustedCapture, sending, cancel, send }: {
+function TrustedMediaOverlay({ label }: { label: string }) {
+  return (
+    <View pointerEvents="none" style={styles.trustedMediaOverlay}>
+      <Text style={styles.trustedMediaOverlayText}>{label}</Text>
+    </View>
+  );
+}
+
+function TrustedVideoPlayer({ url, watermark }: { url: string; watermark?: string }) {
+  const player = useVideoPlayer(url);
+  return (
+    <View style={styles.trustedVideoFrame}>
+      <VideoView
+        player={player}
+        nativeControls
+        contentFit="contain"
+        playsInline
+        fullscreenOptions={{ enable: true }}
+        style={styles.trustedVideo}
+      />
+      {watermark ? <TrustedMediaOverlay label={watermark} /> : null}
+    </View>
+  );
+}
+
+function EvidenceViewer({ evidence, close }: { evidence: OrderChatEvidence | null; close: () => void }) {
+  const trustedLabel = evidence?.source === "live_capture" && evidence.capturedAt
+    ? trustedCaptureLabel(evidence.mimeType, evidence.capturedAt)
+    : undefined;
+  return (
+    <Modal visible={Boolean(evidence)} animationType="fade" presentationStyle="fullScreen" onRequestClose={close}>
+      <SafeAreaView style={styles.evidenceViewerSafe}>
+        <View style={styles.evidenceViewerHeader}>
+          <View style={styles.grow}>
+            <Text style={styles.evidenceViewerTitle} numberOfLines={1}>{evidence?.filename ?? "Evidence"}</Text>
+            <Text style={styles.evidenceViewerMeta}>{trustedLabel ?? "Uploaded evidence · not a TRUE capture"}</Text>
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close evidence viewer" onPress={close} style={styles.evidenceViewerClose}>
+            <X size={20} color="#fff" />
+          </Pressable>
+        </View>
+        <View style={styles.evidenceViewerBody}>
+          {evidence?.signedUrl && evidence.mimeType.startsWith("image/") ? (
+            <View style={styles.evidenceViewerMediaFrame}>
+              <Image source={{ uri: evidence.signedUrl }} resizeMode="contain" style={styles.evidenceViewerMedia} />
+              {trustedLabel ? <TrustedMediaOverlay label={trustedLabel} /> : null}
+            </View>
+          ) : evidence?.signedUrl && evidence.mimeType.startsWith("video/") ? (
+            <TrustedVideoPlayer url={evidence.signedUrl} watermark={trustedLabel} />
+          ) : (
+            <View style={styles.previewFile}><FileText color="#87dbaa" size={50} /></View>
+          )}
+        </View>
+        {evidence?.signedUrl ? (
+          <Pressable accessibilityRole="button" accessibilityLabel={`Open ${evidence.filename} externally`} onPress={() => void Linking.openURL(evidence.signedUrl!)} style={styles.evidenceExternalButton}>
+            <Text style={styles.evidenceExternalText}>Open original</Text>
+          </Pressable>
+        ) : null}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function AttachmentPreview({ attachment, showTrustedCapture, sending, stage, error, cancel, send }: {
   attachment: PendingChatAttachment | null;
   showTrustedCapture: boolean;
   sending: boolean;
+  stage: 'preparing' | 'uploading' | 'finalizing';
+  error: string | null;
   cancel: () => void;
   send: () => void;
 }) {
@@ -2540,9 +2746,10 @@ function AttachmentPreview({ attachment, showTrustedCapture, sending, cancel, se
           {attachment?.mimeType.startsWith("image/") ? <Image source={{ uri: attachment.uri }} style={styles.previewImage} resizeMode="contain" /> : <View style={styles.previewFile}><FileText color="#087c43" size={42} /></View>}
           <Text style={styles.previewName}>{attachment?.filename}</Text>
           <Text style={styles.sheetSubtitle}>{attachment?.mimeType}{attachment?.source === "camera_capture" ? (showTrustedCapture ? " · TRUE camera capture" : " · Camera capture") : ""}</Text>
+          {error ? <Text accessibilityLiveRegion="assertive" style={styles.previewError}>Not sent: {error} Your recording is still here—tap Send to retry.</Text> : null}
           <View style={styles.previewActions}>
             <Pressable accessibilityRole="button" disabled={sending} onPress={cancel} style={styles.previewCancel}><Text style={styles.previewCancelText}>Cancel</Text></Pressable>
-            <Pressable accessibilityRole="button" disabled={sending} onPress={send} style={styles.previewSend}>{sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Send</Text>}</Pressable>
+            <Pressable accessibilityRole="button" disabled={sending} onPress={send} style={styles.previewSend}>{sending ? <><ActivityIndicator color="#fff" /><Text style={styles.previewSendText}>{stage === 'preparing' ? 'Preparing' : stage === 'uploading' ? 'Uploading' : 'Finalizing'}</Text></> : <Text style={styles.previewSendText}>Send</Text>}</Pressable>
           </View>
         </View>
       </View>
@@ -2661,7 +2868,7 @@ function ScheduleComposer({ visible, pending, close, submit }: {
 }
 
 function UnboxingEvidenceModal({ target, pending, close, choose }: {
-  target: { orderId: string; orderItemId?: string; title: string; kind: "packing" | "unboxing" } | null;
+  target: { orderId: string; orderItemId?: string; returnRequestId?: string; title: string; kind: "packing" | "unboxing" | "return" } | null;
   pending: boolean;
   close: () => void;
   choose: (source: "live_capture" | "uploaded_file") => void;
@@ -2688,10 +2895,12 @@ function UnboxingEvidenceModal({ target, pending, close, choose }: {
   );
 }
 
-function ReturnRequestModal({ target, reason, setReason, pending, close, submit }: {
+function ReturnRequestModal({ target, reason, setReason, details, setDetails, pending, close, submit }: {
   target: { orderItemId: string; title: string } | null;
   reason: string;
   setReason: (value: string) => void;
+  details: string;
+  setDetails: (value: string) => void;
   pending: boolean;
   close: () => void;
   submit: () => void;
@@ -2700,10 +2909,11 @@ function ReturnRequestModal({ target, reason, setReason, pending, close, submit 
     <Modal visible={Boolean(target)} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
       <SafeAreaView style={styles.composerSheet}>
         <View style={styles.sheetHeader}>
-          <View style={styles.grow}><Text style={styles.sheetTitle}>Request a return</Text><Text style={styles.sheetSubtitle} numberOfLines={2}>{target?.title} · Evidence is already attached</Text></View>
+          <View style={styles.grow}><Text style={styles.sheetTitle}>Request a return</Text><Text style={styles.sheetSubtitle} numberOfLines={2}>{target?.title} · Add evidence after submitting</Text></View>
           <Pressable accessibilityLabel="Close return request" disabled={pending} onPress={close} style={styles.sheetClose}><X color="#172235" size={20} /></Pressable>
         </View>
         <TextInput value={reason} onChangeText={setReason} placeholder="Why are you returning this item?" placeholderTextColor="#8a9690" multiline maxLength={1000} style={[styles.structuredInput, styles.structuredMultiline]} />
+        <TextInput value={details} onChangeText={setDetails} placeholder="Extra details for the seller (optional)" placeholderTextColor="#8a9690" multiline maxLength={2000} style={[styles.structuredInput, styles.structuredMultiline]} />
         <Text style={styles.evidenceHelp}>The request goes directly to the seller for review. Both sides can follow its status in this Business Chat.</Text>
         <Pressable accessibilityRole="button" disabled={pending || !reason.trim()} onPress={submit} style={[styles.structuredSubmit, (pending || !reason.trim()) && styles.disabledAction]}>{pending ? <ActivityIndicator color="#fff" /> : <Text style={styles.previewSendText}>Submit return request</Text>}</Pressable>
       </SafeAreaView>
@@ -4161,9 +4371,19 @@ const styles = StyleSheet.create({
   orderCommerceButtonText: { color: "#087c43", fontSize: 10, fontWeight: "900", flexShrink: 1 },
   returnCommerceButton: { borderColor: "#f1c7c7", backgroundColor: "#fff3f3" },
   returnCommerceButtonText: { color: "#a83b3b" },
+  returnRequestCard: { marginTop: 8, gap: 7, borderRadius: 13, borderWidth: 1, borderColor: "#d7eee0", backgroundColor: "#eef8f2", padding: 10 },
+  returnRequestHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  returnRequestStatus: { color: "#087443", fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+  returnRequestReason: { color: "#17241c", fontSize: 12, fontWeight: "800" },
+  returnRequestNote: { color: "#42584b", fontSize: 11, lineHeight: 16, borderRadius: 9, backgroundColor: "#fff", padding: 8 },
   attachmentCard: { minWidth: 220, gap: 5 },
   attachmentCardMine: { backgroundColor: "rgba(255,255,255,0.2)" },
   attachmentImage: { width: 230, height: 180, borderRadius: 14, backgroundColor: "#e9f0eb" },
+  trustedMediaFrame: { position: "relative", alignSelf: "flex-start", overflow: "hidden", borderRadius: 14 },
+  trustedVideoFrame: { position: "relative", width: "100%", maxWidth: 520, minWidth: 230, height: 260, overflow: "hidden", borderRadius: 14, backgroundColor: "#17241c" },
+  trustedVideo: { width: "100%", height: "100%" },
+  trustedMediaOverlay: { position: "absolute", left: 8, right: 8, bottom: 8, alignItems: "flex-start" },
+  trustedMediaOverlayText: { maxWidth: "94%", color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 0.2, backgroundColor: "rgba(7,43,24,0.72)", paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, overflow: "hidden" },
   attachmentFileIcon: { width: 52, height: 52, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#e9f8ef" },
   attachmentName: { color: "#17241c", fontSize: 14, fontWeight: "900" },
   attachmentMeta: { color: "#637269", fontSize: 11 },
@@ -4184,11 +4404,22 @@ const styles = StyleSheet.create({
   previewImage: { width: "100%", height: 320, borderRadius: 16, backgroundColor: "#edf2ee" },
   previewFile: { height: 180, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#edf8f1" },
   previewName: { color: "#17241c", fontSize: 16, fontWeight: "900" },
+  previewError: { color: "#9f1c1c", fontSize: 12, lineHeight: 18, fontWeight: "700", borderRadius: 12, backgroundColor: "#fff0f0", padding: 10 },
   previewActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
   previewCancel: { minHeight: 44, paddingHorizontal: 18, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#edf1ef" },
   previewCancelText: { color: "#34463c", fontWeight: "800" },
   previewSend: { minWidth: 100, minHeight: 44, paddingHorizontal: 18, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#07b75b" },
   previewSendText: { color: "#fff", fontWeight: "900" },
+  evidenceViewerSafe: { flex: 1, backgroundColor: "#07110b" },
+  evidenceViewerHeader: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#26372e" },
+  evidenceViewerTitle: { color: "#fff", fontSize: 16, fontWeight: "900" },
+  evidenceViewerMeta: { color: "#a9b8af", fontSize: 11, marginTop: 3 },
+  evidenceViewerClose: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "#24352b" },
+  evidenceViewerBody: { flex: 1, alignItems: "center", justifyContent: "center", padding: 14 },
+  evidenceViewerMediaFrame: { position: "relative", width: "100%", height: "100%", overflow: "hidden", borderRadius: 16, backgroundColor: "#000" },
+  evidenceViewerMedia: { width: "100%", height: "100%" },
+  evidenceExternalButton: { minHeight: 48, margin: 16, borderRadius: 14, backgroundColor: "#dff4e7", alignItems: "center", justifyContent: "center" },
+  evidenceExternalText: { color: "#087443", fontWeight: "900" },
   modalList: { paddingHorizontal: 18, paddingBottom: 24, gap: 8 },
   emptyText: { color: "#667085", fontSize: 14, textAlign: "center", padding: 24 },
   rowName: { color: "#17241c", fontSize: 15, fontWeight: "900" },
