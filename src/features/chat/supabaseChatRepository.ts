@@ -866,11 +866,11 @@ export const createSupabaseChatRepository = ({
     }
 
     const { data, error } = await query
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(200);
 
     if (error) throw new Error(error.message);
-    return attachReactions((data as MessageRow[] | null) ?? []);
+    return attachReactions(((data as MessageRow[] | null) ?? []).reverse());
   };
 
   const submitCommerceEvidence = async (input: {

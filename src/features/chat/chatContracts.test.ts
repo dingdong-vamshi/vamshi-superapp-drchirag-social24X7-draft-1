@@ -171,6 +171,13 @@ test("return evidence and scanner remain explicit UI flows", () => {
   assert.doesNotMatch(scanner, /edge detection[^\n]*enabled/i);
 });
 
+test("chat message loader keeps the newest page for busy conversations", () => {
+  const repository = readFileSync(new URL("./supabaseChatRepository.ts", import.meta.url), "utf8");
+
+  assert.match(repository, /order\('created_at',\s*\{\s*ascending:\s*false\s*\}\)[\s\S]*\.limit\(200\)/);
+  assert.match(repository, /attachReactions\(\(\(data as MessageRow\[\] \| null\) \?\? \[\]\)\.reverse\(\)\)/);
+});
+
 test("background chat sync does not force visible refreshes or reset scroll", () => {
   const chatScreen = readFileSync(
     new URL("./ChatScreen.tsx", import.meta.url),
