@@ -59,11 +59,24 @@ export type OrderChatItem = {
 export type OrderChatEvidence = {
   id: string;
   orderItemId?: string;
+  returnRequestId?: string;
   filename: string;
   mimeType: string;
   source: 'live_capture' | 'uploaded_file';
   createdAt: string;
+  capturedAt?: string;
   signedUrl?: string;
+};
+
+export type OrderChatReturn = {
+  id: string;
+  orderItemId: string;
+  status: string;
+  reason: string;
+  details?: string;
+  sellerNote?: string;
+  requestedAt: string;
+  evidence: OrderChatEvidence[];
 };
 
 export type OrderChatEvent = {
@@ -89,6 +102,7 @@ export type OrderChatEvent = {
   viewerRole?: 'buyer' | 'seller';
   packingEvidence?: OrderChatEvidence[];
   unboxingEvidence?: OrderChatEvidence[];
+  returnRequests?: OrderChatReturn[];
   canSubmitPackingEvidence?: boolean;
   canSubmitUnboxingEvidence?: boolean;
   canRequestReturn?: boolean;
@@ -217,13 +231,14 @@ export type ChatDataSource = {
   sendMessage(input: SendMessageInput): Promise<ChatMessage>;
   sendAttachment?(input: {
     conversationId: string;
-    bytes: ArrayBuffer;
+    bytes: ArrayBuffer | Blob;
     filename: string;
     mimeType: string;
     width?: number;
     height?: number;
     durationMs?: number;
     source: ChatAttachmentSource;
+    onStage?: (stage: 'uploading' | 'finalizing') => void;
   }): Promise<ChatMessage>;
   submitUnboxingEvidence?(input: {
     orderId: string;
@@ -236,7 +251,8 @@ export type ChatDataSource = {
   submitOrderEvidence?(input: {
     orderId: string;
     orderItemId?: string | null;
-    kind: 'packing' | 'unboxing';
+    returnRequestId?: string | null;
+    kind: 'packing' | 'unboxing' | 'return';
     bytes: ArrayBuffer;
     filename: string;
     mimeType: string;
@@ -247,7 +263,7 @@ export type ChatDataSource = {
     decision: 'approved' | 'rejected' | 'under_review';
     reason?: string;
   }): Promise<void>;
-  submitOrderReturn?(input: { orderItemId: string; reason: string }): Promise<void>;
+  submitOrderReturn?(input: { orderItemId: string; reason: string; details?: string }): Promise<void>;
   sendLocation?(input: { conversationId: string; location: ChatLocation }): Promise<ChatMessage>;
   sendContact?(input: { conversationId: string; profileId: string }): Promise<ChatMessage>;
   createPoll?(input: { conversationId: string; question: string; options: string[] }): Promise<ChatMessage>;

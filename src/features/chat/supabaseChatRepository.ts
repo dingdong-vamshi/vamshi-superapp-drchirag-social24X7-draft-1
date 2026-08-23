@@ -134,18 +134,24 @@ type OrderEvidenceRow = {
   id: string;
   order_id: string;
   order_item_id: string | null;
-  evidence_kind: 'packing' | 'unboxing';
+  return_request_id: string | null;
+  evidence_kind: 'packing' | 'unboxing' | 'return';
   storage_path: string;
   file_name: string | null;
   mime_type: string | null;
   evidence_source: 'live_capture' | 'uploaded_file';
+  captured_at: string | null;
   created_at: string;
 };
 
 type OrderReturnRow = {
   id: string;
   order_id: string;
+  order_item_id: string;
   status: string;
+  reason: string;
+  details: string | null;
+  admin_note: string | null;
   requested_at: string;
 };
 
@@ -516,12 +522,12 @@ export const createSupabaseChatRepository = ({
         client.from('orders').select('id,status,customer_id').in('id', orderIds),
         client
           .from('commerce_order_evidence')
-          .select('id,order_id,order_item_id,evidence_kind,storage_path,file_name,mime_type,evidence_source,created_at')
+          .select('id,order_id,order_item_id,return_request_id,evidence_kind,storage_path,file_name,mime_type,evidence_source,captured_at,created_at')
           .in('order_id', orderIds)
           .order('created_at', { ascending: false }),
         client
           .from('return_requests')
-          .select('id,order_id,status,requested_at')
+          .select('id,order_id,order_item_id,status,reason,details,admin_note,requested_at')
           .in('order_id', orderIds)
           .order('requested_at', { ascending: false }),
       ]);
@@ -537,30 +543,53 @@ export const createSupabaseChatRepository = ({
       if (signed.error) throw new Error(signed.error.message);
       const packingByOrder = new Map<string, NonNullable<ChatMessage['order']>['packingEvidence']>();
       const unboxingByOrder = new Map<string, NonNullable<ChatMessage['order']>['unboxingEvidence']>();
+      const returnEvidenceByRequest = new Map<string, NonNullable<NonNullable<ChatMessage['order']>['returnRequests']>[number]['evidence']>();
       evidenceRows.forEach((evidence, index) => {
-        const target = evidence.evidence_kind === 'packing' ? packingByOrder : unboxingByOrder;
-        const next = target.get(evidence.order_id) ?? [];
-        next.push({
+        const value = {
           id: evidence.id,
           orderItemId: evidence.order_item_id ?? undefined,
+          returnRequestId: evidence.return_request_id ?? undefined,
           filename: evidence.file_name || (evidence.evidence_kind === 'packing' ? 'Packing evidence' : 'Unboxing evidence'),
           mimeType: evidence.mime_type || 'application/octet-stream',
           source: evidence.evidence_source,
           createdAt: evidence.created_at,
+          capturedAt: evidence.captured_at ?? undefined,
           signedUrl: signed.data?.[index]?.signedUrl ?? undefined,
-        });
+        };
+        if (evidence.evidence_kind === 'return' && evidence.return_request_id) {
+          const next = returnEvidenceByRequest.get(evidence.return_request_id) ?? [];
+          next.push(value);
+          returnEvidenceByRequest.set(evidence.return_request_id, next);
+          return;
+        }
+        const target = evidence.evidence_kind === 'packing' ? packingByOrder : unboxingByOrder;
+        const next = target.get(evidence.order_id) ?? [];
+        next.push(value);
         target.set(evidence.order_id, next);
       });
-      const latestReturnByOrder = new Map<string, OrderReturnRow>();
+      const returnsByOrder = new Map<string, OrderReturnRow[]>();
       returnRows.forEach((request) => {
-        if (!latestReturnByOrder.has(request.order_id)) latestReturnByOrder.set(request.order_id, request);
+        const next = returnsByOrder.get(request.order_id) ?? [];
+        next.push(request);
+        returnsByOrder.set(request.order_id, next);
       });
       hydrated = hydrated.map((message) => {
         if (!message.order) return message;
         const live = orderStates.get(message.order.orderId);
         const packingEvidence = packingByOrder.get(message.order.orderId) ?? [];
         const unboxingEvidence = unboxingByOrder.get(message.order.orderId) ?? [];
-        const returnRequest = latestReturnByOrder.get(message.order.orderId);
+        const returnRowsForOrder = returnsByOrder.get(message.order.orderId) ?? [];
+        const returnRequests = returnRowsForOrder.map((request) => ({
+          id: request.id,
+          orderItemId: request.order_item_id,
+          status: request.status,
+          reason: request.reason,
+          details: request.details ?? undefined,
+          sellerNote: request.admin_note ?? undefined,
+          requestedAt: request.requested_at,
+          evidence: returnEvidenceByRequest.get(request.id) ?? [],
+        }));
+        const latestReturn = returnRowsForOrder[0];
         const viewerRole = live?.customer_id === viewerId ? 'buyer' : 'seller';
         const liveStatus = live?.status ?? message.order.orderStatus;
         return {
@@ -571,12 +600,13 @@ export const createSupabaseChatRepository = ({
             viewerRole,
             packingEvidence,
             unboxingEvidence,
+            returnRequests,
             canSubmitPackingEvidence: viewerRole === 'seller' && ['placed', 'confirmed', 'processing'].includes(liveStatus) && packingEvidence.length === 0,
             canSubmitUnboxingEvidence: viewerRole === 'buyer' && liveStatus === 'delivered',
-            canRequestReturn: viewerRole === 'buyer' && liveStatus === 'delivered' && unboxingEvidence.length > 0 && !returnRequest,
-            returnRequestId: returnRequest?.id,
-            returnStatus: returnRequest?.status,
-            canReviewReturn: viewerRole === 'seller' && ['submitted', 'under_review'].includes(returnRequest?.status ?? ''),
+            canRequestReturn: viewerRole === 'buyer' && ['delivered', 'return_requested', 'return_approved', 'return_rejected'].includes(liveStatus) && message.order.items.some((item) => !returnRowsForOrder.some((request) => request.order_item_id === item.orderItemId)),
+            returnRequestId: latestReturn?.id,
+            returnStatus: latestReturn?.status,
+            canReviewReturn: viewerRole === 'seller' && returnRowsForOrder.some((request) => ['submitted', 'under_review'].includes(request.status)),
           },
         };
       });
@@ -846,24 +876,31 @@ export const createSupabaseChatRepository = ({
   const submitCommerceEvidence = async (input: {
     orderId: string;
     orderItemId?: string | null;
-    kind: 'packing' | 'unboxing';
+    returnRequestId?: string | null;
+    kind: 'packing' | 'unboxing' | 'return';
     bytes: ArrayBuffer;
     filename: string;
     mimeType: string;
     source: 'live_capture' | 'uploaded_file';
   }) => {
     if (!viewerId) throw new Error('Authentication required.');
-    if (!isUuid(input.orderId) || (input.orderItemId && !isUuid(input.orderItemId))) {
+    if (!isUuid(input.orderId) || (input.orderItemId && !isUuid(input.orderItemId)) || (input.returnRequestId && !isUuid(input.returnRequestId))) {
       throw new Error('Invalid order evidence target.');
     }
-    if (input.bytes.byteLength < 1 || input.bytes.byteLength > 26_214_400) {
-      throw new Error('Order evidence must be 25 MiB or smaller.');
+    if (input.kind === 'return' && (!input.orderItemId || !input.returnRequestId)) {
+      throw new Error('Return evidence must target an open return request.');
     }
-    const { data: intentData, error: intentError } = await client.rpc('begin_commerce_evidence_capture', {
+    if (input.bytes.byteLength < 1 || input.bytes.byteLength > 15_728_640) {
+      throw new Error('Order evidence must be 15 MiB or smaller.');
+    }
+    const intentRpc = input.source === 'live_capture'
+      ? 'begin_trusted_commerce_evidence_capture'
+      : 'begin_uploaded_commerce_evidence_capture';
+    const { data: intentData, error: intentError } = await client.rpc(intentRpc, {
       p_order_id: input.orderId,
       p_order_item_id: input.orderItemId ?? null,
       p_evidence_kind: input.kind,
-      p_evidence_source: input.source,
+      p_return_request_id: input.returnRequestId ?? null,
     });
     if (intentError) throw new Error(intentError.message);
     const intent = (Array.isArray(intentData) ? intentData[0] : intentData) as { intent_id: string; path_prefix: string } | null;
@@ -1034,36 +1071,97 @@ export const createSupabaseChatRepository = ({
     async sendAttachment(input) {
       if (!viewerId) throw new Error('Authentication required.');
       const resolvedConversationId = await resolveConversationId(input.conversationId);
-      if (input.bytes.byteLength < 1 || input.bytes.byteLength > 104_857_600) {
+      const byteLength = input.bytes instanceof ArrayBuffer ? input.bytes.byteLength : input.bytes.size;
+      if (byteLength < 1 || byteLength > 104_857_600) {
         throw new Error('Attachment must be 100 MiB or smaller.');
       }
       const extension = input.filename.toLowerCase().match(/\.([a-z0-9]{1,8})$/)?.[1]
         ?? input.mimeType.split('/')[1]?.replace('jpeg', 'jpg')
         ?? 'bin';
+      const durationMs = input.durationMs == null ? null : Math.round(input.durationMs);
+      if (durationMs != null && (!Number.isFinite(durationMs) || durationMs < 0)) {
+        throw new Error('Attachment preparation failed: invalid video duration metadata.');
+      }
       const storagePath = `${resolvedConversationId}/${viewerId}/${createClientMessageId()}.${extension}`;
+      const uploadStartedAt = Date.now();
+      if (__DEV__) console.info('[chat-attachment] Storage upload started', {
+        bucket: 'chat-media',
+        storagePath,
+        contentType: input.mimeType,
+        byteLength,
+        payloadType: input.bytes instanceof ArrayBuffer ? 'ArrayBuffer' : input.bytes.constructor.name,
+        filename: input.filename,
+        source: input.source,
+        durationMs,
+      });
+      input.onStage?.('uploading');
       const upload = await client.storage.from('chat-media').upload(storagePath, input.bytes, {
         contentType: input.mimeType,
         upsert: false,
       });
-      if (upload.error) throw new Error(upload.error.message);
+      if (upload.error) {
+        if (__DEV__) console.error('[chat-attachment] Storage upload failed', {
+          code: upload.error.name,
+          message: upload.error.message,
+          storagePath,
+          mimeType: input.mimeType,
+          byteLength,
+        });
+        throw new Error(`Attachment upload failed: ${upload.error.message}`);
+      }
+      if (__DEV__) console.info('[chat-attachment] Storage upload succeeded', {
+        data: upload.data,
+        storagePath,
+        elapsedMs: Date.now() - uploadStartedAt,
+      });
 
+      input.onStage?.('finalizing');
+      const finalizationStartedAt = Date.now();
       const { data, error } = await client.rpc('send_chat_attachment', {
         target_conversation: resolvedConversationId,
         target_storage_path: storagePath,
         target_filename: input.filename,
         target_mime_type: input.mimeType,
-        target_bytes: input.bytes.byteLength,
+        target_bytes: byteLength,
         target_width: input.width ?? null,
         target_height: input.height ?? null,
-        target_duration_ms: input.durationMs ?? null,
+        target_duration_ms: durationMs,
         target_source: input.source,
       });
       if (error) {
-        await client.storage.from('chat-media').remove([storagePath]);
-        throw new Error(error.message);
+        if (__DEV__) console.error('[chat-attachment] send_chat_attachment failed', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          storagePath,
+          mimeType: input.mimeType,
+          byteLength,
+          durationMs,
+        });
+        const cleanup = await client.storage.from('chat-media').remove([storagePath]);
+        if (__DEV__) console.warn('[chat-attachment] Failed-upload cleanup result', {
+          data: cleanup.data,
+          error: cleanup.error,
+          storagePath,
+        });
+        const diagnostic = [error.message, error.code ? `code ${error.code}` : '', error.details, error.hint]
+          .filter(Boolean)
+          .join(' · ');
+        throw new Error(`Attachment finalization failed: ${diagnostic}`);
       }
+      const messageRow = data as MessageRow;
+      if (__DEV__) console.info('[chat-attachment] Attachment finalized', {
+        messageId: messageRow.id,
+        attachmentId: messageRow.payload?.attachment_id,
+        storagePath,
+        mimeType: input.mimeType,
+        byteLength,
+        durationMs,
+        elapsedMs: Date.now() - finalizationStartedAt,
+      });
       notify();
-      return toMessage(data as MessageRow, viewerId);
+      return toMessage(messageRow, viewerId);
     },
 
     async submitUnboxingEvidence(input) {
@@ -1091,6 +1189,7 @@ export const createSupabaseChatRepository = ({
       const { error } = await client.rpc('submit_creator_commerce_return', {
         p_order_item_id: input.orderItemId,
         p_reason: input.reason.trim(),
+        p_details: input.details?.trim() || null,
       });
       if (error) throw new Error(error.message);
       notify();
