@@ -267,6 +267,14 @@ const productFromRow = (row: ProductRow): LifecycleProduct => {
 };
 
 const requireSupabaseUserId = async (client: SupabaseClient) => {
+  const getSession = client.auth.getSession?.bind(client.auth);
+  if (getSession) {
+    const { data: sessionData, error: sessionError } = await getSession();
+    if (sessionError) throw new Error(sessionError.message);
+    const sessionUserId = sessionData.session?.user?.id;
+    if (sessionUserId) return sessionUserId;
+  }
+
   const { data, error } = await client.auth.getUser();
   if (error) throw new Error(error.message);
   const userId = data.user?.id;

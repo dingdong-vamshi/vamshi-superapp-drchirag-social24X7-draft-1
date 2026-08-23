@@ -65,3 +65,15 @@ test("checkout and fulfillment RPCs are not executable by public or anonymous ro
   assert.match(sql, /revoke all on function public\.seller_update_creator_commerce_fulfillment[\s\S]+from public, anon/);
   assert.match(sql, /grant execute on function public\.seller_update_creator_commerce_fulfillment[\s\S]+to authenticated/);
 });
+
+test("commerce screens do not block initial load on an auth user network round trip", async () => {
+  const repository = await readFile(
+    new URL("../creatorCommerce/lifecycleRepository.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(repository, /client\.auth\.getSession\?\.bind\(client\.auth\)/);
+  assert.match(repository, /await getSession\(\)[\s\S]*sessionData\.session\?\.user\?\.id/);
+  assert.match(repository, /if \(sessionUserId\) return sessionUserId/);
+  assert.match(repository, /client\.auth\.getUser\(\)/);
+});
