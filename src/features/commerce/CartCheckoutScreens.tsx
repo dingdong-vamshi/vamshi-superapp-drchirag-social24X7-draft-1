@@ -36,13 +36,14 @@ type CartProps = {
 
 export function CartScreen({ repository, client, onBack, onContinue }: CartProps) {
   const [loading, setLoading] = useState(true);
+  const [hydrated, setHydrated] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [products, setProducts] = useState<ShopProduct[]>([]);
   const [address, setAddress] = useState<BuyerDeliveryAddress | null>(null);
 
   const load = async () => {
-    setLoading(true);
+    if (!hydrated) setLoading(true);
     try {
       const [nextCart, nextProducts, nextAddress] = await Promise.all([
         repository.getCart(),
@@ -55,6 +56,7 @@ export function CartScreen({ repository, client, onBack, onContinue }: CartProps
     } catch (cause) {
       Alert.alert("Cart could not be loaded", cause instanceof Error ? cause.message : "Please try again.");
     } finally {
+      setHydrated(true);
       setLoading(false);
     }
   };
@@ -107,7 +109,7 @@ export function CartScreen({ repository, client, onBack, onContinue }: CartProps
     }
   };
 
-  if (loading) return <LoadingState label="Loading your bag…" />;
+  if (loading && !hydrated) return <LoadingState label="Loading your bag…" />;
 
   return (
     <View style={styles.screen}>
@@ -179,6 +181,7 @@ type CheckoutProps = {
 
 export function CheckoutScreen({ repository, client, onBack, onSuccess }: CheckoutProps) {
   const [loading, setLoading] = useState(true);
+  const [hydrated, setHydrated] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [products, setProducts] = useState<ShopProduct[]>([]);
@@ -193,7 +196,7 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
 
   useEffect(() => {
     void (async () => {
-      setLoading(true);
+      if (!hydrated) setLoading(true);
       try {
         const [nextCart, nextProducts, address] = await Promise.all([
           repository.getCart(),
@@ -213,6 +216,7 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
       } catch (cause) {
         Alert.alert("Checkout could not be loaded", cause instanceof Error ? cause.message : "Please try again.");
       } finally {
+        setHydrated(true);
         setLoading(false);
       }
     })();
@@ -262,7 +266,7 @@ export function CheckoutScreen({ repository, client, onBack, onSuccess }: Checko
     }
   };
 
-  if (loading) return <LoadingState label="Preparing secure checkout…" />;
+  if (loading && !hydrated) return <LoadingState label="Preparing secure checkout…" />;
 
   return (
     <View style={styles.screen}>

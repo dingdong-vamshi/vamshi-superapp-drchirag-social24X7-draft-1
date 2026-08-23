@@ -77,3 +77,16 @@ test("commerce screens do not block initial load on an auth user network round t
   assert.match(repository, /if \(sessionUserId\) return sessionUserId/);
   assert.match(repository, /client\.auth\.getUser\(\)/);
 });
+
+test("cart and checkout only use full-screen loaders before first hydration", async () => {
+  const screen = await readFile(
+    new URL("CartCheckoutScreens.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(screen, /const \[hydrated, setHydrated\] = useState\(false\)/);
+  assert.match(screen, /if \(!hydrated\) setLoading\(true\)/);
+  assert.match(screen, /setHydrated\(true\)/);
+  assert.match(screen, /if \(loading && !hydrated\) return <LoadingState label="Loading your bag…"/);
+  assert.match(screen, /if \(loading && !hydrated\) return <LoadingState label="Preparing secure checkout…"/);
+});
