@@ -172,6 +172,8 @@ const trustedCaptureLabel = (mimeType: string, capturedAt: string) =>
 // in the comparison causes a needless list replacement (and a scroll jump).
 const messageRefreshSignature = (messages: ChatMessage[]) =>
   JSON.stringify(messages, (key, value) => (key === "signedUrl" ? undefined : value));
+const sortMessagesByCreatedAt = (messages: ChatMessage[]) =>
+  [...messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 const formatMinor = (value: number, currency = "INR") =>
   new Intl.NumberFormat(undefined, {
     style: "currency",
@@ -238,6 +240,22 @@ export default function ChatScreen({
     if (signature === messageSignatureRef.current) return;
     messageSignatureRef.current = signature;
     setMessages(next);
+  }, []);
+
+  const appendSentMessage = useCallback((message: ChatMessage) => {
+    setMessages((current) => {
+      const next = sortMessagesByCreatedAt([
+        ...current.filter((item) => item.id !== message.id),
+        message,
+      ]);
+      messageSignatureRef.current = messageRefreshSignature(next);
+      return next;
+    });
+    setSelected((current) =>
+      current && current.id === message.conversationId
+        ? { ...current, lastMessage: message, updatedAt: message.createdAt }
+        : current,
+    );
   }, []);
 
   const loadConversations = useCallback(async (mode: "initial" | "refresh" | "silent" = "refresh") => {
@@ -350,19 +368,47 @@ export default function ChatScreen({
       || initialConversationOpenedRef.current
       || !hasLoadedOnce
     ) return;
+    initialConversationOpenedRef.current = true;
     const initialConversation = conversations.find(
       (conversation) => conversation.id === initialConversationId,
     );
-    if (!initialConversation) {
-      setError("This conversation is unavailable or you no longer have access.");
-      setState("error");
-      initialConversationOpenedRef.current = true;
+    if (initialConversation) {
+      setSegment(initialConversation.kind === "business" ? "business" : "personal");
+      void openConversation(initialConversation);
       return;
     }
-    initialConversationOpenedRef.current = true;
-    setSegment(initialConversation.kind === "business" ? "business" : "personal");
-    void openConversation(initialConversation);
-  }, [conversations, hasLoadedOnce, initialConversationId, openConversation]);
+
+    if (!dataSource.getConversation) {
+      setError("This conversation is unavailable or you no longer have access.");
+      setState("error");
+      return;
+    }
+
+    let active = true;
+    setState("loading");
+    void dataSource.getConversation(initialConversationId)
+      .then((directConversation) => {
+        if (!active) return;
+        if (!directConversation) {
+          setError("This conversation is unavailable or you no longer have access.");
+          setState("error");
+          return;
+        }
+        conversationsRef.current = [
+          directConversation,
+          ...conversationsRef.current.filter((conversation) => conversation.id !== directConversation.id),
+        ];
+        setConversations(conversationsRef.current);
+        setSegment(directConversation.kind === "business" ? "business" : "personal");
+        void openConversation(directConversation);
+      })
+      .catch(() => {
+        if (!active) return;
+        setError("This conversation is unavailable or you no longer have access.");
+        setState("error");
+      });
+    return () => { active = false; };
+  }, [conversations, dataSource, hasLoadedOnce, initialConversationId, openConversation]);
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
@@ -630,6 +676,7 @@ export default function ChatScreen({
         onViewStore={onViewStore}
         onViewOrder={onViewOrder}
         onViewProfile={onViewProfile}
+        onMessageSent={appendSentMessage}
         acceptRequest={async (conversationId) => {
           const accepted = await dataSource.acceptMessageRequest(conversationId);
           setSelected(accepted);
@@ -972,6 +1019,7 @@ function ConversationView({
   onViewStore,
   onViewOrder,
   onViewProfile,
+  onMessageSent,
   acceptRequest,
   onBack,
 }: {
@@ -986,6 +1034,7 @@ function ConversationView({
   onViewStore?: (slug: string) => void;
   onViewOrder?: (orderId: string) => void;
   onViewProfile?: (profileId: string) => void;
+  onMessageSent: (message: ChatMessage) => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
   onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
   acceptRequest: (conversationId: string) => Promise<Conversation>;
@@ -1462,7 +1511,8 @@ function ConversationView({
     setDraft("");
     setSending(true);
     try {
-      await dataSource.sendMessage({ conversationId: conversation.id, text });
+      const sentMessage = await dataSource.sendMessage({ conversationId: conversation.id, text });
+      onMessageSent(sentMessage);
     } catch (cause) {
       setDraft(text);
       Alert.alert(

@@ -173,11 +173,16 @@ test("return evidence and scanner remain explicit UI flows", () => {
 
 test("chat message loader keeps the newest page for busy conversations", () => {
   const repository = readFileSync(new URL("./supabaseChatRepository.ts", import.meta.url), "utf8");
+  const chatScreen = readFileSync(new URL("./ChatScreen.tsx", import.meta.url), "utf8");
 
   assert.match(repository, /order\('created_at',\s*\{\s*ascending:\s*false\s*\}\)[\s\S]*\.limit\(200\)/);
   assert.match(repository, /attachReactions\(\(\(data as MessageRow\[\] \| null\) \?\? \[\]\)\.reverse\(\)\)/);
-  assert.match(repository, /from\('conversation_participants'\)[\s\S]*\.eq\('conversation_id', conversationId\)[\s\S]*\.eq\('user_id', viewerId\)/);
+  assert.match(repository, /from\('conversations'\)[\s\S]*\.select\(CONVERSATION_SELECT\)[\s\S]*\.eq\('id', conversationId\)[\s\S]*\.maybeSingle\(\)/);
+  assert.match(repository, /async getConversation\(conversationId\)/);
   assert.match(repository, /if \(accessibleConversationId\) return accessibleConversationId/);
+  assert.match(chatScreen, /dataSource\.getConversation\(initialConversationId\)/);
+  assert.match(chatScreen, /const sentMessage = await dataSource\.sendMessage/);
+  assert.match(chatScreen, /onMessageSent\(sentMessage\)/);
 });
 
 test("background chat sync does not force visible refreshes or reset scroll", () => {

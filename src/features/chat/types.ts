@@ -227,6 +227,7 @@ export type Conversation = {
 
 export type ChatDataSource = {
   listConversations(): Promise<Conversation[]>;
+  getConversation?(conversationId: string): Promise<Conversation | null>;
   listMessages(conversationId: string): Promise<ChatMessage[]>;
   sendMessage(input: SendMessageInput): Promise<ChatMessage>;
   sendAttachment?(input: {

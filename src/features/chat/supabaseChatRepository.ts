@@ -178,6 +178,44 @@ const unique = <T>(values: T[]) => [...new Set(values)];
 
 const stringValue = (value: unknown) => typeof value === 'string' ? value : '';
 
+const CONVERSATION_SELECT = `
+  id,
+  kind,
+  storefront_id,
+  business_customer_id,
+  created_by,
+  created_at,
+  updated_at,
+  title,
+  image_path,
+  storefronts!conversations_storefront_id_fkey(
+    id,
+    name,
+    slug,
+    logo_path,
+    verification_status
+  ),
+  conversation_participants(
+    user_id,
+    last_read_at,
+    archived_at,
+    manually_unread_at,
+    pinned_at,
+    cleared_at,
+    member_role,
+    profiles!conversation_participants_user_id_fkey(
+      id,
+      username,
+      display_name,
+      phone,
+      phone_discoverable,
+      username_discoverable,
+      is_private,
+      avatar_path
+    )
+  )
+`;
+
 const toContact = (row: ProfileRow): ChatContact => {
   const name = row.display_name?.trim() || row.username || 'Social 24x7 user';
   return {
@@ -340,55 +378,25 @@ export const createSupabaseChatRepository = ({
   ) => {
     const { data, error } = await client
       .from('conversations')
-      .select(`
-        id,
-        kind,
-        storefront_id,
-        business_customer_id,
-        created_by,
-        created_at,
-        updated_at,
-        title,
-        image_path,
-        storefronts!conversations_storefront_id_fkey(
-          id,
-          name,
-          slug,
-          logo_path,
-          verification_status
-        ),
-        conversation_participants(
-          user_id,
-          last_read_at,
-          archived_at,
-          manually_unread_at,
-          pinned_at,
-          cleared_at,
-          member_role,
-          profiles!conversation_participants_user_id_fkey(
-            id,
-            username,
-            display_name,
-            phone,
-            phone_discoverable,
-            username_discoverable,
-            is_private
-            ,avatar_path
-          )
-        )
-      `)
+      .select(CONVERSATION_SELECT)
       .in('kind', kinds)
       .order('updated_at', { ascending: false })
       .limit(100);
 
     if (error) throw new Error(error.message);
     const rows = (data as ConversationRow[] | null) ?? [];
+    await hydrateConversationAvatars(rows);
+    return rows;
+  };
+
+  const hydrateConversationAvatars = async (rows: ConversationRow[]) => {
     const paths = unique(rows.flatMap((row) =>
       (row.conversation_participants || []).flatMap((participant) => {
         const profile = firstRelation(participant.profiles);
         return profile?.avatar_path ? [profile.avatar_path] : [];
       }),
     ));
+    if (!paths.length) return;
     const signed = paths.length
       ? await client.storage.from('profile-media').createSignedUrls(paths, 3600)
       : { data: [], error: null };
@@ -397,7 +405,21 @@ export const createSupabaseChatRepository = ({
       const profiles = Array.isArray(participant.profiles) ? participant.profiles : participant.profiles ? [participant.profiles] : [];
       profiles.forEach((profile) => { profile.avatar_url = profile.avatar_path ? urls.get(profile.avatar_path) || null : null; });
     }));
-    return rows;
+  };
+
+  const fetchConversationRowById = async (conversationId: string) => {
+    if (!isUuid(conversationId)) return null;
+    const { data, error } = await client
+      .from('conversations')
+      .select(CONVERSATION_SELECT)
+      .eq('id', conversationId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    const row = data as ConversationRow | null;
+    if (!row) return null;
+    await hydrateConversationAvatars([row]);
+    return row;
   };
 
   const fetchPersonalConversationRows = () => fetchConversationRows(['personal']);
@@ -664,14 +686,8 @@ export const createSupabaseChatRepository = ({
 
   const findAccessibleConversationId = async (conversationId: string) => {
     if (!viewerId || !isUuid(conversationId)) return null;
-    const { data, error } = await client
-      .from('conversation_participants')
-      .select('conversation_id')
-      .eq('conversation_id', conversationId)
-      .eq('user_id', viewerId)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data as { conversation_id?: string } | null)?.conversation_id ?? null;
+    const row = await fetchConversationRowById(conversationId);
+    return row?.id ?? null;
   };
 
   const resolveConversationId = async (conversationIdOrParticipantId: string) => {
@@ -1046,6 +1062,21 @@ export const createSupabaseChatRepository = ({
         const pinnedSort = Number(Boolean(right.isPinned)) - Number(Boolean(left.isPinned));
         if (pinnedSort) return pinnedSort;
         return right.updatedAt.localeCompare(left.updatedAt);
+      });
+    },
+
+    async getConversation(conversationId) {
+      if (!viewerId) return null;
+      const row = await fetchConversationRowById(conversationId);
+      if (!row) return null;
+      const messagesByConversationId = await fetchMessagesByConversationIds([row.id]);
+      const messages = messagesByConversationId.get(row.id) ?? [];
+      return toConversation({
+        row,
+        messages,
+        latestMessage: messages.at(-1),
+        viewerProfileId: viewerId,
+        requestStatus: 'accepted',
       });
     },
 
