@@ -662,11 +662,25 @@ export const createSupabaseChatRepository = ({
     return created;
   };
 
+  const findAccessibleConversationId = async (conversationId: string) => {
+    if (!viewerId || !isUuid(conversationId)) return null;
+    const { data, error } = await client
+      .from('conversation_participants')
+      .select('conversation_id')
+      .eq('conversation_id', conversationId)
+      .eq('user_id', viewerId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data as { conversation_id?: string } | null)?.conversation_id ?? null;
+  };
+
   const resolveConversationId = async (conversationIdOrParticipantId: string) => {
     if (!viewerId) throw new Error('Authentication required.');
     const rows = await fetchConversationRows();
     const directConversation = rows.find((row) => row.id === conversationIdOrParticipantId);
     if (directConversation) return directConversation.id;
+    const accessibleConversationId = await findAccessibleConversationId(conversationIdOrParticipantId);
+    if (accessibleConversationId) return accessibleConversationId;
     const ensured = await ensureAcceptedConversation(conversationIdOrParticipantId);
     return ensured.id;
   };

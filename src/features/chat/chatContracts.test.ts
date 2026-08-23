@@ -176,6 +176,8 @@ test("chat message loader keeps the newest page for busy conversations", () => {
 
   assert.match(repository, /order\('created_at',\s*\{\s*ascending:\s*false\s*\}\)[\s\S]*\.limit\(200\)/);
   assert.match(repository, /attachReactions\(\(\(data as MessageRow\[\] \| null\) \?\? \[\]\)\.reverse\(\)\)/);
+  assert.match(repository, /from\('conversation_participants'\)[\s\S]*\.eq\('conversation_id', conversationId\)[\s\S]*\.eq\('user_id', viewerId\)/);
+  assert.match(repository, /if \(accessibleConversationId\) return accessibleConversationId/);
 });
 
 test("background chat sync does not force visible refreshes or reset scroll", () => {
