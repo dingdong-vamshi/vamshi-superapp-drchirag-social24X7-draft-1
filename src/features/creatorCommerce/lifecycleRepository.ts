@@ -900,12 +900,15 @@ export async function uploadLifecycleOrderEvidence(
   const response = await fetch(input.asset.uri);
   if (!response.ok) throw new Error('Could not read the selected evidence file.');
   const bytes = await response.arrayBuffer();
-  if (bytes.byteLength < 1 || bytes.byteLength > 26_214_400) throw new Error('Order evidence must be 25 MiB or smaller.');
-  const { data: intentData, error: intentError } = await client.rpc('begin_commerce_evidence_capture', {
+  if (bytes.byteLength < 1 || bytes.byteLength > 15_728_640) throw new Error('Order evidence must be 15 MiB or smaller.');
+  const intentRpc = input.source === 'live_capture'
+    ? 'begin_trusted_commerce_evidence_capture'
+    : 'begin_uploaded_commerce_evidence_capture';
+  const { data: intentData, error: intentError } = await client.rpc(intentRpc, {
     p_order_id: input.orderId,
     p_order_item_id: input.orderItemId ?? null,
     p_evidence_kind: input.kind,
-    p_evidence_source: input.source ?? 'uploaded_file',
+    p_return_request_id: null,
   });
   if (intentError) throw new Error(intentError.message);
   const intent = (Array.isArray(intentData) ? intentData[0] : intentData) as { intent_id: string; path_prefix: string } | null;
@@ -924,7 +927,7 @@ export async function uploadLifecycleOrderEvidence(
     p_storage_path: path,
     p_file_name: input.asset.fileName ?? null,
     p_mime_type: input.asset.mimeType ?? response.headers.get('content-type') ?? 'application/octet-stream',
-    p_file_size: input.asset.fileSize ?? bytes.byteLength,
+    p_file_size: bytes.byteLength,
   });
   if (finalizeError) {
     await client.storage.from('creator-commerce-private').remove([path]);
