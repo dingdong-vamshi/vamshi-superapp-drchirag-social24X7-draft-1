@@ -204,7 +204,34 @@ test("TRUE capture labels remain restricted to business chat", () => {
     "utf8",
   );
 
-  assert.match(chatScreen, /showTrustedCapture=\{Boolean\(conversation\.storefront\)\}/);
-  assert.match(chatScreen, /attachment\.source === "camera_capture" && showTrustedCapture/);
+  assert.match(chatScreen, /trusted: Boolean\(conversation\.storefront\) && attachment\.source === "camera_capture"/);
   assert.match(chatScreen, /showTrustedCapture \? " · TRUE camera capture" : " · Camera capture"/);
+});
+
+test("TRUE media is clean in the timeline and watermarked only inside the viewer", () => {
+  const chatScreen = readFileSync(new URL("./ChatScreen.tsx", import.meta.url), "utf8");
+  const timeline = chatScreen.slice(chatScreen.indexOf("{message.attachment ? ("), chatScreen.indexOf("{message.location ? ("));
+  assert.doesNotMatch(timeline, /TrustedMediaOverlay/);
+  assert.doesNotMatch(timeline, /trustedCaptureLabel/);
+  assert.match(timeline, /onViewAttachment/);
+  assert.match(chatScreen, /function ChatMediaViewer/);
+  assert.match(chatScreen, /trustedLabel \? <TrustedMediaOverlay/);
+  assert.match(chatScreen, /trustedMediaOverlay: \{ position: "absolute", top: 10, right: 10/);
+  assert.match(chatScreen, /fullscreenOptions=\{\{ enable: false \}\}/);
+  assert.match(chatScreen, /source === "live_capture" && evidence\.capturedAt/);
+});
+
+test("message actions use long press and desktop context menu without a permanent reaction trigger", () => {
+  const chatScreen = readFileSync(new URL("./ChatScreen.tsx", import.meta.url), "utf8");
+  assert.match(chatScreen, /delayLongPress=\{350\}/);
+  assert.match(chatScreen, /onContextMenu:[\s\S]*onLongPress\(\)/);
+  assert.match(chatScreen, /<MessageActions[\s\S]*react=\{/);
+  assert.doesNotMatch(chatScreen, /messageReactionTrigger/);
+  assert.doesNotMatch(chatScreen, /React to received message/);
+});
+
+test("personal chat header routes to Chat Details while group actions stay local", () => {
+  const chatScreen = readFileSync(new URL("./ChatScreen.tsx", import.meta.url), "utf8");
+  assert.match(chatScreen, /conversation\.kind === "personal"[\s\S]*onOpenChatDetails\?\.\(conversation\.id\)/);
+  assert.match(chatScreen, /conversation\.kind === "group"[\s\S]*setGroupMembersOpen\(true\)/);
 });

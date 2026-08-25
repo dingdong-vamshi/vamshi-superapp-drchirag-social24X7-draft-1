@@ -43,6 +43,7 @@ type RequestRow = {
 type ParticipantRow = {
   user_id: string;
   last_read_at: string | null;
+  muted?: boolean | null;
   archived_at?: string | null;
   manually_unread_at?: string | null;
   pinned_at?: string | null;
@@ -198,6 +199,7 @@ const CONVERSATION_SELECT = `
   conversation_participants(
     user_id,
     last_read_at,
+    muted,
     archived_at,
     manually_unread_at,
     pinned_at,
@@ -781,6 +783,7 @@ export const createSupabaseChatRepository = ({
       isArchived: Boolean(viewerParticipant?.archived_at),
       isManuallyUnread: manualUnread,
       isPinned: Boolean(viewerParticipant?.pinned_at),
+      isMuted: Boolean(viewerParticipant?.muted),
       clearedAt,
       requestStatus,
       requestMessage,
@@ -861,7 +864,7 @@ export const createSupabaseChatRepository = ({
 
   const updateParticipantState = async (
     conversationId: string,
-    patch: Partial<Pick<ParticipantRow, 'archived_at' | 'manually_unread_at' | 'last_read_at' | 'pinned_at' | 'cleared_at'>>,
+    patch: Partial<Pick<ParticipantRow, 'archived_at' | 'manually_unread_at' | 'last_read_at' | 'pinned_at' | 'cleared_at' | 'muted'>>,
   ) => {
     if (!viewerId) throw new Error('Authentication required.');
     const resolvedConversationId = await resolveConversationId(conversationId);
@@ -1644,6 +1647,9 @@ export const createSupabaseChatRepository = ({
 
       if (error) throw new Error(error.message);
       notify();
+    },
+    async setConversationMuted(conversationId, muted) {
+      await updateParticipantState(conversationId, { muted });
     },
 
     async pinConversation(conversationId, pinned) {

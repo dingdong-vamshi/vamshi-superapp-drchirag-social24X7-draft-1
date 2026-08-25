@@ -18,6 +18,7 @@ import {
   Play,
   Repeat2,
   Share2,
+  UserRound,
   Star,
 } from "lucide-react-native";
 import { router } from "expo-router";
@@ -273,7 +274,7 @@ export function SocialProfileScreen({
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={10} style={styles.headerIcon}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} hitSlop={10} style={styles.headerIcon}>
             <ArrowLeft size={22} color={ink} />
           </Pressable>
           <Text style={styles.headerTitle}>{isOwnProfile ? "My Social Profile" : profile.displayName}</Text>
@@ -281,7 +282,7 @@ export function SocialProfileScreen({
             onPress={() => (isOwnProfile ? router.push("/profile") : router.push("/chats"))}
             style={styles.headerIcon}
           >
-            {isOwnProfile ? <Camera size={20} color={ink} /> : <Share2 size={20} color={ink} />}
+            {isOwnProfile ? <UserRound size={20} color={ink} /> : <Share2 size={20} color={ink} />}
           </Pressable>
         </View>
 

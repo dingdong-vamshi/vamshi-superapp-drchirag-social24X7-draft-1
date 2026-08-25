@@ -216,6 +216,7 @@ export type Conversation = {
   isArchived?: boolean;
   isManuallyUnread?: boolean;
   isPinned?: boolean;
+  isMuted?: boolean;
   clearedAt?: string | null;
   requestStatus?: 'pending_outgoing' | 'pending_incoming' | 'accepted';
   requestMessage?: string;
@@ -296,6 +297,7 @@ export type ChatDataSource = {
   unarchiveConversation?(conversationId: string): Promise<void>;
   markConversationUnread?(conversationId: string): Promise<void>;
   setMessageReaction(messageId: string, emoji: string | null): Promise<void>;
+  setConversationMuted?(conversationId: string, muted: boolean): Promise<void>;
   pinConversation?(conversationId: string, pinned: boolean): Promise<void>;
   clearConversation?(conversationId: string): Promise<void>;
   reportConversation?(input: ChatReportInput): Promise<void>;

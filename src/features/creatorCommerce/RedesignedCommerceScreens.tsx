@@ -753,7 +753,7 @@ export function CreatorCentreScreen() {
         : `/commerce/buyer?ref=${promotion.trackingCode}`;
       await Clipboard.setStringAsync(`${Platform.OS === 'web' ? globalThis.location?.origin ?? '' : ''}${path}`);
       setCopiedPromotionId(promotion.id);
-      Alert.alert('Copied ✓', 'Share this Product link. Eligible purchases keep the Creator attribution automatically.');
+      Alert.alert('Affiliate Link copied ✓', 'Share this Product link. Eligible purchases keep the Creator attribution automatically.');
     } catch (cause) { Alert.alert('Promotion failed', errorMessage(cause)); }
     finally { setBusy(false); }
   };
@@ -766,7 +766,7 @@ export function CreatorCentreScreen() {
   if (state === 'loading') return <Loading label="Loading Creator Centre…" />;
   if (state === 'error') return <StateError message={error ?? 'Unable to load Creator Centre.'} onRetry={load} />;
 
-  const tabs: Array<[TabKey, string]> = [['overview', 'Home'], ['products', 'Discover Products'], ['links', 'Share Links'], ['commissions', 'Earnings'], ['verification', 'Profile']];
+  const tabs: Array<[TabKey, string]> = [['overview', 'Home'], ['products', 'Discover Products'], ['links', 'Affiliate Links'], ['commissions', 'Earnings'], ['verification', 'Profile']];
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.page}>
       <ScreenHeader title="Creator Centre" subtitle="Promote Products, manage tracked links and understand your real commission state." />
@@ -801,7 +801,7 @@ export function CreatorCentreScreen() {
         </Section>
       ) : null}
       {tab === 'links' ? (
-        <Section title="My Links" copy="Each link preserves the existing last-click attribution logic.">
+        <Section title="My Affiliate Links" copy="Each Affiliate Link preserves the existing last-click attribution logic.">
           {promotions.map((promotion) => {
             const link = promotion.storefrontSlug && promotion.productSlug
               ? `/store/${promotion.storefrontSlug}/product/${promotion.productSlug}?ref=${promotion.trackingCode}`
@@ -811,9 +811,9 @@ export function CreatorCentreScreen() {
               await Clipboard.setStringAsync(absolute);
               setCopiedPromotionId(promotion.id);
             };
-            return <View key={promotion.id} style={styles.linkCard}><View style={{ flex: 1 }}><Text style={styles.productTitle}>{promotion.productTitle}</Text><Text style={styles.productMeta}>{promotion.storefrontName} · {promotion.commissionBpsSnapshot / 100}% commission</Text><Text selectable style={styles.linkText}>{link}</Text></View><SmallAction label={copiedPromotionId === promotion.id ? 'Copied ✓' : 'Copy link'} onPress={() => void copy()} /></View>;
+            return <View key={promotion.id} style={styles.linkCard}><View style={{ flex: 1 }}><Text style={styles.productTitle}>{promotion.productTitle}</Text><Text style={styles.productMeta}>{promotion.storefrontName} · {promotion.commissionBpsSnapshot / 100}% commission</Text><Text selectable style={styles.linkText}>{link}</Text></View><SmallAction label={copiedPromotionId === promotion.id ? 'Affiliate Link copied ✓' : 'Copy Affiliate Link'} onPress={() => void copy()} /></View>;
           })}
-          {!promotions.length ? <Text style={styles.empty}>Promote a Product to create your first tracked link.</Text> : null}
+          {!promotions.length ? <Text style={styles.empty}>Promote a Product to create your first Affiliate Link.</Text> : null}
         </Section>
       ) : null}
       {tab === 'commissions' ? (

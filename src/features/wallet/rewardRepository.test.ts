@@ -69,3 +69,11 @@ test("reward history resolves transfer counterparties from the immutable ledger"
   assert.match(migration, /left join public\.reward_transfers/i);
   assert.match(migration, /where l\.user_id = \(select auth\.uid\(\)\)/i);
 });
+
+test("Wallet removes only the obsolete confirmed-ledger caption", () => {
+  const wallet = readFileSync(new URL("./WalletScreen.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(wallet, /Confirmed ledger balance/);
+  assert.match(wallet, /TOTAL BALANCE/);
+  assert.match(wallet, /MINED COINS/);
+  assert.match(wallet, /confirmedBalanceMicrounits/);
+});

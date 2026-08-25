@@ -1,17 +1,17 @@
 import { useMemo } from "react";
 import { useLocalSearchParams } from "expo-router";
 
-import { SocialProfileScreen } from "../../src/features/social/SocialProfileScreen";
-import { useAuth } from "../../src/lib/AuthContext";
-import { supabase } from "../../src/lib/supabase";
-import { createAsyncStorageSocialRepository } from "../../src/features/social/asyncStorageRepository";
-import { createSupabaseSocialRepository } from "../../src/features/social/supabaseSocialRepository";
-import type { SocialUser } from "../../src/features/social/types";
+import { SocialProfileScreen } from "../src/features/social/SocialProfileScreen";
+import { useAuth } from "../src/lib/AuthContext";
+import { supabase } from "../src/lib/supabase";
+import { createAsyncStorageSocialRepository } from "../src/features/social/asyncStorageRepository";
+import { createSupabaseSocialRepository } from "../src/features/social/supabaseSocialRepository";
+import type { SocialUser } from "../src/features/social/types";
 import {
   createLocalProfileRepository,
   createSupabaseProfileRepository,
   localProfileRepository,
-} from "../../src/features/profile/profileRepository";
+} from "../src/features/profile/profileRepository";
 
 export default function SocialProfilePage() {
   const params = useLocalSearchParams<{
@@ -32,11 +32,7 @@ export default function SocialProfilePage() {
   );
 
   const viewer = useMemo<SocialUser>(
-    () => ({
-      id: user?.id || "local-user",
-      handle,
-      displayName,
-    }),
+    () => ({ id: user?.id || "local-user", handle, displayName }),
     [displayName, handle, user?.id],
   );
 

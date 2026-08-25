@@ -577,6 +577,7 @@ export async function listCreatorMarketplaceProducts(client: SupabaseClient) {
     .eq('status', 'active')
     .eq('product_approval_status', 'approved')
     .eq('creator_promotion_enabled', true)
+    .gt('inventory', 0)
     .order('published_at', { ascending: false, nullsFirst: false })
     .limit(80);
   if (error) throw new Error(error.message);

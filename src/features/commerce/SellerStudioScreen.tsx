@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Alert,
   Modal,
   Image,
+  LayoutChangeEvent,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -16,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { Asset } from "expo-asset";
+import { useVideoPlayer, VideoView } from "expo-video";
 import {
   BarChart3,
   Activity,
@@ -39,6 +43,7 @@ import {
   Truck,
   Video,
   WalletCards,
+  X,
 } from "lucide-react-native";
 import {
   type BusinessConversationSummary,
@@ -47,31 +52,34 @@ import {
   type SellerApplicationDraft,
   type SellerAnalytics,
   type SellerDashboard,
+  type SellerFinanceSummary,
   type SellerOrder,
   type SellerOrderStatus,
+  type SellerReturn,
+  type SellerReturnEvidence,
   shopCategories,
   type ShopCategory,
   type ShopProduct,
   type ShopRepository,
   slugify,
   type UploadAsset,
+  formatInr,
 } from "./shopRepository";
 import SellerAnalyticsCharts from "./SellerAnalyticsCharts";
+import {
+  isSellerSection,
+  sellerGroupForSection,
+  sellerNavigation,
+  sellerSections,
+  sellerSectionLabel,
+  type SellerSection,
+} from "./seller-studio-navigation";
 
 type Props = {
   repository: ShopRepository;
   pickProductImages?: () => Promise<UploadAsset[]>;
   persistenceKey?: string;
 };
-
-type SellerSection =
-  | "overview"
-  | "storefront"
-  | "catalog"
-  | "orders"
-  | "business_chat"
-  | "discoverability"
-  | "operations";
 
 const ink = "#0e1726";
 const muted = "#64748b";
@@ -82,60 +90,32 @@ const canvas = "#f5f8f6";
 const panel = "#ffffff";
 const mint = "#eef8f3";
 const dark = "#111111";
+const desktopFlyoutGap = 6;
+const desktopFlyoutMinTop = 12;
+const desktopFlyoutBottomPadding = 16;
 const commerceFont = Platform.select({
   web: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   default: "System",
 });
 
-const navItems: {
-  key: SellerSection;
-  label: string;
-  icon: React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
-  blurb: string;
-}[] = [
-  {
-    key: "overview",
-    label: "Overview",
-    icon: Activity,
-    blurb: "Health, sales posture, and storefront launch status.",
-  },
-  {
-    key: "storefront",
-    label: "Storefront",
-    icon: Store,
-    blurb: "Brand identity, slug, category, and customer-facing details.",
-  },
-  {
-    key: "catalog",
-    label: "Catalog",
-    icon: PackagePlus,
-    blurb: "Products, images, SKUs, pricing, and inventory.",
-  },
-  {
-    key: "orders",
-    label: "Orders",
-    icon: ClipboardList,
-    blurb: "Orders, fulfilment, tracking, and customer delivery updates.",
-  },
-  {
-    key: "business_chat",
-    label: "Business chat",
-    icon: MessageSquareText,
-    blurb: "Buyer conversations, call handoffs, and service desk replies.",
-  },
-  {
-    key: "discoverability",
-    label: "SEO & AI",
-    icon: SearchCheck,
-    blurb: "Programmatic SEO and model-readable summaries.",
-  },
-  {
-    key: "operations",
-    label: "Operations",
-    icon: Settings2,
-    blurb: "Support contacts, payouts posture, and launch readiness.",
-  },
-];
+const navigationIcons: Record<string, React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>> = {
+  home: Activity,
+  orders: ClipboardList,
+  products: PackagePlus,
+  logistics: Truck,
+  marketing: BarChart3,
+  affiliate: WalletCards,
+  live_video: Video,
+  growth: Activity,
+  apps_partners: Boxes,
+  analytics: BarChart3,
+  account_health: PackageCheck,
+  finance: WalletCards,
+  storefront: Store,
+  business_chat: MessageSquareText,
+  discoverability: SearchCheck,
+  operations: Settings2,
+};
 
 const defaultSellerDraft: SellerApplicationDraft = {
   legalName: "",
@@ -212,10 +192,26 @@ export function SellerStudioScreen({
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeSection, setActiveSection] =
     useState<SellerSection>("overview");
+  const [expandedNavigationGroup, setExpandedNavigationGroup] = useState("home");
+  const navigationHoverLockRef = useRef(0);
+  const navigationHoverCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [navigationAnchors, setNavigationAnchors] = useState<Record<string, { top: number; height: number }>>({});
+  const [navigationViewportTop, setNavigationViewportTop] = useState(0);
+  const [navigationViewportHeight, setNavigationViewportHeight] = useState(0);
+  const [navigationScrollY, setNavigationScrollY] = useState(0);
+  const [sidebarHeight, setSidebarHeight] = useState(0);
+  const [desktopFlyoutHeight, setDesktopFlyoutHeight] = useState(0);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [orders, setOrders] = useState<SellerOrder[]>([]);
   const [analytics, setAnalytics] = useState<SellerAnalytics | null>(null);
+  const [finance, setFinance] = useState<SellerFinanceSummary | null>(null);
+  const [returns, setReturns] = useState<SellerReturn[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+  const [selectedReturnEvidence, setSelectedReturnEvidence] = useState<SellerReturnEvidence | null>(null);
+  const [affiliateBusyProductId, setAffiliateBusyProductId] = useState<string | null>(null);
+  const [affiliateCommissionDrafts, setAffiliateCommissionDrafts] = useState<Record<string, string>>({});
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<SellerOrder | null>(null);
   const [businessConversations, setBusinessConversations] = useState<
@@ -246,8 +242,15 @@ export function SellerStudioScreen({
             setProductSaveNotice({ tone: "success", message: "Your unfinished Product form was restored." });
           }
         }
-        if (parsed.activeSection && navItems.some((item) => item.key === parsed.activeSection)) {
-          setActiveSection(parsed.activeSection);
+        const legacySection = parsed.activeSection as string | undefined;
+        const restoredSection = legacySection === "catalog"
+          ? "products_manage"
+          : legacySection === "orders"
+            ? "orders_manage"
+            : legacySection;
+        if (isSellerSection(restoredSection)) {
+          setActiveSection(restoredSection);
+          setExpandedNavigationGroup(sellerGroupForSection(restoredSection).key);
         }
       } catch {
         // A corrupt local draft should never block Seller Studio.
@@ -341,6 +344,25 @@ export function SellerStudioScreen({
     }
   };
 
+  const loadFinance = async () => {
+    try {
+      setFinance(await repository.getSellerFinanceSummary());
+    } catch {
+      setFinance(null);
+    }
+  };
+
+  const loadReturns = async () => {
+    setReturnsLoading(true);
+    try {
+      setReturns(await repository.listSellerReturns());
+    } catch (error) {
+      Alert.alert("Unable to load returns", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setReturnsLoading(false);
+    }
+  };
+
   const loadBusinessDesk = async () => {
     try {
       const next = await repository.listBusinessConversations();
@@ -357,9 +379,11 @@ export function SellerStudioScreen({
   };
 
   useEffect(() => {
-    if (activeSection === "orders") void loadOrders();
+    if (["orders_manage", "logistics_overview", "logistics_fulfillment", "logistics_shipping"].includes(activeSection)) void loadOrders();
+    if (activeSection === "orders_returns") void loadReturns();
     if (activeSection === "business_chat") void loadBusinessDesk();
-    if (activeSection === "overview") void loadAnalytics();
+    if (activeSection === "overview" || activeSection === "analytics") void loadAnalytics();
+    if (activeSection === "finance") void loadFinance();
   }, [activeSection, refreshKey]);
 
   useEffect(() => {
@@ -399,6 +423,45 @@ export function SellerStudioScreen({
   ];
   const completedHealthChecks = healthChecks.filter((item) => item.complete).length;
   const healthScore = Math.round((completedHealthChecks / healthChecks.length) * 100);
+
+  const cancelNavigationClose = () => {
+    if (navigationHoverCloseRef.current) {
+      clearTimeout(navigationHoverCloseRef.current);
+      navigationHoverCloseRef.current = null;
+    }
+  };
+
+  const scheduleNavigationClose = () => {
+    if (mobileLayout) return;
+    cancelNavigationClose();
+    navigationHoverCloseRef.current = setTimeout(() => {
+      setExpandedNavigationGroup(sellerGroupForSection(activeSection).key);
+      navigationHoverCloseRef.current = null;
+    }, 160);
+  };
+
+  const rememberNavigationAnchor = (groupKey: string, event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    setNavigationAnchors((current) => {
+      const existing = current[groupKey];
+      if (existing && existing.top === y && existing.height === height) return current;
+      return { ...current, [groupKey]: { top: y, height } };
+    });
+  };
+
+  const getDesktopFlyoutTop = (groupKey: string, childCount: number) => {
+    const anchor = navigationAnchors[groupKey];
+    const estimatedHeight = Math.max(desktopFlyoutHeight, 72 + childCount * 37);
+    const preferredTop = anchor
+      ? navigationViewportTop + anchor.top - navigationScrollY - desktopFlyoutGap
+      : navigationViewportTop;
+    const viewportBottom = navigationViewportTop + navigationViewportHeight;
+    const lowerBound = Math.max(
+      desktopFlyoutMinTop,
+      Math.min(sidebarHeight || viewportBottom, viewportBottom) - estimatedHeight - desktopFlyoutBottomPadding,
+    );
+    return Math.max(desktopFlyoutMinTop, Math.min(preferredTop, lowerBound));
+  };
 
   const saveSeller = async () => {
     setBusy(true);
@@ -472,7 +535,7 @@ export function SellerStudioScreen({
     });
     setSelectedAssets([]);
     setProductSaveNotice(null);
-    setActiveSection("catalog");
+    selectSection("products_add");
   };
 
   const saveProduct = async () => {
@@ -581,6 +644,51 @@ export function SellerStudioScreen({
     }
   };
 
+  const updateAffiliateProduct = async (product: ShopProduct, enabled: boolean, commissionBps?: number) => {
+    setAffiliateBusyProductId(product.id);
+    try {
+      const updated = await repository.setCreatorPromotion({
+        productId: product.id,
+        enabled,
+        commissionBps: enabled ? Math.max(500, Math.min(7000, commissionBps ?? product.creatorCommissionBps ?? 1000)) : 0,
+      });
+      setDashboard((current) => current ? {
+        ...current,
+        products: current.products.map((item) => item.id === updated.id ? updated : item),
+      } : current);
+      Alert.alert("Affiliate Product updated", enabled
+        ? `${product.name} is now available to approved Creators.`
+        : `${product.name} is no longer available for new Creator promotions. Historical attribution is preserved.`);
+    } catch (error) {
+      Alert.alert("Unable to update Affiliate Product", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setAffiliateBusyProductId(null);
+    }
+  };
+
+  const reviewReturn = async (request: SellerReturn, decision: "approved" | "rejected" | "under_review") => {
+    setBusy(true);
+    try {
+      await repository.reviewSellerReturn({
+        returnRequestId: request.id,
+        decision,
+        reason: decision === "under_review" ? "Seller requested more information" : `Seller ${decision} return`,
+      });
+      await Promise.all([loadReturns(), loadOrders()]);
+    } catch (error) {
+      Alert.alert("Unable to review return", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectSection = (section: SellerSection) => {
+    cancelNavigationClose();
+    setActiveSection(section);
+    setExpandedNavigationGroup(sellerGroupForSection(section).key);
+    if (mobileLayout) setMobileNavigationOpen(false);
+  };
+
   if (Platform.OS !== "web") {
     return (
       <View style={styles.unsupported}>
@@ -606,7 +714,10 @@ export function SellerStudioScreen({
 
   return (
     <View style={[styles.page, mobileLayout && styles.pageMobile]}>
-      <View style={[styles.sidebar, sidebarCollapsed && !mobileLayout && styles.sidebarCollapsed, mobileLayout && styles.sidebarMobile]}>
+      <View
+        onLayout={(event) => setSidebarHeight(event.nativeEvent.layout.height)}
+        style={[styles.sidebar, sidebarCollapsed && !mobileLayout && styles.sidebarCollapsed, mobileLayout && styles.sidebarMobile]}
+      >
         <View style={[styles.brandBlock, mobileLayout && styles.brandBlockMobile]}>
           <View style={styles.logoMark}>
             <MessageCircle size={21} color="#ffffff" fill="#ffffff" />
@@ -630,6 +741,18 @@ export function SellerStudioScreen({
           </Pressable> : null}
         </View>
 
+        {mobileLayout ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Toggle Seller Studio navigation"
+            onPress={() => setMobileNavigationOpen((value) => !value)}
+            style={styles.mobileNavigationToggle}
+          >
+            <Text style={styles.mobileNavigationToggleText}>{sellerNavigation.find((group) => group.key === expandedNavigationGroup)?.label ?? "Navigation"}</Text>
+            <ChevronDown size={17} color={ink} />
+          </Pressable>
+        ) : null}
+
         {!sidebarCollapsed && !mobileLayout ? (
           <View style={styles.sidebarStatus}>
             <Text style={styles.sidebarStatusEyebrow}>YOUR STORE</Text>
@@ -644,39 +767,110 @@ export function SellerStudioScreen({
           </View>
         ) : null}
 
-        <ScrollView horizontal={mobileLayout} showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.navList, mobileLayout && styles.navListMobile]}>
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = item.key === activeSection;
-            return (
-              <Pressable
-                key={item.key}
-                onPress={() => setActiveSection(item.key)}
-                style={[styles.navItem, active && styles.navItemActive]}
-              >
-                <View style={[styles.navIconWrap, active && styles.navIconWrapActive]}>
-                  <Icon
-                    size={18}
-                    color={active ? "#ffffff" : "#9fb4a8"}
-                    strokeWidth={2.2}
-                  />
+        {!mobileLayout || mobileNavigationOpen ? (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            onLayout={(event) => {
+              setNavigationViewportTop(event.nativeEvent.layout.y);
+              setNavigationViewportHeight(event.nativeEvent.layout.height);
+            }}
+            onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => setNavigationScrollY(event.nativeEvent.contentOffset.y)}
+            scrollEventThrottle={16}
+            style={styles.navigationScroll}
+            contentContainerStyle={styles.navList}
+          >
+            {sellerNavigation.map((group) => {
+              const Icon = navigationIcons[group.key] ?? LayoutGrid;
+              const groupActive = group.children.some((item) => item.key === activeSection);
+              const expanded = mobileLayout && expandedNavigationGroup === group.key;
+              const hasSubmenu = group.children.length > 1;
+              return (
+                <View key={group.key} onLayout={(event) => rememberNavigationAnchor(group.key, event)}>
+                  {group.utility && sellerNavigation.findIndex((item) => item.key === group.key) === sellerNavigation.findIndex((item) => item.utility) ? (
+                    <Text style={styles.navigationUtilityLabel}>SOCIAL24 TOOLS</Text>
+                  ) : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${group.label}${hasSubmenu ? " submenu" : ""}`}
+                    onHoverIn={() => {
+                      if (!mobileLayout && hasSubmenu && Date.now() >= navigationHoverLockRef.current) {
+                        cancelNavigationClose();
+                        setExpandedNavigationGroup(group.key);
+                      }
+                    }}
+                    onHoverOut={hasSubmenu ? scheduleNavigationClose : undefined}
+                    onPress={() => {
+                      navigationHoverLockRef.current = Date.now() + 350;
+                      setExpandedNavigationGroup(group.key);
+                      if (!hasSubmenu || !mobileLayout) selectSection(group.defaultSection);
+                    }}
+                    style={[styles.navItem, groupActive && styles.navItemActive]}
+                  >
+                    <View style={[styles.navIconWrap, groupActive && styles.navIconWrapActive]}>
+                      <Icon size={18} color={groupActive ? "#ffffff" : "#708078"} strokeWidth={2.2} />
+                    </View>
+                    {!sidebarCollapsed || mobileLayout ? <>
+                      <Text style={[styles.navLabel, groupActive && styles.navLabelActive]}>{group.label}</Text>
+                      {hasSubmenu ? <ChevronDown size={14} color={groupActive ? greenDeep : muted} /> : null}
+                    </> : null}
+                  </Pressable>
+                  {expanded ? (
+                    <View style={styles.navSubmenu}>
+                      {group.children.map((item) => {
+                        const active = item.key === activeSection;
+                        return (
+                          <Pressable
+                            key={item.key}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${item.label}${item.status === "coming_soon" ? ", coming soon" : ""}`}
+                            onPress={() => selectSection(item.key)}
+                            style={[styles.navSubmenuItem, active && styles.navSubmenuItemActive]}
+                          >
+                            <Text style={[styles.navSubmenuText, active && styles.navSubmenuTextActive]}>{item.label}</Text>
+                            {item.status === "coming_soon" ? <Text style={styles.navSoonBadge}>Soon</Text> : null}
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
                 </View>
-                {!sidebarCollapsed || mobileLayout ? (
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.navLabel, active && styles.navLabelActive]}>
-                      {item.label}
-                    </Text>
-                    {active ? (
-                      <Text style={styles.navBlurb} numberOfLines={1}>
-                        {item.blurb}
-                      </Text>
-                    ) : null}
-                  </View>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+
+        {!mobileLayout && !sidebarCollapsed ? (() => {
+          const group = sellerNavigation.find((item) => item.key === expandedNavigationGroup);
+          if (!group || group.children.length < 2) return null;
+          return (
+            <Pressable
+              onHoverIn={cancelNavigationClose}
+              onHoverOut={scheduleNavigationClose}
+              onLayout={(event) => setDesktopFlyoutHeight(event.nativeEvent.layout.height)}
+              style={[styles.desktopFlyout, { top: getDesktopFlyoutTop(group.key, group.children.length) }]}
+            >
+              <Text style={styles.desktopFlyoutTitle}>{group.label}</Text>
+              <Text style={styles.desktopFlyoutCopy}>Choose a Seller Studio workspace</Text>
+              <View style={styles.desktopFlyoutList}>
+                {group.children.map((item) => {
+                  const active = item.key === activeSection;
+                  return (
+                    <Pressable
+                      key={item.key}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${item.label}${item.status === "coming_soon" ? ", coming soon" : ""}`}
+                      onPress={() => selectSection(item.key)}
+                      style={[styles.navSubmenuItem, active && styles.navSubmenuItemActive]}
+                    >
+                      <Text style={[styles.navSubmenuText, active && styles.navSubmenuTextActive]}>{item.label}</Text>
+                      {item.status === "coming_soon" ? <Text style={styles.navSoonBadge}>Soon</Text> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </Pressable>
+          );
+        })() : null}
 
         {!sidebarCollapsed && !mobileLayout ? (
           <View style={styles.sidebarFooter}>
@@ -689,26 +883,26 @@ export function SellerStudioScreen({
       </View>
 
       <ScrollView style={[styles.main, mobileLayout && styles.mainMobile]} contentContainerStyle={[styles.mainContent, mobileLayout && styles.mainContentMobile]}>
-        <View style={styles.topBar}>
-          <View>
-            <Text style={styles.topBarTitle}>{navItems.find((item) => item.key === activeSection)?.label}</Text>
+        <View style={[styles.topBar, mobileLayout && styles.topBarMobile]}>
+          <View style={styles.topBarCopy}>
+            <Text style={styles.topBarTitle}>{sellerSectionLabel(activeSection)}</Text>
             <Text style={styles.topBarMeta}>
               {dashboard?.storefront?.name || "Seller workspace"}
               <Text style={styles.topBarDot}> • </Text>
               {dashboard?.storefront ? "Live workspace" : "Setup in progress"}
             </Text>
           </View>
-          <View style={styles.topActions}>
+          <View style={[styles.topActions, mobileLayout && styles.topActionsMobile]}>
             <Pressable style={styles.iconButton} accessibilityLabel="Notifications">
               <Bell size={18} color={ink} strokeWidth={2.1} />
               <View style={styles.notificationDot} />
             </Pressable>
             {activeSection !== "business_chat" ? <Pressable
-              onPress={() => setActiveSection("catalog")}
-              style={styles.topPrimaryAction}
+              onPress={() => selectSection("products_add")}
+              style={[styles.topPrimaryAction, mobileLayout && styles.topPrimaryActionMobile]}
             >
               <Plus size={17} color="#ffffff" strokeWidth={2.7} />
-              <Text style={styles.topPrimaryActionText}>Add product</Text>
+              <Text style={styles.topPrimaryActionText}>{mobileLayout ? "Add" : "Add product"}</Text>
             </Pressable> : null}
             <Pressable style={styles.accountButton}>
               <View style={styles.accountAvatar}>
@@ -721,7 +915,7 @@ export function SellerStudioScreen({
           </View>
         </View>
 
-        {activeSection !== "business_chat" ? <>
+        {activeSection === "overview" ? <>
         <View style={styles.heroCard}>
           <View style={styles.heroCopyBlock}>
             <Text style={styles.heroEyebrow}>SOCIAL CHAT 24/7 COMMERCE</Text>
@@ -739,7 +933,7 @@ export function SellerStudioScreen({
           <StoreHealthCard
             score={healthScore}
             checks={healthChecks}
-            onPress={() => setActiveSection(completedHealthChecks === 0 ? "storefront" : "catalog")}
+            onPress={() => selectSection(completedHealthChecks === 0 ? "storefront" : "products_manage")}
           />
         </View>
 
@@ -999,10 +1193,10 @@ export function SellerStudioScreen({
           </SectionShell>
         ) : null}
 
-        {activeSection === "catalog" ? (
+        {activeSection === "products_add" || activeSection === "products_manage" ? (
           <SectionShell
-            title="Catalog and inventory"
-            subtitle="Merchandise products with pricing, inventory counts, SKUs, media, and conversion-focused copy."
+            title={activeSection === "products_add" ? "Add Product" : "Manage Products"}
+            subtitle="Use the authoritative Seller Product workflow for pricing, inventory, publication, media, and Creator commission controls."
           >
             <TwoColumnLayout
               left={
@@ -1290,14 +1484,14 @@ export function SellerStudioScreen({
           </SectionShell>
         ) : null}
 
-        {activeSection === "orders" ? (
+        {activeSection === "orders_manage" ? (
           <SectionShell
             title="Orders and fulfilment"
             subtitle="Manage customer orders, pack references, carrier tracking, and delivery updates from one operational queue."
           >
-            <View style={styles.orderToolbar}>
+            <View style={[styles.orderToolbar, mobileLayout && styles.orderToolbarMobile]}>
               <View>
-                <Text style={styles.tableTitle}>Order queue</Text>
+                <Text style={[styles.tableTitle, mobileLayout && styles.tableTitleMobile]}>Order queue</Text>
                 <Text style={styles.orderToolbarCopy}>
                   Status updates feed the customer order timeline in Social Chat 24/7.
                 </Text>
@@ -1307,36 +1501,214 @@ export function SellerStudioScreen({
               </Pressable>
             </View>
             {ordersLoading ? <ActivityIndicator color={green} /> : null}
-            <View style={styles.tableShell}>
-              <View style={styles.orderTableHeader}>
-                <Text style={[styles.tableHeaderText, { flex: 1.2 }]}>Order</Text>
-                <Text style={[styles.tableHeaderText, { flex: 1.25 }]}>Customer</Text>
-                <Text style={[styles.tableHeaderText, { flex: 0.9 }]}>Total</Text>
-                <Text style={[styles.tableHeaderText, { flex: 1 }]}>Fulfilment</Text>
-                <Text style={[styles.tableHeaderText, { flex: 0.75 }]}>Action</Text>
+            {mobileLayout ? (
+              <View style={styles.mobileOrderList}>
+                {orders.length ? orders.map((order) => (
+                  <Pressable key={order.id} onPress={() => setSelectedOrder(order)} style={styles.mobileOrderCard}>
+                    <View style={styles.mobileOrderHeader}>
+                      <View style={styles.mobileOrderIdentity}>
+                        <Text selectable style={styles.mobileOrderId}>#{order.id.toUpperCase()}</Text>
+                        <Text style={styles.tableSecondary}>{formatDate(order.createdAt)}</Text>
+                      </View>
+                      <Text style={styles.mobileOrderTotal}>₹{(order.totalPaise / 100).toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.mobileOrderCustomer}>
+                      <Text style={styles.tablePrimary}>{order.customerName}</Text>
+                      <Text style={styles.tableSecondary}>@{order.customerUsername}</Text>
+                    </View>
+                    <View style={styles.mobileOrderFooter}>
+                      <View style={styles.mobileOrderStatusWrap}>
+                        <OrderStatusBadge status={order.status} />
+                        {order.fulfillment?.trackingNumber ? <Text selectable style={styles.trackingText}>{order.fulfillment.trackingNumber}</Text> : null}
+                      </View>
+                      <View style={styles.mobileManageButton}>
+                        <Text numberOfLines={1} style={styles.mobileManageButtonText}>Manage Order</Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                )) : <EmptyHint text="No orders have arrived yet. New buyer orders will appear here automatically." />}
               </View>
-              {orders.length ? orders.map((order) => (
-                <Pressable key={order.id} onPress={() => setSelectedOrder(order)} style={styles.orderRow}>
-                  <View style={{ flex: 1.2 }}>
-                    <Text style={styles.tablePrimary}>#{order.id.slice(0, 8).toUpperCase()}</Text>
-                    <Text style={styles.tableSecondary}>{formatDate(order.createdAt)}</Text>
+            ) : (
+              <View style={styles.tableShell}>
+                <View style={styles.orderTableHeader}>
+                  <Text style={[styles.tableHeaderText, { flex: 1.2 }]}>Order</Text>
+                  <Text style={[styles.tableHeaderText, { flex: 1.25 }]}>Customer</Text>
+                  <Text style={[styles.tableHeaderText, { flex: 0.9 }]}>Total</Text>
+                  <Text style={[styles.tableHeaderText, { flex: 1 }]}>Fulfilment</Text>
+                  <Text style={[styles.tableHeaderText, { flex: 0.75 }]}>Action</Text>
+                </View>
+                {orders.length ? orders.map((order) => (
+                  <Pressable key={order.id} onPress={() => setSelectedOrder(order)} style={styles.orderRow}>
+                    <View style={{ flex: 1.2 }}>
+                      <Text style={styles.tablePrimary}>#{order.id.slice(0, 8).toUpperCase()}</Text>
+                      <Text style={styles.tableSecondary}>{formatDate(order.createdAt)}</Text>
+                    </View>
+                    <View style={{ flex: 1.25 }}>
+                      <Text style={styles.tablePrimary}>{order.customerName}</Text>
+                      <Text style={styles.tableSecondary}>@{order.customerUsername}</Text>
+                    </View>
+                    <Text style={[styles.tableCellText, { flex: 0.9 }]}>₹{(order.totalPaise / 100).toFixed(2)}</Text>
+                    <View style={{ flex: 1 }}>
+                      <OrderStatusBadge status={order.status} />
+                      {order.fulfillment?.trackingNumber ? <Text style={styles.trackingText}>{order.fulfillment.trackingNumber}</Text> : null}
+                    </View>
+                    <View style={{ flex: 0.75 }}>
+                      <Text style={styles.manageOrderText}>Manage</Text>
+                    </View>
+                  </Pressable>
+                )) : <EmptyHint text="No orders have arrived yet. New buyer orders will appear here automatically." />}
+              </View>
+            )}
+          </SectionShell>
+        ) : null}
+
+        {activeSection === "orders_returns" ? (
+          <SectionShell
+            title="Manage Returns"
+            subtitle="Review authoritative buyer Return requests, supporting evidence, and Seller decisions without duplicating Return state."
+          >
+            <View style={styles.orderToolbar}>
+              <View><Text style={styles.tableTitle}>Return queue</Text><Text style={styles.orderToolbarCopy}>Approve, reject, or request more information. Refund handoff remains provider-neutral.</Text></View>
+              <Pressable style={styles.secondaryButton} onPress={() => void loadReturns()}><Text style={styles.secondaryButtonText}>Refresh returns</Text></Pressable>
+            </View>
+            {returnsLoading ? <ActivityIndicator color={green} /> : null}
+            <View style={styles.returnList}>
+              {returns.length ? returns.map((request) => {
+                const open = ["submitted", "under_review"].includes(request.status);
+                return (
+                  <View key={request.id} style={styles.returnCard}>
+                    <View style={styles.returnHeader}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.tablePrimary}>{request.productTitle}</Text>
+                        <Text style={styles.tableSecondary}>Order #{request.orderId.slice(0, 8).toUpperCase()} · {request.buyerName} (@{request.buyerUsername})</Text>
+                      </View>
+                      <OrderStatusBadge status={request.status as SellerOrderStatus} />
+                    </View>
+                    <View style={styles.returnFacts}>
+                      <InfoRow label="Requested" value={formatDate(request.requestedAt)} />
+                      <InfoRow label="Item value" value={formatInr(request.itemSubtotalPaise)} />
+                      <InfoRow label="Reason" value={request.reason} />
+                    </View>
+                    {request.details ? <Text style={styles.returnDetails}>{request.details}</Text> : null}
+                    {request.sellerNote ? <Text style={styles.returnSellerNote}>Seller note: {request.sellerNote}</Text> : null}
+                    {request.evidence.length ? (
+                      <View style={styles.returnEvidenceRow}>
+                        {request.evidence.map((evidence) => (
+                          <Pressable key={evidence.id} accessibilityRole="button" accessibilityLabel={`View return evidence ${evidence.filename}`} onPress={() => setSelectedReturnEvidence(evidence)} style={styles.returnEvidenceTile}>
+                            {evidence.signedUrl && evidence.mimeType.startsWith("image/") ? <Image source={{ uri: evidence.signedUrl }} style={styles.returnEvidenceImage} /> : <Video size={24} color={greenDeep} />}
+                            <Text style={styles.returnEvidenceName} numberOfLines={1}>{evidence.filename}</Text>
+                            <Text style={styles.returnEvidenceMeta}>{evidence.source === "live_capture" ? "TRUE capture" : "Uploaded file"}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : <Text style={styles.tableSecondary}>No evidence attached.</Text>}
+                    {open ? (
+                      <View style={styles.returnActions}>
+                        <Pressable disabled={busy} onPress={() => void reviewReturn(request, "approved")} style={styles.primaryInlineButton}><Text style={styles.primaryInlineButtonText}>Approve</Text></Pressable>
+                        <Pressable disabled={busy} onPress={() => void reviewReturn(request, "rejected")} style={styles.dangerInlineButton}><Text style={styles.dangerInlineButtonText}>Reject</Text></Pressable>
+                        <Pressable disabled={busy} onPress={() => void reviewReturn(request, "under_review")} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Request more information</Text></Pressable>
+                      </View>
+                    ) : null}
                   </View>
-                  <View style={{ flex: 1.25 }}>
-                    <Text style={styles.tablePrimary}>{order.customerName}</Text>
-                    <Text style={styles.tableSecondary}>@{order.customerUsername}</Text>
-                  </View>
-                  <Text style={[styles.tableCellText, { flex: 0.9 }]}>₹{(order.totalPaise / 100).toFixed(2)}</Text>
-                  <View style={{ flex: 1 }}>
-                    <OrderStatusBadge status={order.status} />
-                    {order.fulfillment?.trackingNumber ? <Text style={styles.trackingText}>{order.fulfillment.trackingNumber}</Text> : null}
-                  </View>
-                  <View style={{ flex: 0.75 }}>
-                    <Text style={styles.manageOrderText}>Manage</Text>
-                  </View>
-                </Pressable>
-              )) : <EmptyHint text="No orders have arrived yet. New buyer orders will appear here automatically." />}
+                );
+              }) : <EmptyHint text="No Return requests yet. Buyer requests will appear here automatically." />}
             </View>
           </SectionShell>
+        ) : null}
+
+        {activeSection === "orders_return_settings" ? (
+          <SectionShell title="Return Settings" subtitle="A truthful summary of the current Product-level after-sales rules and Seller support contact.">
+            <View style={styles.overviewGrid}>
+              <PreviewCard title="Current Return rules" body="Eligibility is set per Product and enforced by the existing Return workflow. No new store-wide policy has been introduced.">
+                {(dashboard?.products ?? []).slice(0, 8).map((product) => <InfoRow key={product.id} label={product.name} value={`${product.returnWindowDays ?? 7} days`} />)}
+                {!dashboard?.products.length ? <Text style={styles.tableSecondary}>Add a Product to configure its Return window.</Text> : null}
+              </PreviewCard>
+              <PreviewCard title="Return support" body="Buyers use Business Chat and the authoritative Return request flow for after-sales support.">
+                <InfoRow label="Email" value={sellerDraft.email || "Not configured"} />
+                <InfoRow label="Phone" value={sellerDraft.phone || "Not configured"} />
+                <Pressable onPress={() => selectSection("operations")} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Edit support details</Text></Pressable>
+              </PreviewCard>
+            </View>
+          </SectionShell>
+        ) : null}
+
+        {activeSection === "affiliate_products" ? (
+          <SectionShell title="Affiliate Products" subtitle="Choose which Seller-owned Products approved Creators can discover and promote using the existing tracked Affiliate Link and commission flow.">
+            <View style={styles.affiliateNotice}><Text style={styles.affiliateNoticeTitle}>Authoritative eligibility</Text><Text style={styles.affiliateNoticeCopy}>Turning Affiliate off removes the Product from new Creator discovery only. It remains available in the Buyer Shop, and historical attribution and commissions stay auditable.</Text></View>
+            <View style={styles.affiliateList}>
+              {(dashboard?.products ?? []).length ? dashboard!.products.map((product) => {
+                const enabled = Boolean(product.creatorPromotionEnabled);
+                const draft = affiliateCommissionDrafts[product.id] ?? String((product.creatorCommissionBps ?? 1000) / 100);
+                return (
+                  <View key={product.id} style={styles.affiliateRow}>
+                    {product.coverUrl ? <Image source={{ uri: product.coverUrl }} style={styles.affiliateImage} /> : <View style={styles.affiliateImagePlaceholder}><PackagePlus size={22} color={greenDeep} /></View>}
+                    <View style={styles.affiliateIdentity}>
+                      <Text style={styles.tablePrimary}>{product.name}</Text>
+                      <Text style={styles.tableSecondary}>{formatInr(product.pricePaise)} · Stock {product.inventory} · {product.inStock ? "Published" : "Draft / unavailable"}</Text>
+                    </View>
+                    <View style={styles.affiliateCommissionControl}>
+                      <Text style={styles.affiliateControlLabel}>Commission %</Text>
+                      <TextInput
+                        accessibilityLabel={`Affiliate commission for ${product.name}`}
+                        editable={enabled && affiliateBusyProductId !== product.id}
+                        keyboardType="numeric"
+                        value={draft}
+                        onChangeText={(value) => setAffiliateCommissionDrafts((current) => ({ ...current, [product.id]: value.replace(/[^0-9.]/g, "") }))}
+                        style={styles.affiliateCommissionInput}
+                      />
+                      {enabled ? <Pressable disabled={affiliateBusyProductId === product.id} onPress={() => void updateAffiliateProduct(product, true, Math.round(Number(draft || 0) * 100))}><Text style={styles.manageOrderText}>Save rate</Text></Pressable> : null}
+                    </View>
+                    <View style={styles.affiliateToggleControl}>
+                      <Text style={styles.affiliateControlLabel}>Allow Creator Promotion</Text>
+                      {affiliateBusyProductId === product.id ? <ActivityIndicator color={green} /> : <Switch accessibilityLabel={`Allow Creator Promotion for ${product.name}`} value={enabled} onValueChange={(value) => void updateAffiliateProduct(product, value)} trackColor={{ false: "#d8e1dc", true: "#a7e2c2" }} thumbColor={enabled ? green : "#ffffff"} />}
+                    </View>
+                  </View>
+                );
+              }) : <EmptyHint text="No Seller Products yet. Add a Product before enabling Affiliate promotion." />}
+            </View>
+          </SectionShell>
+        ) : null}
+
+        {activeSection === "logistics_overview" || activeSection === "logistics_fulfillment" || activeSection === "logistics_shipping" ? (
+          <SectionShell
+            title={activeSection === "logistics_overview" ? "Logistics Overview" : activeSection === "logistics_fulfillment" ? "Fulfillment" : "Shipping"}
+            subtitle="A lightweight operational view based only on Social24 Order lifecycle data—no carrier booking, labels, warehouse SLA, or shipping-cost claims."
+          >
+            <View style={styles.metricsRow}>
+              <MetricCard icon={ClipboardList} label="Awaiting processing" value={String(orders.filter((order) => ["placed", "confirmed"].includes(order.status)).length)} blurb="Placed or confirmed Orders" />
+              <MetricCard icon={Boxes} label="Processing" value={String(orders.filter((order) => order.status === "processing").length)} blurb="Orders being prepared" />
+              <MetricCard icon={Truck} label="In transit" value={String(orders.filter((order) => ["shipped", "out_for_delivery"].includes(order.status)).length)} blurb="Seller-updated status" />
+              <MetricCard icon={PackageCheck} label="Delivered" value={String(orders.filter((order) => order.status === "delivered").length)} blurb="Delivered Orders" />
+            </View>
+            <Pressable onPress={() => selectSection("orders_manage")} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Open Manage Orders</Text></Pressable>
+          </SectionShell>
+        ) : null}
+
+        {activeSection === "analytics" ? (
+          <SectionShell title="Analytics" subtitle="A small, real 14-day dashboard from stored storefront events and qualifying Orders.">
+            <AnalyticsPanel hasStorefront={Boolean(dashboard?.storefront)} productCount={productCount} totalInventory={totalInventory} analytics={analytics} />
+            <Text style={styles.dataSourceNote}>Sources: storefront_events for views and unique visitors; orders for placed Orders, payment mix, conversion, and gross order value. No generated traffic data.</Text>
+          </SectionShell>
+        ) : null}
+
+        {activeSection === "finance" ? (
+          <SectionShell title="Finance" subtitle="A provider-neutral summary calculated from authoritative Orders, approved Returns, and Creator commission rows.">
+            {finance ? <>
+              <View style={styles.metricsRow}>
+                <MetricCard icon={WalletCards} label="Gross Order Value" value={formatInr(finance.grossOrderValuePaise)} blurb={`${finance.qualifyingOrderCount} qualifying Orders`} />
+                <MetricCard icon={PackageCheck} label="Delivered sales" value={formatInr(finance.deliveredSalesPaise)} blurb="Orders currently marked delivered" />
+                <MetricCard icon={Activity} label="Creator commission" value={formatInr(finance.creatorCommissionPaise)} blurb="Non-reversed commission rows" />
+                <MetricCard icon={ClipboardList} label="Approved Returns" value={formatInr(finance.approvedReturnsPaise)} blurb={`${finance.returnRequestCount} total Return requests`} />
+              </View>
+              <PreviewCard title="Estimated Seller Amount" body="Gross Order Value minus active Creator commission and approved Return item value. This is an estimate—not profit, settlement, tax, payout, or bank-transfer status.">
+                <Text style={styles.financeEstimate}>{formatInr(finance.estimatedSellerAmountPaise)}</Text>
+              </PreviewCard>
+            </> : <EmptyHint text="Finance data is unavailable for this Seller workspace." />}
+          </SectionShell>
+        ) : null}
+
+        {sellerSections.find((item) => item.key === activeSection)?.status === "coming_soon" ? (
+          <ComingSoonPanel title={sellerSectionLabel(activeSection)} />
         ) : null}
 
         {activeSection === "business_chat" ? (
@@ -1566,6 +1938,7 @@ export function SellerStudioScreen({
         onClose={() => setSelectedOrder(null)}
         onSave={saveOrderFulfillment}
       />
+      <SellerEvidenceViewer evidence={selectedReturnEvidence} close={() => setSelectedReturnEvidence(null)} />
     </View>
   );
 }
@@ -1772,24 +2145,26 @@ function SectionShell({
   children: React.ReactNode;
   showArtwork?: boolean;
 }) {
+  const { width } = useWindowDimensions();
+  const compact = width < 700;
   return (
     <View style={styles.sectionShell}>
-      <View style={styles.sectionHeaderRow}>
-        <View style={{ flex: 1 }}>
+      <View style={[styles.sectionHeaderRow, compact && styles.sectionHeaderRowCompact]}>
+        <View style={styles.sectionHeaderCopy}>
           <Text style={styles.sectionTitle}>{title}</Text>
           <Text style={styles.sectionSubtitle}>{subtitle}</Text>
         </View>
-        {showArtwork ? <SectionArt section={title} /> : null}
+        {showArtwork ? <SectionArt section={title} compact={compact} /> : null}
       </View>
       <View style={styles.sectionInner}>{children}</View>
     </View>
   );
 }
 
-function SectionArt({ section }: { section: string }) {
+function SectionArt({ section, compact }: { section: string; compact?: boolean }) {
   const image = section.includes("Storefront") ? sellerSectionIllustrations.storefront : section.includes("Catalog") ? sellerSectionIllustrations.catalog : section.includes("Order") ? sellerSectionIllustrations.orders : section.includes("Business") ? sellerSectionIllustrations.business : section.includes("SEO") ? sellerSectionIllustrations.seo : section.includes("Operation") ? sellerSectionIllustrations.operations : sellerHeroIllustration;
   return (
-    <View style={styles.sectionArt}>
+    <View style={[styles.sectionArt, compact && styles.sectionArtCompact]}>
       <SellerArtwork source={image} variant="section" />
     </View>
   );
@@ -1937,6 +2312,59 @@ function EmptyHint({ text }: { text: string }) {
   );
 }
 
+function ComingSoonPanel({ title }: { title: string }) {
+  return (
+    <SectionShell
+      title={title}
+      subtitle="Planned for a future Social24 Seller Studio release. This module is visible for navigation clarity but is not active in the current MVP."
+      showArtwork={false}
+    >
+      <View style={styles.comingSoonCard}>
+        <View style={styles.comingSoonIcon}><Activity size={28} color={greenDeep} /></View>
+        <Text style={styles.comingSoonTitle}>Coming soon</Text>
+        <Text style={styles.comingSoonCopy}>No sample metrics, simulated actions, or placeholder transactions are shown here. The module will activate only when its authoritative workflow is available.</Text>
+      </View>
+    </SectionShell>
+  );
+}
+
+function SellerEvidenceVideo({ url, watermark }: { url: string; watermark?: string }) {
+  const player = useVideoPlayer(url);
+  return (
+    <View style={styles.sellerEvidenceMediaFrame}>
+      <VideoView player={player} nativeControls contentFit="contain" playsInline fullscreenOptions={{ enable: false }} style={styles.sellerEvidenceMedia} />
+      {watermark ? <View pointerEvents="none" style={styles.sellerEvidenceWatermark}><Text style={styles.sellerEvidenceWatermarkText}>{watermark}</Text></View> : null}
+    </View>
+  );
+}
+
+function SellerEvidenceViewer({ evidence, close }: { evidence: SellerReturnEvidence | null; close: () => void }) {
+  const trustedAt = evidence?.source === "live_capture" ? evidence.capturedAt : undefined;
+  const watermark = evidence && trustedAt
+    ? `${evidence.mimeType.startsWith("video/") ? "TRUE VIDEO" : "TRUE PHOTO"} • ${new Date(trustedAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}`
+    : undefined;
+  return (
+    <Modal visible={Boolean(evidence)} animationType="fade" presentationStyle="fullScreen" onRequestClose={close}>
+      <View style={styles.sellerEvidenceViewer}>
+        <View style={styles.sellerEvidenceHeader}>
+          <View style={{ flex: 1 }}><Text style={styles.sellerEvidenceTitle} numberOfLines={1}>{evidence?.filename ?? "Return evidence"}</Text><Text style={styles.sellerEvidenceMeta}>{watermark ? "Verified in-app capture" : "Uploaded evidence · not a TRUE capture"}</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close return evidence viewer" onPress={close} style={styles.sellerEvidenceClose}><X size={20} color="#fff" /></Pressable>
+        </View>
+        <View style={styles.sellerEvidenceBody}>
+          {evidence?.signedUrl && evidence.mimeType.startsWith("image/") ? (
+            <View style={styles.sellerEvidenceMediaFrame}>
+              <Image source={{ uri: evidence.signedUrl }} resizeMode="contain" style={styles.sellerEvidenceMedia} />
+              {watermark ? <View pointerEvents="none" style={styles.sellerEvidenceWatermark}><Text style={styles.sellerEvidenceWatermarkText}>{watermark}</Text></View> : null}
+            </View>
+          ) : evidence?.signedUrl && evidence.mimeType.startsWith("video/") ? (
+            <SellerEvidenceVideo url={evidence.signedUrl} watermark={watermark} />
+          ) : <View style={styles.sellerEvidencePlaceholder}><Text style={styles.comingSoonCopy}>Preview unavailable for this evidence type.</Text></View>}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function BusinessDeskEmpty() {
   return (
     <View style={styles.businessDeskEmpty}>
@@ -1972,9 +2400,13 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderRightWidth: 1,
     borderRightColor: "#e7e9ea",
+    overflow: "visible",
+    zIndex: 4,
   },
   sidebarCollapsed: { width: 76, paddingHorizontal: 12 },
   sidebarMobile: { width: "100%", paddingTop: 10, paddingBottom: 8, borderRightWidth: 0, borderBottomWidth: 1, borderBottomColor: "#e7e9ea" },
+  mobileNavigationToggle: { marginTop: 8, minHeight: 44, borderRadius: 12, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#eff9f3", borderWidth: 1, borderColor: "#d5eddd" },
+  mobileNavigationToggleText: { color: ink, fontSize: 13, fontWeight: "800" },
   brandBlock: {
     flexDirection: "row",
     alignItems: "center",
@@ -2030,7 +2462,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
-  navList: { marginTop: 18, gap: 4 },
+  navigationScroll: { flex: 1, minHeight: 0 },
+  navList: { marginTop: 18, gap: 4, paddingBottom: 10 },
   navListMobile: { marginTop: 4, flexDirection: "row", paddingRight: 10 },
   navItem: {
     borderRadius: 12,
@@ -2064,6 +2497,17 @@ const styles = StyleSheet.create({
   navLabelActive: { color: greenDeep },
   navBlurb: { color: "#7a8a83", marginTop: 2, fontSize: 10, lineHeight: 14 },
   navBlurbActive: { color: "#5e7768" },
+  navigationUtilityLabel: { color: "#8a9790", fontSize: 9, fontWeight: "900", letterSpacing: 1, marginTop: 15, marginBottom: 6, paddingHorizontal: 10 },
+  navSubmenu: { marginLeft: 42, marginBottom: 6, gap: 3, paddingLeft: 8, borderLeftWidth: 1, borderLeftColor: "#dce9e1" },
+  navSubmenuItem: { minHeight: 34, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 },
+  navSubmenuItemActive: { backgroundColor: "#e5f6ec" },
+  navSubmenuText: { flex: 1, color: "#617168", fontSize: 11, fontWeight: "700" },
+  navSubmenuTextActive: { color: greenDeep, fontWeight: "900" },
+  navSoonBadge: { color: "#6f7f76", fontSize: 8, fontWeight: "900", backgroundColor: "#edf1ef", paddingHorizontal: 5, paddingVertical: 2, borderRadius: 999, overflow: "hidden" },
+  desktopFlyout: { position: "absolute", left: 246, top: 142, width: 244, zIndex: 20, borderRadius: 16, padding: 14, backgroundColor: "#fff", borderWidth: 1, borderColor: "#dfe8e2", shadowColor: "#173b29", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 24, elevation: 12 },
+  desktopFlyoutTitle: { color: ink, fontSize: 15, fontWeight: "900" },
+  desktopFlyoutCopy: { color: muted, fontSize: 10, marginTop: 3, marginBottom: 10 },
+  desktopFlyoutList: { gap: 3 },
   sidebarFooter: {
     marginTop: "auto",
     borderRadius: 14,
@@ -2085,13 +2529,17 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 18,
   },
+  topBarMobile: { alignItems: "flex-start", gap: 10 },
+  topBarCopy: { flex: 1, minWidth: 0 },
   topBarTitle: { color: ink, fontFamily: commerceFont, fontSize: 20, fontWeight: "800", letterSpacing: -0.45 },
   topBarMeta: { marginTop: 4, color: muted, fontSize: 12 },
   topBarDot: { color: "#b4bfc8" },
   topActions: { flexDirection: "row", alignItems: "center", gap: 10 },
+  topActionsMobile: { flexShrink: 0, gap: 8 },
   iconButton: { width: 38, height: 38, borderRadius: 11, borderWidth: 1, borderColor: "#e5e8e9", backgroundColor: "#ffffff", alignItems: "center", justifyContent: "center" },
   notificationDot: { position: "absolute", width: 7, height: 7, borderRadius: 4, backgroundColor: green, borderWidth: 1, borderColor: "#ffffff", top: 8, right: 9 },
   topPrimaryAction: { minHeight: 38, paddingHorizontal: 13, borderRadius: 11, backgroundColor: green, flexDirection: "row", gap: 7, alignItems: "center", justifyContent: "center" },
+  topPrimaryActionMobile: { minWidth: 0, paddingHorizontal: 12 },
   topPrimaryActionText: { color: "#ffffff", fontSize: 12, fontWeight: "800" },
   accountButton: { paddingLeft: 3, flexDirection: "row", alignItems: "center", gap: 5 },
   accountAvatar: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#1f2937", alignItems: "center", justifyContent: "center" },
@@ -2202,7 +2650,10 @@ const styles = StyleSheet.create({
     borderColor: "#e7e9ea",
   },
   sectionHeaderRow: { flexDirection: "row", alignItems: "stretch", gap: 20 },
+  sectionHeaderRowCompact: { flexDirection: "column", gap: 14 },
+  sectionHeaderCopy: { flex: 1, minWidth: 0 },
   sectionArt: { width: 210, minHeight: 122, borderRadius: 15, overflow: "hidden", backgroundColor: "#f3f8f5", borderWidth: 1, borderColor: "#e0ebe4", alignItems: "center", justifyContent: "center" },
+  sectionArtCompact: { width: "100%", minHeight: 190 },
   sectionArtImage: { width: "100%", height: "100%", opacity: 1 },
   analyticsStack: { gap: 14 },
   analyticsPanel: { borderRadius: 16, backgroundColor: "#102a1f", padding: 18, flexDirection: "row", gap: 18, overflow: "hidden" },
@@ -2358,6 +2809,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: "#fafbfb",
   },
+  tableTitleMobile: { paddingHorizontal: 0, paddingVertical: 0, backgroundColor: "transparent" },
   tableHeader: {
     flexDirection: "row",
     paddingHorizontal: 18,
@@ -2376,11 +2828,66 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
   },
   orderToolbar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 16 },
+  orderToolbarMobile: { flexDirection: "column", alignItems: "stretch", gap: 12 },
   orderToolbarCopy: { color: muted, fontSize: 12, marginTop: 5 },
   secondaryButton: { minHeight: 36, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#dfe5e2", backgroundColor: "#ffffff", alignItems: "center", justifyContent: "center" },
   secondaryButtonText: { color: "#315240", fontSize: 12, fontWeight: "800" },
   orderTableHeader: { flexDirection: "row", paddingHorizontal: 18, paddingVertical: 12, backgroundColor: "#f7f9f8", borderTopWidth: 1, borderTopColor: "#e2ebe5" },
   orderRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingVertical: 14, borderTopWidth: 1, borderTopColor: "#eef3ef", backgroundColor: "#ffffff" },
+  mobileOrderList: { gap: 10 },
+  mobileOrderCard: {
+    borderWidth: 1,
+    borderColor: "#e2ebe5",
+    borderRadius: 14,
+    backgroundColor: "#ffffff",
+    padding: 13,
+    gap: 12,
+  },
+  mobileOrderHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  mobileOrderIdentity: { flex: 1, minWidth: 0 },
+  mobileOrderId: {
+    color: ink,
+    fontWeight: "900",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  mobileOrderTotal: {
+    color: "#304255",
+    fontSize: 14,
+    fontWeight: "900",
+    textAlign: "right",
+  },
+  mobileOrderCustomer: {
+    borderRadius: 11,
+    backgroundColor: "#f7faf8",
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    gap: 2,
+  },
+  mobileOrderFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  mobileOrderStatusWrap: { flex: 1, minWidth: 0 },
+  mobileManageButton: {
+    minHeight: 40,
+    minWidth: 122,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#eff9f3",
+    borderWidth: 1,
+    borderColor: "#cfe9da",
+    paddingHorizontal: 12,
+  },
+  mobileManageButtonText: { color: greenDeep, fontWeight: "900", fontSize: 12 },
   orderStatusBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999 },
   orderStatusActive: { backgroundColor: "#edf4f8" },
   orderStatusTransit: { backgroundColor: "#fff5df" },
@@ -2494,6 +3001,51 @@ const styles = StyleSheet.create({
   },
   infoLabel: { color: muted, fontSize: 12, fontWeight: "700" },
   infoValue: { color: ink, fontSize: 13, fontWeight: "800", flexShrink: 1, textAlign: "right" },
+  returnList: { gap: 12 },
+  returnCard: { gap: 12, borderWidth: 1, borderColor: line, borderRadius: 16, padding: 16, backgroundColor: "#fff" },
+  returnHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  returnFacts: { gap: 1 },
+  returnDetails: { color: "#40544a", fontSize: 13, lineHeight: 20, backgroundColor: "#f6faf7", borderRadius: 10, padding: 11 },
+  returnSellerNote: { color: "#5c4630", fontSize: 12, lineHeight: 18, backgroundColor: "#fff8ea", borderRadius: 10, padding: 10 },
+  returnEvidenceRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  returnEvidenceTile: { width: 150, minHeight: 112, borderRadius: 12, borderWidth: 1, borderColor: "#dbe8df", backgroundColor: "#f8fbf9", padding: 9, justifyContent: "center" },
+  returnEvidenceImage: { width: "100%", height: 72, borderRadius: 8, marginBottom: 7, backgroundColor: "#e9f0eb" },
+  returnEvidenceName: { color: ink, fontSize: 11, fontWeight: "800", marginTop: 5 },
+  returnEvidenceMeta: { color: muted, fontSize: 9, marginTop: 2 },
+  returnActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
+  primaryInlineButton: { minHeight: 38, paddingHorizontal: 14, borderRadius: 10, backgroundColor: green, alignItems: "center", justifyContent: "center" },
+  primaryInlineButtonText: { color: "#fff", fontSize: 12, fontWeight: "900" },
+  dangerInlineButton: { minHeight: 38, paddingHorizontal: 14, borderRadius: 10, backgroundColor: "#fff1f1", borderWidth: 1, borderColor: "#f0caca", alignItems: "center", justifyContent: "center" },
+  dangerInlineButtonText: { color: "#a83b3b", fontSize: 12, fontWeight: "900" },
+  affiliateNotice: { borderRadius: 14, borderWidth: 1, borderColor: "#cfe9da", backgroundColor: mint, padding: 14 },
+  affiliateNoticeTitle: { color: greenDeep, fontSize: 13, fontWeight: "900" },
+  affiliateNoticeCopy: { color: "#4f685a", fontSize: 12, lineHeight: 18, marginTop: 4 },
+  affiliateList: { gap: 10 },
+  affiliateRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 14, borderWidth: 1, borderColor: line, borderRadius: 15, padding: 13, backgroundColor: "#fff" },
+  affiliateImage: { width: 68, height: 68, borderRadius: 12, backgroundColor: "#edf2ef" },
+  affiliateImagePlaceholder: { width: 68, height: 68, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: mint },
+  affiliateIdentity: { flex: 1, minWidth: 210 },
+  affiliateCommissionControl: { minWidth: 120, alignItems: "flex-start", gap: 4 },
+  affiliateToggleControl: { minWidth: 150, alignItems: "flex-end", gap: 7 },
+  affiliateControlLabel: { color: muted, fontSize: 10, fontWeight: "800" },
+  affiliateCommissionInput: { width: 90, minHeight: 36, borderWidth: 1, borderColor: line, borderRadius: 9, paddingHorizontal: 10, color: ink, backgroundColor: "#fff", fontWeight: "800" },
+  dataSourceNote: { color: muted, fontSize: 11, lineHeight: 17, backgroundColor: "#f7f9f8", padding: 10, borderRadius: 10 },
+  financeEstimate: { color: ink, fontSize: 30, fontWeight: "900", letterSpacing: -0.8 },
+  comingSoonCard: { minHeight: 280, alignItems: "center", justifyContent: "center", borderRadius: 18, borderWidth: 1, borderColor: line, backgroundColor: "#f8fbf9", padding: 28 },
+  comingSoonIcon: { width: 64, height: 64, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: mint },
+  comingSoonTitle: { color: ink, fontSize: 24, fontWeight: "900", marginTop: 16 },
+  comingSoonCopy: { color: muted, fontSize: 13, lineHeight: 20, textAlign: "center", maxWidth: 540, marginTop: 8 },
+  sellerEvidenceViewer: { flex: 1, backgroundColor: "#07110b" },
+  sellerEvidenceHeader: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#26372e" },
+  sellerEvidenceTitle: { color: "#fff", fontSize: 16, fontWeight: "900" },
+  sellerEvidenceMeta: { color: "#a9b8af", fontSize: 11, marginTop: 3 },
+  sellerEvidenceClose: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "#24352b" },
+  sellerEvidenceBody: { flex: 1, alignItems: "center", justifyContent: "center", padding: 14 },
+  sellerEvidenceMediaFrame: { position: "relative", width: "100%", height: "100%", overflow: "hidden", borderRadius: 16, backgroundColor: "#000" },
+  sellerEvidenceMedia: { width: "100%", height: "100%" },
+  sellerEvidenceWatermark: { position: "absolute", top: 10, right: 10, alignItems: "flex-end" },
+  sellerEvidenceWatermarkText: { maxWidth: 300, color: "#fff", fontSize: 10, fontWeight: "900", backgroundColor: "rgba(7,43,24,0.72)", paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, overflow: "hidden" },
+  sellerEvidencePlaceholder: { minHeight: 180, alignItems: "center", justifyContent: "center" },
   centered: {
     flex: 1,
     backgroundColor: "#ffffff",

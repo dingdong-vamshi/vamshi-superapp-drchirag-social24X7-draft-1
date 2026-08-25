@@ -44,10 +44,12 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test:chat": "node --test --experimental-strip-types src/features/chat/chatContracts.test.ts src/features/chat/chatMediaUtils.test.ts src/features/chat/documentScannerUtils.test.ts",
+    "test:chat": "node --test --experimental-strip-types src/features/chat/chatContracts.test.ts src/features/chat/chatDetailsUtils.test.ts src/features/chat/chatMediaUtils.test.ts src/features/chat/documentScannerUtils.test.ts",
     "test:games": "node --test --experimental-strip-types src/features/games/gameLogic.test.ts",
     "test:creator-commerce": "node --test --experimental-strip-types src/features/creatorCommerce/lifecycleRepository.test.ts src/features/creatorCommerce/onboardingRules.test.ts",
-    "test:checkout": "node --test --experimental-strip-types src/features/commerce/checkoutRecovery.test.ts",
+    "test:checkout": "node --test --experimental-strip-types src/features/commerce/checkoutRecovery.test.ts src/features/commerce/shopFilters.test.ts",
+    "test:seller-studio": "node --test --experimental-strip-types src/features/commerce/seller-studio-navigation.test.ts src/features/commerce/affiliate-contracts.test.ts",
+    "test:nearby": "node --test --experimental-strip-types src/features/discover/nearbyProfileContracts.test.ts",
     "test:social-wallet": "node --test --experimental-strip-types src/features/social/socialUtils.test.ts src/features/profile/profileQrUtils.test.ts src/features/wallet/rewardMath.test.ts src/features/wallet/rewardRepository.test.ts"
   },
   "private": true

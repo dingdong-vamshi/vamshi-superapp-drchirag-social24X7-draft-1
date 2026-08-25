@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { flattenStoryGroups, groupStoriesByAuthor } from "./socialUtils.ts";
 import type { SocialStory } from "./types.ts";
@@ -31,4 +32,14 @@ test("viewer advances through one author before the next", () => {
     story("b1", "b", "2026-01-03T00:00:00.000Z"),
   ]);
   assert.deepEqual(flattenStoryGroups(groups, "a").map(({ id }) => id), ["a1", "a2", "b1"]);
+});
+
+test("Social Profile is a root-stack detail route with history-based back navigation", () => {
+  assert.equal(existsSync("app/social-profile.tsx"), true);
+  assert.equal(existsSync("app/(tabs)/social-profile.tsx"), false);
+  const rootLayout = readFileSync("app/_layout.tsx", "utf8");
+  const profileScreen = readFileSync("src/features/social/SocialProfileScreen.tsx", "utf8");
+  assert.match(rootLayout, /Stack\.Screen name="social-profile"/);
+  assert.match(profileScreen, /accessibilityLabel="Back"/);
+  assert.match(profileScreen, /router\.back\(\)/);
 });

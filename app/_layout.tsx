@@ -24,6 +24,8 @@ function RootNavigator() {
         <Stack.Screen name="seller/index" />
         <Stack.Screen name="business-directory" />
         <Stack.Screen name="business-chat/[id]" />
+        <Stack.Screen name="chat-details/[id]" />
+        <Stack.Screen name="social-profile" />
         <Stack.Screen name="cart" />
         <Stack.Screen name="checkout/index" />
         <Stack.Screen name="checkout/success" />

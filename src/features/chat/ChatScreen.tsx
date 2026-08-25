@@ -68,6 +68,7 @@ import {
   type CallSession,
   type ChatContact,
   type ChatDataSource,
+  type ChatAttachment,
   type ChatMessage,
   type Conversation,
   type MessageReaction,
@@ -83,6 +84,7 @@ type Props = {
   onViewStore?: (slug: string) => void;
   onViewOrder?: (orderId: string) => void;
   onViewProfile?: (profileId: string) => void;
+  onOpenChatDetails?: (conversationId: string) => void;
   viewer?: ChatContact | null;
   onOpenOwnProfile?: () => void;
   onOpenQr?: () => void;
@@ -196,6 +198,7 @@ export default function ChatScreen({
   onViewStore,
   onViewOrder,
   onViewProfile,
+  onOpenChatDetails,
   viewer,
   onOpenOwnProfile,
   onOpenQr,
@@ -676,6 +679,7 @@ export default function ChatScreen({
         onViewStore={onViewStore}
         onViewOrder={onViewOrder}
         onViewProfile={onViewProfile}
+        onOpenChatDetails={onOpenChatDetails}
         onMessageSent={appendSentMessage}
         acceptRequest={async (conversationId) => {
           const accepted = await dataSource.acceptMessageRequest(conversationId);
@@ -1019,6 +1023,7 @@ function ConversationView({
   onViewStore,
   onViewOrder,
   onViewProfile,
+  onOpenChatDetails,
   onMessageSent,
   acceptRequest,
   onBack,
@@ -1034,6 +1039,7 @@ function ConversationView({
   onViewStore?: (slug: string) => void;
   onViewOrder?: (orderId: string) => void;
   onViewProfile?: (profileId: string) => void;
+  onOpenChatDetails?: (conversationId: string) => void;
   onMessageSent: (message: ChatMessage) => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
   onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
@@ -1067,6 +1073,11 @@ function ConversationView({
   const [returnDetails, setReturnDetails] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const [viewingEvidence, setViewingEvidence] = useState<OrderChatEvidence | null>(null);
+  const [viewingAttachment, setViewingAttachment] = useState<{
+    attachment: ChatAttachment;
+    createdAt: string;
+    trusted: boolean;
+  } | null>(null);
   const [commerceActionPending, setCommerceActionPending] = useState(false);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [wallpaper, setWallpaper] = useState<'neutral' | 'sky' | 'forest' | 'warm' | 'paper'>('neutral');
@@ -1656,6 +1667,15 @@ function ConversationView({
       onViewStore &&
       conversation.businessRole !== "seller",
   );
+  const openHeaderDetails = () => {
+    if (conversation.kind === "group") {
+      setGroupMembersOpen(true);
+      return;
+    }
+    if (conversation.kind === "personal") {
+      onOpenChatDetails?.(conversation.id);
+    }
+  };
   const headerIdentity = (
     <>
       <Text accessibilityRole="header" style={styles.personName}>
@@ -1682,9 +1702,9 @@ function ConversationView({
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={conversation.kind === "group" ? "View group members" : `Open ${conversation.participant.name}'s profile`}
+            accessibilityLabel={conversation.kind === "group" ? "View group members" : conversation.kind === "personal" ? `Open chat details for ${conversation.participant.name}` : conversation.participant.name}
             disabled={Boolean(conversation.storefront)}
-            onPress={() => conversation.kind === "group" ? setGroupMembersOpen(true) : onViewProfile?.(conversation.participant.id)}
+            onPress={openHeaderDetails}
           >
             <Avatar
               label={conversation.participant.avatarLabel}
@@ -1709,8 +1729,8 @@ function ConversationView({
           ) : (
             <Pressable
               accessibilityRole="button"
-              disabled={!onViewProfile && conversation.kind !== "group"}
-              onPress={() => conversation.kind === "group" ? setGroupMembersOpen(true) : onViewProfile?.(conversation.participant.id)}
+              disabled={conversation.kind === "personal" ? !onOpenChatDetails : conversation.kind !== "group"}
+              onPress={openHeaderDetails}
               style={styles.headerInfo}
             >
               {headerIdentity}
@@ -1809,24 +1829,35 @@ function ConversationView({
             data={messages}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.messageList}
-            renderItem={({ item }) => (
-              <MessageBubble
+            renderItem={({ item, index }) => {
+              const nextMessage = messages[index + 1];
+              const showIncomingAvatar = conversation.kind !== "group"
+                && item.type !== "order_event"
+                && item.senderId !== CURRENT_USER_ID
+                && (!nextMessage || nextMessage.senderId !== item.senderId || nextMessage.type === "order_event");
+              return <MessageBubble
                 message={item}
-                showTrustedCapture={Boolean(conversation.storefront)}
                 onLongPress={() => setActionMessage(item)}
-                onReactPress={() => setActionMessage(item)}
-                reactionPending={reactionPendingId === item.id}
                 reactions={item.reactions ?? []}
+                incomingAvatar={showIncomingAvatar ? {
+                  label: conversation.participant.avatarLabel,
+                  url: conversation.participant.avatarUrl,
+                } : undefined}
                 onViewOrder={onViewOrder}
                 onViewProfile={onViewProfile}
                 onVotePoll={(pollId, optionId) => void votePoll(pollId, optionId)}
                 onRsvpEvent={(eventId, response) => void rsvpEvent(eventId, response)}
                 onAddEvidence={(orderId, orderItemId, title, kind, returnRequestId) => setEvidenceTarget({ orderId, orderItemId, title, kind, returnRequestId })}
                 onViewEvidence={setViewingEvidence}
+                onViewAttachment={(attachment) => setViewingAttachment({
+                  attachment,
+                  createdAt: item.createdAt,
+                  trusted: Boolean(conversation.storefront) && attachment.source === "camera_capture",
+                })}
                 onRequestReturn={(orderItemId, title) => { setReturnTarget({ orderItemId, title }); setReturnReason(""); setReturnDetails(""); }}
                 onReviewReturn={(returnRequestId, decision) => void reviewReturnFromChat(returnRequestId, decision)}
-              />
-            )}
+              />;
+            }}
           />
         )}
         </ImageBackground>
@@ -1964,6 +1995,7 @@ function ConversationView({
           confirm={confirmScannedDocument}
         />
         <EvidenceViewer evidence={viewingEvidence} close={() => setViewingEvidence(null)} />
+        <ChatMediaViewer media={viewingAttachment} close={() => setViewingAttachment(null)} />
         <ContactShareModal
           visible={contactOpen}
           query={contactQuery}
@@ -2188,32 +2220,30 @@ function MessageSurface({
 
 function MessageBubble({
   message,
-  showTrustedCapture,
   onLongPress,
-  onReactPress,
-  reactionPending,
   reactions,
+  incomingAvatar,
   onViewOrder,
   onViewProfile,
   onVotePoll,
   onRsvpEvent,
   onAddEvidence,
   onViewEvidence,
+  onViewAttachment,
   onRequestReturn,
   onReviewReturn,
 }: {
   message: ChatMessage;
-  showTrustedCapture: boolean;
   onLongPress: () => void;
-  onReactPress: () => void;
-  reactionPending: boolean;
   reactions: MessageReaction[];
+  incomingAvatar?: { label: string; url?: string | null };
   onViewOrder?: (orderId: string) => void;
   onViewProfile?: (profileId: string) => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
   onRsvpEvent?: (eventId: string, response: "going" | "maybe" | "declined") => void;
   onAddEvidence?: (orderId: string, orderItemId: string | undefined, title: string, kind: "packing" | "unboxing" | "return", returnRequestId?: string) => void;
   onViewEvidence?: (evidence: OrderChatEvidence) => void;
+  onViewAttachment?: (attachment: ChatAttachment) => void;
   onRequestReturn?: (orderItemId: string, title: string) => void;
   onReviewReturn?: (returnRequestId: string, decision: "approved" | "rejected" | "under_review") => void;
 }) {
@@ -2243,30 +2273,7 @@ function MessageBubble({
   return (
     <View style={[styles.messageWrap, mine && styles.mineWrap, systemEvent && styles.systemEventWrap]}>
       <View style={[styles.messagePressRow, mine && styles.messagePressRowMine, systemEvent && styles.systemEventPressRow]}>
-        {!mine && !systemEvent ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="React to received message"
-            disabled={reactionPending}
-            accessibilityState={{ disabled: reactionPending }}
-            onPress={onReactPress}
-            hitSlop={8}
-            style={[
-              styles.messageReactionTrigger,
-              styles.messageReactionTriggerTheirs,
-              reactionPending && styles.messageReactionTriggerDisabled,
-            ]}
-          >
-            {reactionPending ? (
-              <ActivityIndicator color="#07c160" size="small" />
-            ) : (
-              <>
-                <Text style={styles.messageReactionEmoji}>😊</Text>
-                <Text style={styles.messageReactionPlus}>+</Text>
-              </>
-            )}
-          </Pressable>
-        ) : null}
+        {incomingAvatar ? <MessageAvatar label={incomingAvatar.label} url={incomingAvatar.url} /> : null}
         <MessageSurface
           systemEvent={systemEvent}
           accessibilityRole={!systemEvent && !message.poll && !message.event && !message.order && !message.attachment && openStructured ? "button" : undefined}
@@ -2434,32 +2441,39 @@ function MessageBubble({
           {message.attachment ? (
             <View style={[styles.attachmentCard, mine && styles.attachmentCardMine]}>
               {message.attachment.attachmentType === "image" && message.attachment.signedUrl ? (
-                <View style={styles.trustedMediaFrame}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`View image ${message.attachment.filename}`}
+                  onPress={() => onViewAttachment?.(message.attachment!)}
+                  style={styles.timelineMediaFrame}
+                >
                   <Image source={{ uri: message.attachment.signedUrl }} style={styles.attachmentImage} resizeMode="cover" />
-                  {message.attachment.source === "camera_capture" && showTrustedCapture ? (
-                    <TrustedMediaOverlay label={trustedCaptureLabel(message.attachment.mimeType, message.createdAt)} />
-                  ) : null}
-                </View>
+                </Pressable>
               ) : message.attachment.attachmentType === "video" && message.attachment.signedUrl ? (
-                <TrustedVideoPlayer
-                  url={message.attachment.signedUrl}
-                  watermark={message.attachment.source === "camera_capture" && showTrustedCapture
-                    ? trustedCaptureLabel(message.attachment.mimeType, message.createdAt)
-                    : undefined}
-                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`View video ${message.attachment.filename}`}
+                  onPress={() => onViewAttachment?.(message.attachment!)}
+                  style={styles.timelineVideoFrame}
+                >
+                  <TimelineVideoPreview url={message.attachment.signedUrl} />
+                  <View pointerEvents="none" style={styles.timelinePlayButton}><Video size={24} color="#fff" /></View>
+                </Pressable>
               ) : (
                 <View style={styles.attachmentFileIcon}>
                   <FileText color="#087c43" size={24} />
                 </View>
               )}
-              <Text style={[styles.attachmentName, mine && styles.mineText]} numberOfLines={2}>{message.attachment.filename}</Text>
-              <Text style={[styles.attachmentMeta, mine && styles.mineText]}>
-                {message.attachment.attachmentType} · {(message.attachment.bytes / 1_048_576).toFixed(1)} MiB
-              </Text>
+              {message.attachment.attachmentType === "document" ? <>
+                <Text style={[styles.attachmentName, mine && styles.mineText]} numberOfLines={2}>{message.attachment.filename}</Text>
+                <Text style={[styles.attachmentMeta, mine && styles.mineText]}>
+                  document · {(message.attachment.bytes / 1_048_576).toFixed(1)} MiB
+                </Text>
+              </> : null}
               {message.attachment.source === "document_scan" ? (
                 <Text style={styles.scanBadge}>Scanned in app</Text>
               ) : null}
-              {message.attachment.signedUrl ? (
+              {message.attachment.signedUrl && message.attachment.attachmentType === "document" ? (
                 <Pressable accessibilityRole="button" accessibilityLabel={`Open attachment ${message.attachment.filename}`} onPress={() => void Linking.openURL(message.attachment!.signedUrl!)}>
                   <Text style={styles.orderEventAction}>Open attachment</Text>
                 </Pressable>
@@ -2538,30 +2552,6 @@ function MessageBubble({
             {mine && message.status === "read" ? " · Read" : ""}
           </Text>
         </MessageSurface>
-        {mine && !systemEvent ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="React to your message"
-            disabled={reactionPending}
-            accessibilityState={{ disabled: reactionPending }}
-            onPress={onReactPress}
-            hitSlop={8}
-            style={[
-              styles.messageReactionTrigger,
-              styles.messageReactionTriggerMine,
-              reactionPending && styles.messageReactionTriggerDisabled,
-            ]}
-          >
-            {reactionPending ? (
-              <ActivityIndicator color="#07c160" size="small" />
-            ) : (
-              <>
-                <Text style={styles.messageReactionEmoji}>😊</Text>
-                <Text style={styles.messageReactionPlus}>+</Text>
-              </>
-            )}
-          </Pressable>
-        ) : null}
       </View>
       {reactions.length > 0 ? (
         <View style={[styles.reactionRow, mine && styles.reactionRowMine]}>
@@ -2583,6 +2573,10 @@ function MessageBubble({
       ) : null}
     </View>
   );
+}
+
+function MessageAvatar({ label, url }: { label: string; url?: string | null }) {
+  return <View accessibilityLabel={`${label} message avatar`} style={styles.messageAvatar}>{url ? <Image source={{ uri: url }} style={styles.messageAvatarImage} /> : <Text style={styles.messageAvatarText}>{label.slice(0, 2).toUpperCase()}</Text>}</View>;
 }
 
 function WallpaperPicker({
@@ -2724,6 +2718,22 @@ function TrustedMediaOverlay({ label }: { label: string }) {
   );
 }
 
+function TimelineVideoPreview({ url }: { url: string }) {
+  const player = useVideoPlayer(url, (next) => {
+    next.muted = true;
+  });
+  return (
+    <VideoView
+      player={player}
+      nativeControls={false}
+      contentFit="cover"
+      playsInline
+      fullscreenOptions={{ enable: false }}
+      style={styles.trustedVideo}
+    />
+  );
+}
+
 function TrustedVideoPlayer({ url, watermark }: { url: string; watermark?: string }) {
   const player = useVideoPlayer(url);
   return (
@@ -2733,11 +2743,51 @@ function TrustedVideoPlayer({ url, watermark }: { url: string; watermark?: strin
         nativeControls
         contentFit="contain"
         playsInline
-        fullscreenOptions={{ enable: true }}
+        fullscreenOptions={{ enable: false }}
         style={styles.trustedVideo}
       />
       {watermark ? <TrustedMediaOverlay label={watermark} /> : null}
     </View>
+  );
+}
+
+function ChatMediaViewer({
+  media,
+  close,
+}: {
+  media: { attachment: ChatAttachment; createdAt: string; trusted: boolean } | null;
+  close: () => void;
+}) {
+  const attachment = media?.attachment;
+  const trustedLabel = media?.trusted && attachment
+    ? trustedCaptureLabel(attachment.mimeType, media.createdAt)
+    : undefined;
+  return (
+    <Modal visible={Boolean(media)} animationType="fade" presentationStyle="fullScreen" onRequestClose={close}>
+      <SafeAreaView style={styles.evidenceViewerSafe}>
+        <View style={styles.evidenceViewerHeader}>
+          <View style={styles.grow}>
+            <Text style={styles.evidenceViewerTitle} numberOfLines={1}>{attachment?.filename ?? "Media"}</Text>
+            <Text style={styles.evidenceViewerMeta}>{trustedLabel ? "Verified in-app camera capture" : "Chat media"}</Text>
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close media viewer" onPress={close} style={styles.evidenceViewerClose}>
+            <X size={20} color="#fff" />
+          </Pressable>
+        </View>
+        <View style={styles.evidenceViewerBody}>
+          {attachment?.signedUrl && attachment.attachmentType === "image" ? (
+            <View style={styles.evidenceViewerMediaFrame}>
+              <Image source={{ uri: attachment.signedUrl }} resizeMode="contain" style={styles.evidenceViewerMedia} />
+              {trustedLabel ? <TrustedMediaOverlay label={trustedLabel} /> : null}
+            </View>
+          ) : attachment?.signedUrl && attachment.attachmentType === "video" ? (
+            <TrustedVideoPlayer url={attachment.signedUrl} watermark={trustedLabel} />
+          ) : (
+            <View style={styles.previewFile}><FileText color="#87dbaa" size={50} /></View>
+          )}
+        </View>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -2769,7 +2819,7 @@ function EvidenceViewer({ evidence, close }: { evidence: OrderChatEvidence | nul
             <View style={styles.previewFile}><FileText color="#87dbaa" size={50} /></View>
           )}
         </View>
-        {evidence?.signedUrl ? (
+        {evidence?.signedUrl && !evidence.mimeType.startsWith("image/") && !evidence.mimeType.startsWith("video/") ? (
           <Pressable accessibilityRole="button" accessibilityLabel={`Open ${evidence.filename} externally`} onPress={() => void Linking.openURL(evidence.signedUrl!)} style={styles.evidenceExternalButton}>
             <Text style={styles.evidenceExternalText}>Open original</Text>
           </Pressable>
@@ -4364,32 +4414,9 @@ const styles = StyleSheet.create({
   mine: { backgroundColor: "#12d39b" },
   theirs: { backgroundColor: "#ffffff" },
   systemEventMessage: { width: "100%", maxWidth: 520, backgroundColor: "transparent", paddingHorizontal: 0, shadowOpacity: 0, elevation: 0 },
-  messageReactionTrigger: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    marginBottom: 2,
-    backgroundColor: "#ffffff",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#0f172a",
-    shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  messageReactionTriggerMine: { marginRight: 2 },
-  messageReactionTriggerTheirs: { marginLeft: 2 },
-  messageReactionTriggerDisabled: { opacity: 0.55 },
-  messageReactionEmoji: { fontSize: 13 },
-  messageReactionPlus: {
-    position: "absolute",
-    top: -5,
-    right: -3,
-    color: "#98a2b3",
-    fontSize: 9,
-    fontWeight: "900",
-  },
+  messageAvatar: { width: 28, height: 28, borderRadius: 14, marginBottom: 2, overflow: "hidden", backgroundColor: "#dff4e8", alignItems: "center", justifyContent: "center" },
+  messageAvatarImage: { width: "100%", height: "100%" },
+  messageAvatarText: { color: "#078549", fontSize: 9, fontWeight: "900" },
   messageText: { color: "#111111", fontSize: 15, lineHeight: 21 },
   hiddenMessageBody: { display: "none" },
   orderEventCard: {
@@ -4429,10 +4456,12 @@ const styles = StyleSheet.create({
   attachmentCard: { minWidth: 220, gap: 5 },
   attachmentCardMine: { backgroundColor: "rgba(255,255,255,0.2)" },
   attachmentImage: { width: 230, height: 180, borderRadius: 14, backgroundColor: "#e9f0eb" },
-  trustedMediaFrame: { position: "relative", alignSelf: "flex-start", overflow: "hidden", borderRadius: 14 },
+  timelineMediaFrame: { position: "relative", alignSelf: "flex-start", overflow: "hidden", borderRadius: 14 },
+  timelineVideoFrame: { position: "relative", width: 230, height: 180, overflow: "hidden", borderRadius: 14, backgroundColor: "#17241c" },
+  timelinePlayButton: { position: "absolute", left: "50%", top: "50%", width: 52, height: 52, marginLeft: -26, marginTop: -26, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.56)" },
   trustedVideoFrame: { position: "relative", width: "100%", maxWidth: 520, minWidth: 230, height: 260, overflow: "hidden", borderRadius: 14, backgroundColor: "#17241c" },
   trustedVideo: { width: "100%", height: "100%" },
-  trustedMediaOverlay: { position: "absolute", left: 8, right: 8, bottom: 8, alignItems: "flex-start" },
+  trustedMediaOverlay: { position: "absolute", top: 10, right: 10, alignItems: "flex-end" },
   trustedMediaOverlayText: { maxWidth: "94%", color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 0.2, backgroundColor: "rgba(7,43,24,0.72)", paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, overflow: "hidden" },
   attachmentFileIcon: { width: 52, height: 52, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "#e9f8ef" },
   attachmentName: { color: "#17241c", fontSize: 14, fontWeight: "900" },

@@ -11,6 +11,7 @@ export type NearbyPreference = {
 export type MyNearbyProfile = {
   name: string;
   username: string;
+  avatarUrl?: string | null;
   bio: string;
   interests: string[];
 };
@@ -19,6 +20,7 @@ export type NearbyPerson = {
   id: string;
   name: string;
   username: string;
+  avatarUrl?: string | null;
   bio: string;
   interests: string[];
   distanceKm: number | null;
@@ -46,7 +48,16 @@ const normalizeProfile = (profile: any) => ({
   name: profile.display_name || profile.username || "Social 24x7 user",
   username: profile.username || profile.id.slice(0, 8),
   bio: profile.bio || "",
+  avatarPath: profile.avatar_path || null,
 });
+
+const signAvatarPaths = async (rows: any[]) => {
+  const paths = [...new Set(rows.flatMap((row) => row.avatar_path ? [row.avatar_path] : []))] as string[];
+  if (!paths.length) return new Map<string, string>();
+  const { data, error } = await supabase!.storage.from("profile-media").createSignedUrls(paths, 3600);
+  if (error) return new Map<string, string>();
+  return new Map(paths.map((path, index) => [path, data?.[index]?.signedUrl || ""]));
+};
 
 const requestState = (requests: any[], viewerId: string, otherId: string): NearbyPerson["requestStatus"] => {
   const pair = requests.find((request) =>
@@ -63,7 +74,7 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5, onlineOnly
   const [prefRes, requestRes, profileRes] = await Promise.all([
     supabase!.from("nearby_people_preferences").select("*").eq("user_id", active.id).maybeSingle(),
     supabase!.from("connection_requests").select("id,requester_id,recipient_id,status,created_at").or(`requester_id.eq.${active.id},recipient_id.eq.${active.id}`),
-    supabase!.from("profiles").select("id,username,display_name,bio").eq("id", active.id).maybeSingle(),
+    supabase!.from("profiles").select("id,username,display_name,avatar_path").eq("id", active.id).maybeSingle(),
   ]);
   if (prefRes.error) throw new Error(prefRes.error.message);
   if (requestRes.error) throw new Error(requestRes.error.message);
@@ -81,22 +92,26 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5, onlineOnly
     .map((request: any) => request.requester_id === active.id ? request.recipient_id : request.requester_id);
   const [nearbyRes, friendProfilesRes, requestProfilesRes] = await Promise.all([
     preference.enabled && preference.hasApproximateLocation
-      ? supabase!.rpc("get_nearby_people", { p_radius_km: radiusKm, p_online_only: onlineOnly })
+      ? supabase!.rpc("get_nearby_people_v2", { p_radius_km: radiusKm, p_online_only: onlineOnly })
       : Promise.resolve({ data: [], error: null }),
     friendIds.length
-      ? supabase!.from("profiles").select("id,username,display_name,bio").in("id", friendIds)
+      ? supabase!.from("profiles").select("id,username,display_name,bio,avatar_path").in("id", friendIds)
       : Promise.resolve({ data: [], error: null }),
     requests.length
-      ? supabase!.from("profiles").select("id,username,display_name,bio").in("id", requests.map((request: any) => request.requester_id === active.id ? request.recipient_id : request.requester_id))
+      ? supabase!.from("profiles").select("id,username,display_name,bio,avatar_path").in("id", requests.map((request: any) => request.requester_id === active.id ? request.recipient_id : request.requester_id))
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (nearbyRes.error) throw new Error(nearbyRes.error.message);
   if (friendProfilesRes.error) throw new Error(friendProfilesRes.error.message);
   if (requestProfilesRes.error) throw new Error(requestProfilesRes.error.message);
-  const people = ((nearbyRes.data as any[] | null) ?? []).map((row): NearbyPerson => ({
+  const nearbyRows = (nearbyRes.data as any[] | null) ?? [];
+  const allAvatarRows = [...nearbyRows, ...(friendProfilesRes.data ?? []), ...(requestProfilesRes.data ?? []), ...(profileRes.data ? [profileRes.data] : [])];
+  const avatarUrls = await signAvatarPaths(allAvatarRows);
+  const people = nearbyRows.map((row): NearbyPerson => ({
     id: row.id,
     name: row.display_name || row.username || "Social 24x7 user",
     username: row.username || row.id.slice(0, 8),
+    avatarUrl: row.avatar_path ? avatarUrls.get(row.avatar_path) || null : null,
     bio: row.bio || "",
     interests: row.interests ?? [],
     distanceKm: row.distance_km === null ? null : Number(row.distance_km),
@@ -122,16 +137,33 @@ export async function getNearbyWorkspace(user: unknown, radiusKm = 5, onlineOnly
 
   const friends: NearbyPerson[] = friendIds.map((id): NearbyPerson | null => {
     const profile = profileById.get(id);
-    return profile ? { ...normalizeProfile(profile), interests: [], distanceKm: null, requestStatus: "accepted" as const, isOnline: false } : null;
+    return profile ? { ...normalizeProfile(profile), avatarUrl: profile.avatar_path ? avatarUrls.get(profile.avatar_path) || null : null, interests: [], distanceKm: null, requestStatus: "accepted" as const, isOnline: false } : null;
   }).filter((person): person is NearbyPerson => person !== null);
   const profile = profileRes.data;
   const myProfile: MyNearbyProfile = {
     name: profile?.display_name || profile?.username || "Social 24x7 user",
     username: profile?.username || active.id.slice(0, 8),
-    bio: profile?.bio || "",
+    avatarUrl: profile?.avatar_path ? avatarUrls.get(profile.avatar_path) || null : null,
+    bio: pref?.nearby_bio || "",
     interests: Array.isArray(pref?.interests) ? pref.interests : [],
   };
   return { preference, people: preference.enabled ? people : [], requests: requestCards, friends, myProfile };
+}
+
+export async function listNearbyInterestOptions(user: unknown) {
+  requireUser(user);
+  const { data, error } = await supabase!.from("interests").select("label").order("label");
+  if (error) throw new Error(error.message);
+  return ((data as Array<{ label: string }> | null) ?? []).map((item) => item.label);
+}
+
+export async function saveNearbyProfile(input: { user: unknown; bio: string; interests: string[] }) {
+  requireUser(input.user);
+  const { error } = await supabase!.rpc("save_my_nearby_profile", {
+    p_bio: input.bio.trim(),
+    p_interests: input.interests,
+  });
+  if (error) throw new Error(error.message);
 }
 
 export async function touchNearbyPresence(user: unknown) {

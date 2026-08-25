@@ -184,6 +184,7 @@ test('approved seller provisions a storefront, publishes directly, and remains s
       const builder: any = {
         select(value: string) { calls.push({ table, action: 'select', value }); return builder; },
         eq(column: string, value: unknown) { calls.push({ table, action: `eq:${column}`, value }); return builder; },
+        gt(column: string, value: unknown) { calls.push({ table, action: `gt:${column}`, value }); return builder; },
         in(column: string, value: unknown) { calls.push({ table, action: `in:${column}`, value }); return builder; },
         order(column: string, value: unknown) { calls.push({ table, action: `order:${column}`, value }); return builder; },
         limit(value: number) { calls.push({ table, action: 'limit', value }); return builder; },

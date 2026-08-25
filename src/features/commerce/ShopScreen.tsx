@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Heart, Search, ShoppingBag, Sparkles } from "lucide-react-native";
+import { ArrowUpDown, Check, Heart, Search, ShoppingBag, SlidersHorizontal, Sparkles, X } from "lucide-react-native";
 import {
   type CartLine,
   formatInr,
@@ -20,7 +20,9 @@ import {
   type ShopProduct,
   type ShopRepository,
   type StorefrontSummary,
+  shopCategories,
 } from "./shopRepository";
+import { activeShopFilterCount, defaultShopFilters, filterAndSortProducts, type ShopFilterState, type ShopSort } from "./shopFilters";
 
 type Props = {
   repository?: ShopRepository;
@@ -58,6 +60,10 @@ export function ShopScreen({
   const [isSaving, setSaving] = useState(false);
   const [isCheckingOut, setCheckingOut] = useState(false);
   const [isCartOpen, setCartOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filters, setFilters] = useState<ShopFilterState>(defaultShopFilters);
+  const [draftMin, setDraftMin] = useState("");
+  const [draftMax, setDraftMax] = useState("");
 
   const load = async () => {
     setState("loading");
@@ -155,7 +161,41 @@ export function ShopScreen({
     }
   };
 
-  const visibleProducts = wishlistOnly ? products.filter((product) => wishlistIds.includes(product.id)) : products;
+  const visibleProducts = useMemo(() => filterAndSortProducts(
+    wishlistOnly ? products.filter((product) => wishlistIds.includes(product.id)) : products,
+    filters,
+  ), [filters, products, wishlistIds, wishlistOnly]);
+  const activeFilterCount = activeShopFilterCount(filters);
+  const availableCategories = useMemo(() => shopCategories.filter((category) => category === "All" || products.some((product) => product.category === category)), [products]);
+  const openFilters = () => {
+    setDraftMin(filters.minPricePaise === null ? "" : String(filters.minPricePaise / 100));
+    setDraftMax(filters.maxPricePaise === null ? "" : String(filters.maxPricePaise / 100));
+    setFiltersOpen(true);
+  };
+  const applyPrice = () => {
+    const minRupees = draftMin.trim() === "" ? null : Number(draftMin);
+    const maxRupees = draftMax.trim() === "" ? null : Number(draftMax);
+    if ((minRupees !== null && (!Number.isFinite(minRupees) || minRupees < 0)) || (maxRupees !== null && (!Number.isFinite(maxRupees) || maxRupees < 0))) {
+      Alert.alert("Check price range", "Enter valid positive prices.");
+      return;
+    }
+    if (minRupees !== null && maxRupees !== null && minRupees > maxRupees) {
+      Alert.alert("Check price range", "Minimum price cannot be greater than maximum price.");
+      return;
+    }
+    setFilters((current) => ({
+      ...current,
+      minPricePaise: minRupees === null ? null : Math.round(minRupees * 100),
+      maxPricePaise: maxRupees === null ? null : Math.round(maxRupees * 100),
+    }));
+    setFiltersOpen(false);
+  };
+  const clearFilters = (includeQuery = false) => {
+    setFilters(defaultShopFilters);
+    setDraftMin("");
+    setDraftMax("");
+    if (includeQuery) setQuery("");
+  };
   const storefrontPreview = useMemo(
     () =>
       storefronts.slice(0, 6).map((item) => ({
@@ -245,6 +285,18 @@ export function ShopScreen({
               />
             </View>
 
+            <View style={styles.filterBar}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Open product filters${activeFilterCount ? `, ${activeFilterCount} active` : ""}`} onPress={openFilters} style={[styles.filterButton, activeFilterCount > 0 && styles.filterButtonActive]}>
+                <SlidersHorizontal size={18} color={activeFilterCount ? "#ffffff" : green} />
+                <Text style={[styles.filterButtonText, activeFilterCount > 0 && styles.filterButtonTextActive]}>Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Change product sorting" onPress={openFilters} style={styles.sortButton}>
+                <ArrowUpDown size={18} color={green} />
+                <Text style={styles.sortButtonText}>{filters.sort === "price-asc" ? "Price: Low to High" : filters.sort === "price-desc" ? "Price: High to Low" : "Recommended"}</Text>
+              </Pressable>
+              {activeFilterCount ? <Pressable accessibilityRole="button" accessibilityLabel="Clear all product filters" onPress={() => clearFilters()}><Text style={styles.clearAll}>Clear All</Text></Pressable> : null}
+            </View>
+
             {storefrontPreview.length ? (
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
@@ -306,7 +358,7 @@ export function ShopScreen({
             label="No products matched this filter."
             actionLabel="Clear filters"
             onAction={() => {
-              setQuery("");
+              clearFilters(true);
             }}
           />
         }
@@ -322,6 +374,38 @@ export function ShopScreen({
         <Text style={styles.floatingCartText}>Cart</Text>
         {cartCount ? <View style={styles.floatingCartBadge}><Text style={styles.badgeText}>{cartCount}</Text></View> : null}
       </Pressable>
+
+      <Modal visible={filtersOpen} animationType="slide" transparent onRequestClose={() => setFiltersOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close product filters" onPress={() => setFiltersOpen(false)} style={StyleSheet.absoluteFill} />
+          <View style={[styles.sheet, styles.filterSheet]}>
+            <View style={styles.sheetHeader}>
+              <View><Text style={styles.sheetTitle}>Filter & Sort</Text><Text style={styles.sheetSubtitle}>{products.length} real products available</Text></View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close product filters" style={styles.close} onPress={() => setFiltersOpen(false)}><X color={ink} size={20} /></Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.filterContent} keyboardShouldPersistTaps="handled">
+              <Text style={styles.filterTitle}>Price range</Text>
+              <View style={styles.priceInputs}>
+                <View style={styles.priceInputShell}><Text style={styles.currency}>₹</Text><TextInput accessibilityLabel="Minimum price" inputMode="decimal" value={draftMin} onChangeText={setDraftMin} placeholder="Min" placeholderTextColor="#98a2b3" style={styles.priceInput} /></View>
+                <Text style={styles.priceTo}>to</Text>
+                <View style={styles.priceInputShell}><Text style={styles.currency}>₹</Text><TextInput accessibilityLabel="Maximum price" inputMode="decimal" value={draftMax} onChangeText={setDraftMax} placeholder="Max" placeholderTextColor="#98a2b3" style={styles.priceInput} /></View>
+              </View>
+              <Text style={styles.filterHint}>Current catalog: {products.length ? `${formatInr(Math.min(...products.map((product) => product.pricePaise)))} – ${formatInr(Math.max(...products.map((product) => product.pricePaise)))}` : "No prices available"}</Text>
+
+              <Text style={styles.filterTitle}>Sort</Text>
+              {([[
+                "default", "Recommended"
+              ], ["price-asc", "Price: Low to High"], ["price-desc", "Price: High to Low"]] as Array<[ShopSort, string]>).map(([value, label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: filters.sort === value }} onPress={() => setFilters((current) => ({ ...current, sort: value }))} style={[styles.optionRow, filters.sort === value && styles.optionRowActive]}><Text style={styles.optionText}>{label}</Text>{filters.sort === value ? <Check color={green} size={19} /> : null}</Pressable>)}
+
+              {availableCategories.length > 2 ? <><Text style={styles.filterTitle}>Category</Text><View style={styles.chipWrap}>{availableCategories.map((category) => <Pressable key={category} onPress={() => setFilters((current) => ({ ...current, category }))} style={[styles.filterChip, filters.category === category && styles.filterChipActive]}><Text style={[styles.filterChipText, filters.category === category && styles.filterChipTextActive]}>{category}</Text></Pressable>)}</View></> : null}
+
+              <Text style={styles.filterTitle}>Availability</Text>
+              <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: filters.inStockOnly }} onPress={() => setFilters((current) => ({ ...current, inStockOnly: !current.inStockOnly }))} style={[styles.optionRow, filters.inStockOnly && styles.optionRowActive]}><Text style={styles.optionText}>In stock only</Text>{filters.inStockOnly ? <Check color={green} size={19} /> : null}</Pressable>
+            </ScrollView>
+            <View style={styles.filterActions}><Pressable accessibilityRole="button" onPress={() => clearFilters()} style={styles.resetButton}><Text style={styles.resetButtonText}>Reset</Text></Pressable><Pressable accessibilityRole="button" onPress={applyPrice} style={styles.applyButton}><Text style={styles.applyButtonText}>Apply</Text></Pressable></View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={isCartOpen}
@@ -569,6 +653,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   searchInput: { flex: 1, height: "100%", color: ink, fontSize: 15 },
+  filterBar: { paddingHorizontal: 16, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  filterButton: { minHeight: 42, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: "#bfe6cf", backgroundColor: "#eff9f3", flexDirection: "row", alignItems: "center", gap: 7 },
+  filterButtonActive: { backgroundColor: green, borderColor: green },
+  filterButtonText: { color: green, fontSize: 13, fontWeight: "800" },
+  filterButtonTextActive: { color: "#fff" },
+  sortButton: { minHeight: 42, maxWidth: "60%", paddingHorizontal: 13, borderRadius: 14, backgroundColor: "#f4f7f5", flexDirection: "row", alignItems: "center", gap: 7 },
+  sortButtonText: { color: "#405047", fontSize: 12, fontWeight: "700", flexShrink: 1 },
+  clearAll: { color: "#b42318", fontSize: 12, fontWeight: "800", padding: 7 },
   categoryRail: { paddingHorizontal: 16, paddingVertical: 14, gap: 8 },
   categoryChip: {
     paddingHorizontal: 15,
@@ -737,6 +829,28 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 26,
   },
+  filterSheet: { maxHeight: "88%", minHeight: 520 },
+  filterContent: { paddingBottom: 20 },
+  filterTitle: { marginTop: 16, marginBottom: 10, color: ink, fontSize: 15, fontWeight: "800" },
+  priceInputs: { flexDirection: "row", alignItems: "center", gap: 8 },
+  priceInputShell: { flex: 1, height: 50, borderRadius: 15, borderWidth: 1, borderColor: "#d9e2dc", paddingHorizontal: 12, flexDirection: "row", alignItems: "center", backgroundColor: "#fafcfb" },
+  currency: { color: "#475467", fontSize: 16, fontWeight: "700" },
+  priceInput: { flex: 1, height: "100%", color: ink, fontSize: 15, paddingLeft: 5 },
+  priceTo: { color: muted, fontSize: 12 },
+  filterHint: { marginTop: 8, color: "#84918a", fontSize: 11 },
+  optionRow: { minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: "#e3e8e5", paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  optionRowActive: { borderColor: "#9bdab6", backgroundColor: "#f0faf4" },
+  optionText: { color: "#344054", fontSize: 14, fontWeight: "700" },
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  filterChip: { minHeight: 40, borderRadius: 20, borderWidth: 1, borderColor: "#d8e1dc", paddingHorizontal: 14, alignItems: "center", justifyContent: "center" },
+  filterChipActive: { borderColor: green, backgroundColor: green },
+  filterChipText: { color: "#536158", fontSize: 13, fontWeight: "700" },
+  filterChipTextActive: { color: "#fff" },
+  filterActions: { paddingTop: 14, borderTopWidth: 1, borderTopColor: line, flexDirection: "row", gap: 10 },
+  resetButton: { flex: 1, minHeight: 50, borderRadius: 16, borderWidth: 1, borderColor: "#d3ddd7", alignItems: "center", justifyContent: "center" },
+  resetButtonText: { color: "#475467", fontSize: 15, fontWeight: "800" },
+  applyButton: { flex: 2, minHeight: 50, borderRadius: 16, backgroundColor: green, alignItems: "center", justifyContent: "center" },
+  applyButtonText: { color: "#fff", fontSize: 15, fontWeight: "800" },
   sheetHeader: {
     flexDirection: "row",
     alignItems: "center",

@@ -100,7 +100,6 @@ export default function TabLayout() {
       <Tabs.Screen name="shop" options={{ title: "Shop" }} />
       <Tabs.Screen name="wallet" options={{ title: "Wallet" }} />
       <Tabs.Screen name="profile" options={{ href: null }} />
-      <Tabs.Screen name="social-profile" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -200,6 +200,44 @@ export type SellerAnalytics = {
   paymentMix: Array<{ label: string; value: number }>;
 };
 
+export type SellerReturnEvidence = {
+  id: string;
+  filename: string;
+  mimeType: string;
+  source: "live_capture" | "uploaded_file";
+  createdAt: string;
+  capturedAt?: string;
+  signedUrl?: string;
+};
+
+export type SellerReturn = {
+  id: string;
+  orderId: string;
+  orderItemId: string;
+  buyerId: string;
+  buyerName: string;
+  buyerUsername: string;
+  productTitle: string;
+  itemSubtotalPaise: number;
+  status: string;
+  reason: string;
+  details?: string;
+  sellerNote?: string;
+  requestedAt: string;
+  reviewedAt?: string;
+  evidence: SellerReturnEvidence[];
+};
+
+export type SellerFinanceSummary = {
+  grossOrderValuePaise: number;
+  deliveredSalesPaise: number;
+  creatorCommissionPaise: number;
+  approvedReturnsPaise: number;
+  estimatedSellerAmountPaise: number;
+  qualifyingOrderCount: number;
+  returnRequestCount: number;
+};
+
 export interface ShopRepository {
   listProducts(input?: {
     category?: ShopCategory;
@@ -217,7 +255,14 @@ export interface ShopRepository {
   toggleWishlist(productId: string): Promise<string[]>;
   getSellerDashboard(): Promise<SellerDashboard>;
   getSellerAnalytics(): Promise<SellerAnalytics>;
+  getSellerFinanceSummary(): Promise<SellerFinanceSummary>;
   listSellerOrders(): Promise<SellerOrder[]>;
+  listSellerReturns(): Promise<SellerReturn[]>;
+  reviewSellerReturn(input: {
+    returnRequestId: string;
+    decision: "approved" | "rejected" | "under_review";
+    reason?: string;
+  }): Promise<void>;
   updateSellerOrder(input: {
     orderId: string;
     status: SellerOrderStatus;
@@ -234,6 +279,11 @@ export interface ShopRepository {
   ): Promise<StorefrontSummary>;
   saveStorefront(draft: StorefrontDraft): Promise<StorefrontSummary>;
   saveProduct(draft: ProductDraft): Promise<ShopProduct>;
+  setCreatorPromotion(input: {
+    productId: string;
+    enabled: boolean;
+    commissionBps: number;
+  }): Promise<ShopProduct>;
   publishProduct(productId: string): Promise<ShopProduct>;
   uploadProductMedia(
     storefrontId: string,
@@ -490,8 +540,25 @@ export const localShopRepository: ShopRepository = {
       paymentMix: [{ label: "Online", value: 0 }, { label: "Cash on delivery", value: 0 }],
     };
   },
+  async getSellerFinanceSummary() {
+    return {
+      grossOrderValuePaise: 0,
+      deliveredSalesPaise: 0,
+      creatorCommissionPaise: 0,
+      approvedReturnsPaise: 0,
+      estimatedSellerAmountPaise: 0,
+      qualifyingOrderCount: 0,
+      returnRequestCount: 0,
+    };
+  },
   async listSellerOrders() {
     return [];
+  },
+  async listSellerReturns() {
+    return [];
+  },
+  async reviewSellerReturn() {
+    throw new Error("Return management requires a real Social Chat 24/7 seller account.");
   },
   async updateSellerOrder() {
     throw new Error("Order management requires a real Social Chat 24/7 seller account.");
@@ -518,6 +585,11 @@ export const localShopRepository: ShopRepository = {
   async saveProduct() {
     throw new Error(
       "Product management requires a real Social 24x7 account connected to Supabase.",
+    );
+  },
+  async setCreatorPromotion() {
+    throw new Error(
+      "Affiliate Product management requires a real Social Chat 24/7 seller account.",
     );
   },
   async publishProduct() {

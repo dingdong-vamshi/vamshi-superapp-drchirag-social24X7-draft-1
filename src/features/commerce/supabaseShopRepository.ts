@@ -8,8 +8,10 @@ import {
   type SellerApplicationDraft,
   type SellerAnalytics,
   type SellerDashboard,
+  type SellerFinanceSummary,
   type SellerOrder,
   type SellerOrderStatus,
+  type SellerReturn,
   type ShopCategory,
   type ShopProduct,
   type ShopRepository,
@@ -146,6 +148,36 @@ type BusinessMessageRow = {
   id: string;
   sender_id: string;
   body: string | null;
+  created_at: string;
+};
+
+type SellerReturnRow = {
+  id: string;
+  order_id: string;
+  order_item_id: string;
+  buyer_id: string;
+  status: string;
+  reason: string;
+  details: string | null;
+  admin_note: string | null;
+  requested_at: string;
+  reviewed_at: string | null;
+};
+
+type SellerReturnItemRow = {
+  id: string;
+  product_title_snapshot: string;
+  subtotal_minor: number;
+};
+
+type SellerReturnEvidenceRow = {
+  id: string;
+  return_request_id: string | null;
+  storage_path: string;
+  file_name: string | null;
+  mime_type: string | null;
+  evidence_source: "live_capture" | "uploaded_file";
+  captured_at: string | null;
   created_at: string;
 };
 
@@ -567,6 +599,59 @@ export function createSupabaseShopRepository({
       } satisfies SellerAnalytics;
     },
 
+    async getSellerFinanceSummary() {
+      const authUser = requireUser();
+      const { data: storefront, error: storefrontError } = await client
+        .from("storefronts")
+        .select("id")
+        .eq("owner_id", authUser.id)
+        .maybeSingle();
+      if (storefrontError) throw new Error(storefrontError.message);
+      if (!storefront) return localShopRepository.getSellerFinanceSummary();
+
+      const [ordersResult, commissionResult, returnsResult] = await Promise.all([
+        client.from("orders").select("id,total_minor,status").eq("storefront_id", storefront.id).limit(5000),
+        client.from("creator_commissions").select("commission_minor,status").eq("storefront_id", storefront.id).limit(5000),
+        client.from("return_requests").select("id,status,order_item_id").eq("storefront_id", storefront.id).limit(5000),
+      ]);
+      if (ordersResult.error) throw new Error(ordersResult.error.message);
+      if (commissionResult.error) throw new Error(commissionResult.error.message);
+      if (returnsResult.error) throw new Error(returnsResult.error.message);
+
+      const orders = (ordersResult.data ?? []) as Array<{ id: string; total_minor: number; status: string }>;
+      const qualifyingOrders = orders.filter((order) => !["draft", "cancelled", "refunded"].includes(order.status));
+      const commissions = (commissionResult.data ?? []) as Array<{ commission_minor: number; status: string }>;
+      const activeCommission = commissions
+        .filter((commission) => !["reversed", "cancelled"].includes(commission.status))
+        .reduce((total, commission) => total + commission.commission_minor, 0);
+      const returns = (returnsResult.data ?? []) as Array<{ id: string; status: string; order_item_id: string }>;
+      const approvedItemIds = returns
+        .filter((request) => ["approved", "received", "refunded"].includes(request.status))
+        .map((request) => request.order_item_id);
+      let approvedReturnsPaise = 0;
+      if (approvedItemIds.length) {
+        const { data: itemData, error: itemError } = await client
+          .from("order_items")
+          .select("id,subtotal_minor")
+          .in("id", approvedItemIds);
+        if (itemError) throw new Error(itemError.message);
+        approvedReturnsPaise = ((itemData ?? []) as Array<{ id: string; subtotal_minor: number }>)
+          .reduce((total, item) => total + item.subtotal_minor, 0);
+      }
+      const grossOrderValuePaise = qualifyingOrders.reduce((total, order) => total + order.total_minor, 0);
+      return {
+        grossOrderValuePaise,
+        deliveredSalesPaise: orders
+          .filter((order) => order.status === "delivered")
+          .reduce((total, order) => total + order.total_minor, 0),
+        creatorCommissionPaise: activeCommission,
+        approvedReturnsPaise,
+        estimatedSellerAmountPaise: Math.max(0, grossOrderValuePaise - activeCommission - approvedReturnsPaise),
+        qualifyingOrderCount: qualifyingOrders.length,
+        returnRequestCount: returns.length,
+      } satisfies SellerFinanceSummary;
+    },
+
     async listSellerOrders() {
       const authUser = requireUser();
       const { data: storefront, error: storefrontError } = await client
@@ -609,6 +694,92 @@ export function createSupabaseShopRepository({
             : null,
         } satisfies SellerOrder;
       });
+    },
+
+    async listSellerReturns() {
+      const authUser = requireUser();
+      const { data: storefront, error: storefrontError } = await client
+        .from("storefronts")
+        .select("id")
+        .eq("owner_id", authUser.id)
+        .maybeSingle();
+      if (storefrontError) throw new Error(storefrontError.message);
+      if (!storefront) return [];
+
+      const { data, error } = await client
+        .from("return_requests")
+        .select("id,order_id,order_item_id,buyer_id,status,reason,details,admin_note,requested_at,reviewed_at")
+        .eq("storefront_id", storefront.id)
+        .order("requested_at", { ascending: false })
+        .limit(250);
+      if (error) throw new Error(error.message);
+      const requests = ((data as SellerReturnRow[] | null) ?? []);
+      if (!requests.length) return [];
+
+      const buyerIds = [...new Set(requests.map((request) => request.buyer_id))];
+      const itemIds = requests.map((request) => request.order_item_id);
+      const returnIds = requests.map((request) => request.id);
+      const [profilesResult, itemsResult, evidenceResult] = await Promise.all([
+        client.from("profiles").select("id,display_name,username").in("id", buyerIds),
+        client.from("order_items").select("id,product_title_snapshot,subtotal_minor").in("id", itemIds),
+        client.from("commerce_order_evidence")
+          .select("id,return_request_id,storage_path,file_name,mime_type,evidence_source,captured_at,created_at")
+          .in("return_request_id", returnIds)
+          .order("created_at", { ascending: false }),
+      ]);
+      if (profilesResult.error) throw new Error(profilesResult.error.message);
+      if (itemsResult.error) throw new Error(itemsResult.error.message);
+      if (evidenceResult.error) throw new Error(evidenceResult.error.message);
+      const evidenceRows = (evidenceResult.data as SellerReturnEvidenceRow[] | null) ?? [];
+      const signed = evidenceRows.length
+        ? await client.storage.from("creator-commerce-private").createSignedUrls(evidenceRows.map((item) => item.storage_path), 3600)
+        : { data: [], error: null };
+      if (signed.error) throw new Error(signed.error.message);
+      const profileById = new Map(((profilesResult.data ?? []) as Array<{ id: string; display_name: string | null; username: string | null }>).map((profile) => [profile.id, profile]));
+      const itemById = new Map(((itemsResult.data as SellerReturnItemRow[] | null) ?? []).map((item) => [item.id, item]));
+      const signedByPath = new Map(evidenceRows.map((item, index) => [item.storage_path, signed.data?.[index]?.signedUrl]));
+
+      return requests.map((request) => {
+        const buyer = profileById.get(request.buyer_id);
+        const item = itemById.get(request.order_item_id);
+        return {
+          id: request.id,
+          orderId: request.order_id,
+          orderItemId: request.order_item_id,
+          buyerId: request.buyer_id,
+          buyerName: buyer?.display_name?.trim() || buyer?.username || "Buyer",
+          buyerUsername: buyer?.username || request.buyer_id.slice(0, 8),
+          productTitle: item?.product_title_snapshot ?? "Product",
+          itemSubtotalPaise: item?.subtotal_minor ?? 0,
+          status: request.status,
+          reason: request.reason,
+          details: request.details ?? undefined,
+          sellerNote: request.admin_note ?? undefined,
+          requestedAt: request.requested_at,
+          reviewedAt: request.reviewed_at ?? undefined,
+          evidence: evidenceRows
+            .filter((evidence) => evidence.return_request_id === request.id)
+            .map((evidence) => ({
+              id: evidence.id,
+              filename: evidence.file_name || "Return evidence",
+              mimeType: evidence.mime_type || "application/octet-stream",
+              source: evidence.evidence_source,
+              createdAt: evidence.created_at,
+              capturedAt: evidence.captured_at ?? undefined,
+              signedUrl: signedByPath.get(evidence.storage_path) ?? undefined,
+            })),
+        } satisfies SellerReturn;
+      });
+    },
+
+    async reviewSellerReturn(input) {
+      requireUser();
+      const { error } = await client.rpc("seller_review_creator_commerce_return", {
+        p_return_request_id: input.returnRequestId,
+        p_decision: input.decision,
+        p_reason: input.reason?.trim() || null,
+      });
+      if (error) throw new Error(error.message);
     },
 
     async updateSellerOrder(input) {
@@ -851,6 +1022,40 @@ export function createSupabaseShopRepository({
         .select(
           productSelect,
         )
+        .single();
+      if (error) throw new Error(error.message);
+      return productFromRowWithMedia(client, data as ProductRow);
+    },
+
+    async setCreatorPromotion(input) {
+      requireUser();
+      const { data: rawData, error: rawError } = await client
+        .from("products")
+        .select("id,title,slug,category,price_minor,sale_price_minor,inventory,sku,short_description,description,creator_promotion_enabled,creator_commission_bps,return_window_days")
+        .eq("id", input.productId)
+        .single();
+      if (rawError) throw new Error(rawError.message);
+      const raw = rawData as Pick<ProductRow, "id" | "title" | "slug" | "category" | "price_minor" | "sale_price_minor" | "inventory" | "sku" | "short_description" | "description" | "return_window_days">;
+      const saved = await client.rpc("save_creator_commerce_product", {
+        p_product_id: raw.id,
+        p_title: raw.title,
+        p_slug: raw.slug,
+        p_category: raw.category,
+        p_price_minor: raw.price_minor,
+        p_sale_price_minor: raw.sale_price_minor,
+        p_inventory: raw.inventory,
+        p_sku: raw.sku ?? "",
+        p_short_description: raw.short_description ?? "",
+        p_description: raw.description ?? "",
+        p_creator_promotion_enabled: input.enabled,
+        p_creator_commission_bps: input.enabled ? input.commissionBps : 0,
+        p_return_window_days: raw.return_window_days,
+      });
+      if (saved.error) throw new Error(saved.error.message);
+      const { data, error } = await client
+        .from("products")
+        .select(productSelect)
+        .eq("id", input.productId)
         .single();
       if (error) throw new Error(error.message);
       return productFromRowWithMedia(client, data as ProductRow);
