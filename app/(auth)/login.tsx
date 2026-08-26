@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,84 +14,65 @@ import {
 import { Link, router } from "expo-router";
 import {
   ArrowRight,
-  AtSign,
+  Eye,
+  EyeOff,
   LockKeyhole,
   Mail,
   MessageCircle,
-  Phone,
-  UserRound,
 } from "lucide-react-native";
+import {
+  loginErrorMessage,
+  normalizeEmail,
+  validateLogin,
+  type AuthFieldErrors,
+} from "../../src/features/auth/authValidation";
 import { useAuth } from "../../src/lib/AuthContext";
 
-const accent = "#0f9f5f";
 const ink = "#14171f";
-const muted = "#667085";
 const line = "#d9dee7";
 
 export default function LoginScreen() {
-  const { signIn, signInDemo, configured } = useAuth();
-  const [mode, setMode] = useState<"demo" | "email">("demo");
+  const { signIn, configured } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
-  const [username, setUsername] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [errors, setErrors] = useState<AuthFieldErrors>({});
+  const [formError, setFormError] = useState("");
   const [isBusy, setBusy] = useState(false);
 
   const submit = async () => {
+    if (isBusy) return;
+
+    const validation = validateLogin({ email, password });
+    setErrors(validation.errors);
+    setFormError("");
+    if (!validation.valid) return;
+
+    if (!configured) {
+      setFormError("Login is temporarily unavailable. Please try again later.");
+      return;
+    }
+
     setBusy(true);
     try {
-      if (mode === "demo") {
-        const cleanedUsername = username
-          .trim()
-          .replace(/[^a-zA-Z0-9_]/g, "")
-          .toLowerCase()
-          .slice(0, 24);
-        if (!phone.trim() || !cleanedUsername) {
-          Alert.alert(
-            "Missing details",
-            "Enter your phone number and username.",
-          );
-          return;
-        }
-        await signInDemo({
-          phone,
-          username: cleanedUsername,
-          displayName: displayName.trim() || "You",
-        });
-        router.replace("/chats");
-        return;
-      }
-
-      if (!configured) {
-        Alert.alert(
-          "Missing configuration",
-          "Set SUPABASE env variables before email sign in.",
-        );
-        return;
-      }
-      if (!email.trim() || !password.trim()) {
-        Alert.alert("Missing details", "Enter your email and password.");
-        return;
-      }
-
       const result = await signIn({
-        email: email.trim().toLowerCase(),
+        email: normalizeEmail(email),
         password,
       });
       if (result.error) {
-        Alert.alert("Sign in failed", result.error.message);
+        setFormError(loginErrorMessage(result.error));
         return;
       }
       if (!result.data.session) {
-        Alert.alert("No active session", "Unable to start session right now.");
+        setFormError("Unable to start your session. Please try again.");
         return;
       }
+
+      setPassword("");
       router.replace("/chats");
     } catch (error) {
-      Alert.alert(
-        "Sign in failed",
-        error instanceof Error ? error.message : "Try again later.",
+      setFormError(
+        loginErrorMessage(error instanceof Error ? error : undefined),
       );
     } finally {
       setBusy(false);
@@ -120,81 +100,63 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.hero}>
-            <Text style={styles.title}>Log in</Text>
+            <Text style={styles.title}>Welcome back</Text>
             <Text style={styles.subtitle}>
-              Use your phone and username to continue.
+              Log in with the email linked to your account.
             </Text>
           </View>
 
           <View style={styles.panel}>
-            <View style={styles.modeWrap}>
-              <ModeButton
-                label="Phone"
-                active={mode === "demo"}
-                onPress={() => setMode("demo")}
-              />
-              <ModeButton
-                label="Email"
-                active={mode === "email"}
-                onPress={() => setMode("email")}
-              />
-            </View>
+            {formError ? (
+              <View accessibilityRole="alert" style={styles.errorBanner}>
+                <Text style={styles.errorBannerText}>{formError}</Text>
+              </View>
+            ) : null}
 
-            {mode === "demo" ? (
-              <>
-                <Field
-                  icon={UserRound}
-                  value={displayName}
-                  placeholder="Display name"
-                  autoCapitalize="words"
-                  onChangeText={setDisplayName}
+            <AuthField
+              icon={Mail}
+              label="Email"
+              value={email}
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              error={errors.email}
+              editable={!isBusy}
+              onChangeText={(value) => {
+                setEmail(value);
+                setErrors((current) => ({ ...current, email: undefined }));
+                setFormError("");
+              }}
+              onSubmitEditing={() => void submit()}
+            />
+
+            <AuthField
+              icon={LockKeyhole}
+              label="Password"
+              value={password}
+              autoCapitalize="none"
+              autoComplete="current-password"
+              secureTextEntry={!showPassword}
+              error={errors.password}
+              editable={!isBusy}
+              onChangeText={(value) => {
+                setPassword(value);
+                setErrors((current) => ({ ...current, password: undefined }));
+                setFormError("");
+              }}
+              onSubmitEditing={() => void submit()}
+              rightAction={
+                <PasswordToggle
+                  visible={showPassword}
+                  onPress={() => setShowPassword((current) => !current)}
                 />
-                <Field
-                  icon={Phone}
-                  value={phone}
-                  placeholder="Phone number"
-                  keyboardType="phone-pad"
-                  autoComplete="tel"
-                  onChangeText={setPhone}
-                />
-                <Field
-                  icon={AtSign}
-                  value={username}
-                  placeholder="Username"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onChangeText={setUsername}
-                />
-              </>
-            ) : (
-              <>
-                <Field
-                  icon={Mail}
-                  value={email}
-                  autoCapitalize="none"
-                  autoComplete="email"
-                  placeholder="Email"
-                  keyboardType="email-address"
-                  onChangeText={setEmail}
-                />
-                <Field
-                  icon={LockKeyhole}
-                  value={password}
-                  placeholder="Password"
-                  secureTextEntry
-                  onChangeText={setPassword}
-                  autoCapitalize="none"
-                />
-              </>
-            )}
+              }
+            />
 
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={
-                mode === "demo"
-                  ? "Enter Social 24x7 as demo user"
-                  : "Log in to Social 24x7"
-              }
+              accessibilityLabel="Log in to Social 24x7"
+              accessibilityState={{ disabled: isBusy, busy: isBusy }}
               onPress={() => void submit()}
               disabled={isBusy}
               style={({ pressed }) => [
@@ -207,17 +169,18 @@ export default function LoginScreen() {
                 <ActivityIndicator color="#ffffff" />
               ) : (
                 <>
-                  <Text style={styles.primaryText}>
-                    {mode === "demo" ? "Continue" : "Log in"}
-                  </Text>
+                  <Text style={styles.primaryText}>Log in</Text>
                   <ArrowRight size={18} color="#ffffff" />
                 </>
               )}
             </Pressable>
 
-            <Link href="/signup" style={styles.link}>
-              <Text style={styles.linkText}>Create account</Text>
-            </Link>
+            <View style={styles.accountRow}>
+              <Text style={styles.accountText}>New to Social 24x7?</Text>
+              <Link href="/signup" style={styles.link}>
+                Create account
+              </Link>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -225,51 +188,63 @@ export default function LoginScreen() {
   );
 }
 
-function ModeButton({
-  label,
-  active,
+function PasswordToggle({
+  visible,
   onPress,
 }: {
-  label: string;
-  active: boolean;
+  visible: boolean;
   onPress: () => void;
 }) {
+  const Icon = visible ? EyeOff : Eye;
   return (
     <Pressable
-      accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
+      accessibilityRole="button"
+      accessibilityLabel={visible ? "Hide password" : "Show password"}
+      hitSlop={8}
       onPress={onPress}
-      style={[styles.modeButton, active && styles.modeActive]}
+      style={styles.iconButton}
     >
-      <Text style={[styles.modeText, active && styles.modeTextActive]}>
-        {label}
-      </Text>
+      <Icon size={20} color="#667085" />
     </Pressable>
   );
 }
 
-function Field({
+function AuthField({
   icon: Icon,
+  label,
+  error,
+  rightAction,
   ...props
 }: {
-  icon: typeof UserRound;
+  icon: typeof Mail;
+  label: string;
   value: string;
-  placeholder: string;
   onChangeText: (value: string) => void;
+  onSubmitEditing?: () => void;
   autoCapitalize?: "none" | "words";
-  autoCorrect?: boolean;
-  autoComplete?: "email" | "tel";
-  keyboardType?: "default" | "email-address" | "phone-pad";
+  autoComplete?: "email" | "current-password";
+  keyboardType?: "default" | "email-address";
   secureTextEntry?: boolean;
+  editable?: boolean;
+  error?: string;
+  rightAction?: ReactNode;
 }) {
   return (
-    <View style={styles.field}>
-      <Icon size={19} color="#7b8494" />
-      <TextInput
-        {...props}
-        placeholderTextColor="#98a2b3"
-        style={styles.input}
-      />
+    <View style={styles.fieldGroup}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={[styles.field, error && styles.fieldError]}>
+        <Icon size={19} color={error ? "#c62828" : "#7b8494"} />
+        <TextInput
+          {...props}
+          accessibilityLabel={label}
+          placeholder={label}
+          placeholderTextColor="#98a2b3"
+          returnKeyType="done"
+          style={styles.input}
+        />
+        {rightAction}
+      </View>
+      {error ? <Text style={styles.fieldErrorText}>{error}</Text> : null}
     </View>
   );
 }
@@ -277,7 +252,15 @@ function Field({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#ffffff" },
   fill: { flex: 1 },
-  content: { flexGrow: 1, justifyContent: "center", padding: 24, gap: 20 },
+  content: {
+    flexGrow: 1,
+    justifyContent: "center",
+    padding: 24,
+    gap: 20,
+    width: "100%",
+    maxWidth: 500,
+    alignSelf: "center",
+  },
   brandRow: { alignItems: "center", gap: 10, marginBottom: 6 },
   logoMark: {
     width: 64,
@@ -290,38 +273,26 @@ const styles = StyleSheet.create({
   appName: { color: "#111111", fontSize: 24, fontWeight: "700" },
   appMeta: { color: "#888888", marginTop: 2, fontSize: 13 },
   hero: { gap: 5, alignItems: "center" },
-  eyebrow: { display: "none" },
-  title: { color: "#111111", fontSize: 22, lineHeight: 28, fontWeight: "700" },
-  subtitle: { color: "#888888", fontSize: 14, textAlign: "center" },
+  title: { color: "#111111", fontSize: 24, lineHeight: 30, fontWeight: "700" },
+  subtitle: { color: "#667085", fontSize: 14, textAlign: "center" },
   panel: {
-    gap: 13,
-    padding: 16,
+    gap: 14,
+    padding: 18,
     borderRadius: 20,
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#dedede",
   },
-  modeWrap: {
-    flexDirection: "row",
-    padding: 3,
-    borderRadius: 14,
-    backgroundColor: "#f0f0f0",
-    marginBottom: 2,
-  },
-  modeButton: {
-    flex: 1,
-    minHeight: 40,
+  errorBanner: {
+    padding: 12,
     borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modeActive: {
-    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#dddddd",
+    borderColor: "#f2b8b5",
+    backgroundColor: "#fff4f3",
   },
-  modeText: { color: "#697386", fontWeight: "800", fontSize: 13 },
-  modeTextActive: { color: "#111111" },
+  errorBannerText: { color: "#8a1c1c", fontSize: 14, lineHeight: 20 },
+  fieldGroup: { gap: 6 },
+  fieldLabel: { color: ink, fontSize: 13, fontWeight: "700" },
   field: {
     minHeight: 52,
     borderRadius: 14,
@@ -333,7 +304,15 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 13,
   },
+  fieldError: { borderColor: "#c62828", backgroundColor: "#fffafa" },
+  fieldErrorText: { color: "#b42318", fontSize: 12, lineHeight: 16 },
   input: { flex: 1, color: ink, fontSize: 16, minHeight: 50 },
+  iconButton: {
+    minWidth: 36,
+    minHeight: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   primary: {
     marginTop: 4,
     minHeight: 52,
@@ -347,6 +326,18 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.86 },
   primaryText: { color: "#ffffff", fontWeight: "900", fontSize: 16 },
   disabled: { opacity: 0.62 },
-  link: { alignSelf: "center", marginTop: 3, padding: 8 },
-  linkText: { color: "#576b95", fontWeight: "600", fontSize: 14 },
+  accountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    flexWrap: "wrap",
+  },
+  accountText: { color: "#667085", fontSize: 14 },
+  link: {
+    color: "#576b95",
+    fontWeight: "700",
+    fontSize: 14,
+    paddingVertical: 8,
+  },
 });

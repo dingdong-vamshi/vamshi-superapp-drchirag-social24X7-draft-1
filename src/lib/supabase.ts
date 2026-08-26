@@ -15,7 +15,9 @@ export const supabase = url && key ? createClient(url, key, {
     storage: Platform.OS === 'web' && typeof window === 'undefined' ? noopStorage : AsyncStorage,
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: false,
+    // Supabase email confirmations return tokens in the web URL. Native does
+    // not parse browser redirects, while web must exchange them for a session.
+    detectSessionInUrl: Platform.OS === 'web',
     lock: processLock,
   },
 }) : null;
