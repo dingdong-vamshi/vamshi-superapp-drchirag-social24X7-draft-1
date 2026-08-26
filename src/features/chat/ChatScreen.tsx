@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import { File as ExpoFile } from "expo-file-system";
@@ -35,11 +35,8 @@ import {
   FileText,
   Ellipsis,
   MessageCircle,
-  Mic,
   MicOff,
-  MonitorUp,
   Phone,
-  PhoneOff,
   Plus,
   ImageIcon,
   MapPin,
@@ -54,7 +51,6 @@ import {
   UserRound,
   UsersRound,
   Video,
-  VideoOff,
   X,
 } from "lucide-react-native";
 
@@ -65,7 +61,6 @@ import {
   CURRENT_USER_ID,
   type CallAdapter,
   type CallKind,
-  type CallSession,
   type ChatContact,
   type ChatDataSource,
   type ChatAttachment,
@@ -227,7 +222,6 @@ export default function ChatScreen({
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-  const [callSession, setCallSession] = useState<CallSession | null>(null);
   const selectedRef = useRef<Conversation | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
   const hasLoadedOnceRef = useRef(false);
@@ -424,13 +418,6 @@ export default function ChatScreen({
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     };
   }, []);
-  useEffect(
-    () =>
-      callAdapter.subscribe((next) => {
-        setCallSession(next.phase === "ended" ? null : next);
-      }),
-    [callAdapter],
-  );
   useEffect(() => {
     let mounted = true;
     const search = async () => {
@@ -674,7 +661,7 @@ export default function ChatScreen({
         error={error}
         dataSource={dataSource}
         callAdapter={callAdapter}
-        callSession={callSession}
+        viewer={viewer}
         sharedPost={sharedPost}
         onViewStore={onViewStore}
         onViewOrder={onViewOrder}
@@ -968,11 +955,6 @@ export default function ChatScreen({
           void openConversation(conversation);
         }}
       />
-      <CallOverlay
-        session={callSession}
-        participantName="Incoming call"
-        adapter={callAdapter}
-      />
     </SafeAreaView>
   );
 }
@@ -1018,7 +1000,7 @@ function ConversationView({
   error,
   dataSource,
   callAdapter,
-  callSession,
+  viewer,
   sharedPost,
   onViewStore,
   onViewOrder,
@@ -1034,7 +1016,7 @@ function ConversationView({
   error: string | null;
   dataSource: ChatDataSource;
   callAdapter: CallAdapter;
-  callSession: CallSession | null;
+  viewer?: ChatContact | null;
   sharedPost?: SharedPost;
   onViewStore?: (slug: string) => void;
   onViewOrder?: (orderId: string) => void;
@@ -1633,6 +1615,10 @@ function ConversationView({
         conversationId: conversation.id,
         recipientId: conversation.participant.id,
         kind,
+        callerName: viewer?.name,
+        callerAvatarUrl: viewer?.avatarUrl || undefined,
+        remoteName: conversation.participant.name,
+        remoteAvatarUrl: conversation.participant.avatarUrl || undefined,
       });
     } catch (cause) {
       Alert.alert(
@@ -2032,11 +2018,6 @@ function ConversationView({
           reply={replyToMessage}
           react={(emoji) => void reactToMessage(emoji)}
           keepMemo={() => void keepMemo()}
-        />
-        <CallOverlay
-          session={callSession}
-          participantName={conversation.participant.name}
-          adapter={callAdapter}
         />
         <GroupMembersModal
           visible={groupMembersOpen}
@@ -3149,167 +3130,6 @@ function MessageActions({
   );
 }
 
-function StreamVideo({
-  stream,
-  muted,
-  local,
-}: {
-  stream?: unknown;
-  muted?: boolean;
-  local?: boolean;
-}) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  useEffect(() => {
-    if (videoRef.current && stream) videoRef.current.srcObject = stream as MediaStream;
-  }, [stream]);
-  if (Platform.OS !== "web" || !stream) return null;
-  return createElement("video", {
-    ref: videoRef,
-    autoPlay: true,
-    playsInline: true,
-    muted,
-    style: local
-      ? {
-          position: "absolute",
-          right: 18,
-          top: 18,
-          width: 118,
-          height: 164,
-          borderRadius: 18,
-          objectFit: "cover",
-          backgroundColor: "#162033",
-          zIndex: 2,
-        }
-      : {
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          backgroundColor: "#101916",
-        },
-  });
-}
-
-function CallOverlay({
-  session,
-  participantName,
-  adapter,
-}: {
-  session: CallSession | null;
-  participantName: string;
-  adapter: CallAdapter;
-}) {
-  if (!session) return null;
-  const active = session.phase === "connected" || session.phase === "connecting";
-  const incoming = session.direction === "incoming" && session.phase === "ringing";
-  const run = async (action?: (id: string) => Promise<void>) => {
-    if (!action) return;
-    try {
-      await action(session.id);
-    } catch (cause) {
-      Alert.alert("Call action unavailable", cause instanceof Error ? cause.message : "Please try again.");
-    }
-  };
-  return (
-    <Modal visible animationType="fade" presentationStyle="fullScreen">
-      <SafeAreaView style={styles.callScreen}>
-        <View style={styles.remoteVideo}>
-          <StreamVideo stream={session.remoteStream} />
-          <StreamVideo stream={session.localStream} muted local />
-          {!session.remoteStream && (
-            <View style={styles.callIdentity}>
-              <View style={styles.callAvatar}>
-                <Text style={styles.callAvatarText}>
-                  {participantName.slice(0, 2).toUpperCase()}
-                </Text>
-              </View>
-              <Text style={styles.callName}>{participantName}</Text>
-              <Text style={styles.callStatus}>
-                {incoming
-                  ? `Incoming ${session.kind} call`
-                  : session.phase === "ringing"
-                    ? "Ringing…"
-                    : session.phase === "connecting"
-                      ? "Connecting securely…"
-                      : session.phase === "failed"
-                        ? session.error || "Call failed"
-                        : "Connected"}
-              </Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.callControls}>
-          {incoming ? (
-            <>
-              <CallButton
-                label="Decline"
-                danger
-                icon={<PhoneOff color="#ffffff" size={25} />}
-                action={() => void run(adapter.endCall.bind(adapter))}
-              />
-              <CallButton
-                label="Accept"
-                success
-                icon={<Phone color="#ffffff" size={25} />}
-                action={() => void run(adapter.acceptCall?.bind(adapter))}
-              />
-            </>
-          ) : (
-            <>
-              <CallButton
-                label={session.muted ? "Unmute" : "Mute"}
-                icon={session.muted ? <MicOff color="#ffffff" size={23} /> : <Mic color="#ffffff" size={23} />}
-                action={() => void run(adapter.toggleMute?.bind(adapter))}
-              />
-              {session.kind === "video" && (
-                <CallButton
-                  label={session.cameraOff ? "Camera on" : "Camera off"}
-                  icon={session.cameraOff ? <VideoOff color="#ffffff" size={23} /> : <Video color="#ffffff" size={23} />}
-                  action={() => void run(adapter.toggleCamera?.bind(adapter))}
-                />
-              )}
-              {session.kind === "video" && (
-                <CallButton
-                  label={session.screenSharing ? "Sharing" : "Share screen"}
-                  icon={<MonitorUp color="#ffffff" size={23} />}
-                  action={() => void run(adapter.shareScreen?.bind(adapter))}
-                />
-              )}
-              <CallButton
-                label="End"
-                danger
-                icon={<PhoneOff color="#ffffff" size={25} />}
-                action={() => void run(adapter.endCall.bind(adapter))}
-              />
-            </>
-          )}
-        </View>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
-function CallButton({
-  label,
-  icon,
-  action,
-  danger,
-  success,
-}: {
-  label: string;
-  icon: ReactNode;
-  action: () => void;
-  danger?: boolean;
-  success?: boolean;
-}) {
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={action} style={styles.callButtonWrap}>
-      <View style={[styles.callButton, danger && styles.callButtonDanger, success && styles.callButtonSuccess]}>
-        {icon}
-      </View>
-      <Text style={styles.callButtonLabel}>{label}</Text>
-    </Pressable>
-  );
-}
 function Loading() {
   return (
     <View style={styles.center}>
@@ -4750,57 +4570,6 @@ const styles = StyleSheet.create({
   },
   actionText: { color: "#172235", fontSize: 16, fontWeight: "600" },
   disabledAction: { opacity: 0.45 },
-  callScreen: { flex: 1, backgroundColor: "#101916" },
-  remoteVideo: {
-    flex: 1,
-    overflow: "hidden",
-    position: "relative",
-    backgroundColor: "#101916",
-  },
-  callIdentity: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 60,
-  },
-  callAvatar: {
-    width: 112,
-    height: 112,
-    borderRadius: 40,
-    backgroundColor: "#07c160",
-    alignItems: "center",
-    justifyContent: "center",
-    boxShadow: "0 18px 44px rgba(7,193,96,0.28)",
-  },
-  callAvatarText: { color: "#ffffff", fontSize: 38, fontWeight: "800" },
-  callName: { color: "#ffffff", fontSize: 25, fontWeight: "800", marginTop: 22 },
-  callStatus: { color: "#adbbb4", fontSize: 15, marginTop: 8, textAlign: "center" },
-  callControls: {
-    minHeight: 122,
-    backgroundColor: "#101916",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 22,
-    paddingHorizontal: 18,
-    paddingBottom: 16,
-  },
-  callButtonWrap: { alignItems: "center", width: 72, gap: 7 },
-  callButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: "#33413b",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  callButtonDanger: { backgroundColor: "#ed3f4f" },
-  callButtonSuccess: { backgroundColor: "#07c160" },
-  callButtonLabel: { color: "#e8efeb", fontSize: 11, textAlign: "center" },
   businessWrap: {
     flex: 1,
     paddingHorizontal: 18,

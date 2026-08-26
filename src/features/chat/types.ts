@@ -315,28 +315,40 @@ export type CallSession = {
   kind: CallKind;
   phase: CallPhase;
   direction?: 'incoming' | 'outgoing';
+  remoteName?: string;
+  remoteAvatarUrl?: string;
+  canRetryAccept?: boolean;
+  connectedAt?: number;
   localStream?: unknown;
   remoteStream?: unknown;
   muted?: boolean;
   cameraOff?: boolean;
+  localVideoEnabled?: boolean;
+  remoteVideoEnabled?: boolean;
+  remoteScreenSharing?: boolean;
+  cameraFacingMode?: 'user' | 'environment';
+  canSwitchCamera?: boolean;
+  canShareScreen?: boolean;
   screenSharing?: boolean;
   error?: string;
 };
-export type CallSignal = { sessionId: string; recipientId: string; type: 'offer' | 'answer' | 'ice-candidate' | 'hangup'; payload?: unknown };
+export type CallSignal = { sessionId: string; recipientId: string; type: 'offer' | 'ringing' | 'answer' | 'ice-candidate' | 'renegotiate-offer' | 'renegotiate-answer' | 'media-state' | 'hangup'; payload?: unknown };
 
 /**
  * Transport boundary for WebRTC signaling. The native media implementation is
  * intentionally injected by the app shell; Expo Go does not include WebRTC.
  */
 export type CallAdapter = {
-  startCall(input: { conversationId: string; recipientId: string; kind: CallKind }): Promise<CallSession>;
+  startCall(input: { conversationId: string; recipientId: string; kind: CallKind; callerName?: string; callerAvatarUrl?: string; remoteName?: string; remoteAvatarUrl?: string }): Promise<CallSession>;
   endCall(sessionId: string): Promise<void>;
   sendSignal(signal: CallSignal): Promise<void>;
   subscribe(listener: (session: CallSession) => void): () => void;
   acceptCall?(sessionId: string): Promise<void>;
   toggleMute?(sessionId: string): Promise<void>;
   toggleCamera?(sessionId: string): Promise<void>;
+  switchCamera?(sessionId: string): Promise<void>;
   shareScreen?(sessionId: string): Promise<void>;
+  destroy?(): Promise<void>;
 };
 
 export const CURRENT_USER_ID = 'current-user';

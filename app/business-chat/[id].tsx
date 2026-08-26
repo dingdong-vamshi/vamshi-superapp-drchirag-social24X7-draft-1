@@ -3,12 +3,14 @@ import { useMemo } from "react";
 
 import ChatScreen from "../../src/features/chat/ChatScreen";
 import { createSupabaseChatRepository } from "../../src/features/chat/supabaseChatRepository";
+import { useCall } from "../../src/features/chat/CallProvider";
 import { useAuth } from "../../src/lib/AuthContext";
 import { supabase } from "../../src/lib/supabase";
 
 export default function BusinessConversationPage() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
+  const { adapter: callAdapter } = useCall();
   const repository = useMemo(() => {
     const isDemoUser = Boolean(
       user
@@ -22,6 +24,7 @@ export default function BusinessConversationPage() {
   return (
     <ChatScreen
       dataSource={repository}
+      callAdapter={callAdapter}
       initialConversationId={id}
       onBack={() => router.replace("/(tabs)/chats")}
       onBusinessSearch={() => router.push("/business-directory")}

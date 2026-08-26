@@ -2,7 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import ChatScreen from '../../src/features/chat/ChatScreen';
 import { createSupabaseChatRepository } from '../../src/features/chat/supabaseChatRepository';
-import { createWebRtcCallAdapter } from '../../src/features/chat/webRtcCallAdapter';
+import { useCall } from '../../src/features/chat/CallProvider';
 import { createSupabaseProfileRepository } from '../../src/features/profile/profileRepository';
 import type { ChatContact } from '../../src/features/chat/types';
 import { useAuth } from '../../src/lib/AuthContext';
@@ -11,6 +11,7 @@ import { supabase } from '../../src/lib/supabase';
 export default function ChatsPage() {
   const params = useLocalSearchParams<{ sharedId?: string; sharedAuthor?: string; sharedCaption?: string; conversationId?: string }>();
   const { user } = useAuth();
+  const { adapter: callAdapter } = useCall();
   const [viewer, setViewer] = useState<ChatContact | null>(null);
   const sharedPost = params.sharedId && params.sharedAuthor && params.sharedCaption ? { id: params.sharedId, author: params.sharedAuthor, caption: params.sharedCaption } : undefined;
   const repository = useMemo(() => {
@@ -22,7 +23,6 @@ export default function ChatsPage() {
     if (!supabase || !user || isDemoUser) return undefined;
     return createSupabaseChatRepository({ client: supabase, user });
   }, [user]);
-  const callAdapter = useMemo(() => createWebRtcCallAdapter(), [user]);
   useEffect(() => {
     let mounted = true;
     if (!user) {

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { AuthProvider } from '../src/lib/AuthContext';
 import { useAuth } from '../src/lib/AuthContext';
+import { CallProvider } from '../src/features/chat/CallProvider';
 
 function RootNavigator() {
   const { loading, session } = useAuth();
@@ -47,7 +48,9 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={client}>
       <AuthProvider>
-        <RootNavigator />
+        <CallProvider>
+          <RootNavigator />
+        </CallProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
