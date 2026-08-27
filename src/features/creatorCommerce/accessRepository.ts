@@ -109,6 +109,8 @@ export type CreatorApplication = {
   ownerId: string;
   creatorType: CreatorType;
   category: string;
+  macroCategory: string;
+  specializations: string[];
   about: string;
   socialHandles: Record<string, string>;
   identityName: string;
@@ -135,6 +137,8 @@ export type ProfessionalVerificationRequest = {
   supportingDocumentPath: string | null;
   verificationVideoPath: string | null;
   creatorIdentityDocumentPath?: string | null;
+  creatorMacroCategory?: string | null;
+  creatorSpecializations?: string[];
   applicationPayload: Record<string, unknown>;
   socialHandles: Record<string, string>;
   status: CommerceApprovalStatus;
@@ -193,6 +197,8 @@ type CreatorApplicationRow = {
   owner_id: string;
   creator_type: CreatorType;
   category: string;
+  macro_category: string | null;
+  specializations: string[] | null;
   about: string;
   social_handles: Record<string, string> | null;
   identity_name: string;
@@ -241,6 +247,16 @@ type CommerceDocumentRow = {
 };
 
 const evidenceBucket = 'creator-commerce-private';
+export const commerceEvidenceMaxBytes = 15 * 1024 * 1024;
+const supportedVideoMimeTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
+
+export const validateCommerceEvidence = (documentKind: string, contentType: string, byteLength: number) => {
+  if (byteLength < 1) throw new Error('The selected evidence file is empty. Choose another file.');
+  if (byteLength > commerceEvidenceMaxBytes) throw new Error('Verification evidence must be 15 MB or smaller.');
+  if (documentKind.includes('verification-video') && !supportedVideoMimeTypes.has(contentType)) {
+    throw new Error('Verification evidence must be an MP4, WebM, or MOV video. Images and documents are not accepted for this step.');
+  }
+};
 
 const safeSlug = (value: string) =>
   value
@@ -252,10 +268,12 @@ const safeSlug = (value: string) =>
 
 const extensionFor = (asset: CommerceEvidenceAsset) => {
   const raw = asset.fileName?.split('.').pop()?.toLowerCase();
-  if (raw && /^[a-z0-9]{2,5}$/.test(raw)) return raw;
+  if (raw && ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'mov', 'pdf'].includes(raw)) return raw;
   if (asset.mimeType?.includes('png')) return 'png';
   if (asset.mimeType?.includes('webp')) return 'webp';
   if (asset.mimeType?.includes('mp4')) return 'mp4';
+  if (asset.mimeType?.includes('webm')) return 'webm';
+  if (asset.mimeType?.includes('quicktime')) return 'mov';
   if (asset.mimeType?.includes('pdf')) return 'pdf';
   return 'jpg';
 };
@@ -295,6 +313,12 @@ const creatorFromRow = (row: CreatorApplicationRow): CreatorApplication => ({
   ownerId: row.owner_id,
   creatorType: row.creator_type,
   category: row.category,
+  macroCategory: row.macro_category ?? (typeof row.application_payload?.macroCategory === 'string' ? row.application_payload.macroCategory : row.category),
+  specializations: row.specializations?.length
+    ? row.specializations
+    : Array.isArray(row.application_payload?.specializations)
+      ? row.application_payload.specializations.filter((value): value is string => typeof value === 'string')
+      : [],
   about: row.about,
   socialHandles: row.social_handles ?? {},
   identityName: row.identity_name,
@@ -416,7 +440,11 @@ export async function uploadCommerceEvidence(
   const bytes = await response.arrayBuffer();
   const extension = extensionFor(asset);
   const path = `${userId}/${applicationKind}/${documentKind}/${Date.now()}.${extension}`;
-  const contentType = asset.mimeType ?? (extension === 'mp4' ? 'video/mp4' : 'image/jpeg');
+  const contentType = asset.mimeType
+    ?? (extension === 'mp4' ? 'video/mp4' : extension === 'webm' ? 'video/webm' : extension === 'mov' ? 'video/quicktime' : extension === 'pdf' ? 'application/pdf' : 'image/jpeg');
+  const requiresVideo = documentKind.includes('verification-video');
+
+  validateCommerceEvidence(requiresVideo ? 'verification-video' : documentKind, contentType, bytes.byteLength);
 
   const { error } = await client.storage.from(evidenceBucket).upload(path, bytes, {
     contentType,
@@ -430,8 +458,8 @@ export async function uploadCommerceEvidence(
     document_kind: documentKind,
     storage_path: path,
     file_name: asset.fileName ?? null,
-    mime_type: asset.mimeType ?? contentType,
-    file_size: asset.fileSize ?? null,
+    mime_type: contentType,
+    file_size: bytes.byteLength,
   });
   if (documentError) throw documentError;
 
@@ -506,6 +534,7 @@ export async function submitSellerApplication(
         location_latitude: input.locationLatitude ?? null,
         location_longitude: input.locationLongitude ?? null,
         status: 'submitted',
+        requested_information: null,
         submitted_at: new Date().toISOString(),
         verification_mode: 'manual',
         application_payload: input.applicationPayload ?? {},
@@ -521,7 +550,7 @@ export async function submitSellerApplication(
 export async function getMyCreatorApplication(client: SupabaseClient, userId: string) {
   const { data, error } = await client
     .from('creator_applications')
-    .select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_type,category,macro_category,specializations,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .eq('owner_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -548,6 +577,8 @@ export async function submitCreatorApplication(
   input: {
     creatorType: CreatorType;
     category: string;
+    macroCategory: string;
+    specializations: string[];
     about: string;
     socialHandles: Record<string, string>;
     identityName: string;
@@ -562,17 +593,20 @@ export async function submitCreatorApplication(
         owner_id: userId,
         creator_type: input.creatorType,
         category: input.category.trim(),
+        macro_category: input.macroCategory.trim(),
+        specializations: input.specializations,
         about: input.about.trim(),
         social_handles: input.socialHandles,
         identity_name: input.identityName.trim(),
         identity_document_path: input.identityDocumentPath ?? null,
         application_payload: input.applicationPayload ?? {},
         status: 'submitted',
+        requested_information: null,
         submitted_at: new Date().toISOString(),
       },
       { onConflict: 'owner_id' },
     )
-    .select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at')
+    .select('id,owner_id,creator_type,category,macro_category,specializations,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at')
     .single();
   if (error) throw error;
   return creatorFromRow(data as CreatorApplicationRow);
@@ -614,6 +648,7 @@ export async function submitProfessionalVerification(
         social_handles: input.socialHandles,
         application_payload: input.applicationPayload ?? {},
         status: 'submitted',
+        requested_information: null,
         submitted_at: new Date().toISOString(),
       },
       { onConflict: 'owner_id' },
@@ -627,7 +662,7 @@ export async function submitProfessionalVerification(
 export async function listCommerceApplications(client: SupabaseClient): Promise<CommerceApplicationSummary[]> {
   const [sellerResult, creatorResult, professionalResult, documentsResult] = await Promise.all([
     client.from('seller_applications').select('id,owner_id,seller_type,legal_name,storefront_name,business_name,registered_state,city,phone,email,address_line,pickup_address,return_address,gstin,pan_number,document_path,exterior_evidence_path,interior_evidence_path,business_verification_video_path,location_latitude,location_longitude,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
-    client.from('creator_applications').select('id,owner_id,creator_type,category,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
+    client.from('creator_applications').select('id,owner_id,creator_type,category,macro_category,specializations,about,social_handles,identity_name,identity_document_path,application_payload,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
     client.from('professional_verification_requests').select('id,owner_id,creator_application_id,professional_category,professional_title,degree,institution,graduation_year,registration_number,credential_document_path,supporting_document_path,verification_video_path,application_payload,social_handles,status,requested_information,review_note,submitted_at,updated_at').neq('status', 'draft').order('updated_at', { ascending: false }).limit(50),
     client.from('creator_commerce_documents').select('id,owner_id,application_kind,application_id,document_kind,storage_path,file_name,mime_type,file_size,created_at').order('created_at', { ascending: false }).limit(250),
   ]);
@@ -669,6 +704,12 @@ export async function listCommerceApplications(client: SupabaseClient): Promise<
       creatorIdentityDocumentPath: row.creator_application_id
         ? creatorsById.get(row.creator_application_id)?.identity_document_path ?? null
         : null,
+      creatorMacroCategory: row.creator_application_id
+        ? creatorsById.get(row.creator_application_id)?.macro_category ?? creatorsById.get(row.creator_application_id)?.category ?? null
+        : null,
+      creatorSpecializations: row.creator_application_id
+        ? creatorsById.get(row.creator_application_id)?.specializations ?? []
+        : [],
       documents: docsFor([
         row.creator_application_id ? creatorsById.get(row.creator_application_id)?.identity_document_path ?? null : null,
         row.credential_document_path,

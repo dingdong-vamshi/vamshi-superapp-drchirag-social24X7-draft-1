@@ -8,6 +8,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { useCommerceAccess } from './CommerceAccessContext';
 import { BuyerLifecycleScreen, CreatorLifecycleScreen, SellerLifecycleScreen } from './LifecycleScreens';
+import { creatorRequiresProfessionalVerification } from './onboardingRules';
 import {
   createCommerceEvidenceSignedUrl,
   getMyCreatorApplication,
@@ -71,11 +72,7 @@ const getAvailableAdminActions = ({ applicationType: _applicationType, status }:
         { decision: 'rejected', label: 'Reject', destructive: true, requiresReason: true },
       ];
     case 'more_information_required':
-      return [
-        { decision: 'under_review', label: 'Under review' },
-        { decision: 'approved', label: 'Approve' },
-        { decision: 'rejected', label: 'Reject', destructive: true, requiresReason: true },
-      ];
+      return [];
     case 'approved':
       return [{ decision: 'suspended', label: 'Suspend', destructive: true, requiresReason: true }];
     case 'suspended':
@@ -574,6 +571,8 @@ export function CreatorOnboardingScreen() {
       const creator = await submitCreatorApplication(supabase, user.id, {
         creatorType: showProfessionalForm && !professionalRequest ? 'professional' : creatorApplication?.creatorType ?? 'general',
         category,
+        macroCategory: category,
+        specializations: [category],
         about,
         socialHandles,
         identityName,
@@ -827,7 +826,7 @@ function AdminCard({
   onReasonChange: (value: string) => void;
   onReview: (item: CommerceApplicationSummary, decision: AdminReviewDecision) => void;
 }) {
-  const title = item.kind === 'seller' ? item.storefrontName : item.kind === 'creator' ? item.category : item.professionalTitle;
+  const title = item.kind === 'seller' ? item.storefrontName : item.kind === 'creator' ? item.macroCategory : item.professionalTitle;
   const evidence = evidenceForApplication(item);
   const actions = getAvailableAdminActions({ applicationType: item.kind, status: item.status });
   const requiresReason = actions.some((action) => action.requiresReason);
@@ -888,13 +887,18 @@ function DetailRows({ item }: { item: CommerceApplicationSummary }) {
     return (
       <View style={styles.details}>
         <Info label="Creator type" value={item.creatorType} />
+        <Info label="Macro Vertical" value={item.macroCategory || 'Legacy category'} />
+        <Info label="Specializations" value={item.specializations.length ? item.specializations.join(', ') : item.category || 'Not provided'} />
+        <Info label="Professional verification" value={creatorRequiresProfessionalVerification(item.specializations) ? 'Required by selected specialization' : 'Not required'} />
         <Info label="About" value={item.about} />
       </View>
     );
   }
   return (
     <View style={styles.details}>
-      <Info label="Profession" value={item.professionalCategory} />
+      <Info label="Macro Vertical" value={item.creatorMacroCategory ?? 'Not provided'} />
+      <Info label="Specialization" value={item.creatorSpecializations?.join(', ') || item.professionalCategory} />
+      <Info label="Professional verification" value="Required by selected specialization" />
       <Info label="Degree" value={`${item.degree} | ${item.institution}`} />
       <Info label="License" value={item.registrationNumber} />
     </View>

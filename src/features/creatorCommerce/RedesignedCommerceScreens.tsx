@@ -71,6 +71,7 @@ import {
   creatorRequiresProfessionalVerification,
   creatorSpecializationsFor,
   credentialRuleFor,
+  normalizeCreatorSpecializations,
   selectCreatorSpecialization,
   sellerOnboardingSteps,
   type AudienceTier,
@@ -127,7 +128,7 @@ export function CommerceHomeScreen() {
   const sellerApproved = access?.sellerStatus === 'approved';
   const creatorApproved = access?.creatorStatus === 'approved';
   const dualRole = sellerApproved && creatorApproved;
-  const sellerStep = Math.min(5, Math.max(0, payloadNumber(sellerApplication?.applicationPayload ?? {}, 'completedStep')));
+  const sellerStep = Math.min(6, Math.max(0, payloadNumber(sellerApplication?.applicationPayload ?? {}, 'completedStep')));
   const creatorStep = Math.min(5, Math.max(0, payloadNumber(creatorApplication?.applicationPayload ?? {}, 'completedStep')));
 
   return (
@@ -160,7 +161,7 @@ export function CommerceHomeScreen() {
         icon={Store}
         title={sellerApproved ? 'Open Seller Studio' : sellerApplication ? 'Continue selling setup' : 'Start Selling'}
         description={sellerApproved ? 'Manage your store, Products, orders and fulfilment.' : 'Build your store and sell Products with a guided review.'}
-        badge={sellerApproved ? 'Approved' : sellerApplication ? `${statusText(sellerApplication.status)} · ${sellerStep} of 5 steps` : undefined}
+        badge={sellerApproved ? 'Approved' : sellerApplication ? `${statusText(sellerApplication.status)} · ${sellerStep} of 6 steps` : undefined}
         onPress={() => router.push(sellerApproved ? '/seller' : '/commerce/seller-onboarding')}
       />
       <RoleCard
@@ -253,7 +254,7 @@ export function SellerOnboardingScreen() {
     setBankHolder(payloadString(payload, 'bankAccountHolder'));
     setBankAccount(payloadString(payload, 'bankAccountNumber'));
     setIfsc(payloadString(payload, 'bankIfsc'));
-    setStep(Math.min(4, payloadNumber(payload, 'currentStep')));
+    setStep(Math.min(5, payloadNumber(payload, 'currentStep')));
   }, []);
 
   const load = useCallback(async () => {
@@ -304,7 +305,7 @@ export function SellerOnboardingScreen() {
   });
 
   const persist = async (targetStep: number, exit = false) => {
-    if (!supabase || busy) return;
+    if (!supabase || !user || busy) return;
     setBusy(true);
     setNotice(null);
     try {
@@ -324,22 +325,32 @@ export function SellerOnboardingScreen() {
       const required = [legalName, businessName, storefrontName, registeredState, city, phone, email, sellerType === 'gst' ? gstin : panNumber, sellerType === 'non_gst' ? localSellerId : 'ok'];
       if (required.some((value) => !value.trim()) || (sellerType === 'non_gst' && !declarationAccepted)) return 'Complete the business and compliance information.';
     }
-    if (current === 2 && ([addressLine, pickupAddress, returnAddress, postalCode].some((value) => !value.trim()) || !documentPath || !exteriorPath || !interiorPath || !verificationVideoPath || !location)) return 'Add addresses, PIN code, location, three evidence items, and the short verification video.';
+    if (current === 2 && ([addressLine, pickupAddress, returnAddress, postalCode].some((value) => !value.trim()) || !documentPath || !exteriorPath || !interiorPath || !location)) return 'Add addresses, PIN code, location, and all three business evidence items.';
     if (current === 3 && [bankHolder, bankAccount, ifsc].some((value) => !value.trim())) return 'Add the payout bank information for manual verification.';
+    if (current === 4 && !verificationVideoPath) return 'Record or upload the required Business Verification video.';
     return null;
   };
 
   const next = async () => {
     const message = validate(step);
     if (message) { setNotice(message); Alert.alert('Finish this step', message); return; }
-    await persist(Math.min(4, step + 1));
+    await persist(Math.min(5, step + 1));
   };
 
-  const pickEvidence = async (documentKind: string, setter: (value: string) => void) => {
+  const pickEvidence = async (
+    documentKind: string,
+    setter: (value: string) => void,
+    mediaTypes: ImagePicker.MediaType[] = ['images'],
+    source: 'library' | 'camera' = 'library',
+  ) => {
     if (!supabase || !user) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const permission = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) { Alert.alert('Permission required', 'Allow media access to attach Seller verification evidence.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.82 });
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync({ mediaTypes, quality: 0.82, videoMaxDuration: 120 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes, quality: 0.82 });
     if (result.canceled) return;
     setBusy(true);
     try { setter(await uploadCommerceEvidence(supabase, user.id, 'seller', documentKind, result.assets[0])); }
@@ -368,7 +379,7 @@ export function SellerOnboardingScreen() {
 
   const submit = async () => {
     if (!supabase || !user || busy) return;
-    for (const index of [1, 2, 3]) {
+    for (const index of [1, 2, 3, 4]) {
       const message = validate(index);
       if (message) { setStep(index); Alert.alert('Application incomplete', message); return; }
     }
@@ -380,7 +391,7 @@ export function SellerOnboardingScreen() {
         exteriorEvidencePath: exteriorPath, interiorEvidencePath: interiorPath,
         businessVerificationVideoPath: verificationVideoPath,
         locationLatitude: location?.latitude, locationLongitude: location?.longitude,
-        applicationPayload: payload(4, 5),
+        applicationPayload: payload(5, 6),
       });
       await refresh();
       hydrate(await getMySellerApplication(supabase, user.id));
@@ -429,7 +440,6 @@ export function SellerOnboardingScreen() {
           <UploadRow title="Government or business document" value={documentPath} disabled={busy} onPress={() => void pickEvidence('business-document', setDocumentPath)} />
           <UploadRow title="Exterior evidence" value={exteriorPath} disabled={busy} onPress={() => void pickEvidence('exterior-evidence', setExteriorPath)} />
           <UploadRow title="Interior / inventory evidence" value={interiorPath} disabled={busy} onPress={() => void pickEvidence('interior-evidence', setInteriorPath)} />
-          <UploadRow title="Short verification video" value={verificationVideoPath} disabled={busy} onPress={() => void pickEvidence('verification-video', setVerificationVideoPath)} />
           <Pressable accessibilityRole="button" disabled={busy} onPress={() => void captureLocation()} style={[styles.outlineButton, busy && styles.disabled]}>
             <MapPin size={18} color={green} /><Text style={styles.outlineButtonText}>{busy ? 'Capturing location…' : location ? 'Location captured' : 'Capture current location'}</Text>
           </Pressable>
@@ -444,6 +454,18 @@ export function SellerOnboardingScreen() {
         </Section>
       ) : null}
       {step === 4 ? (
+        <Section title="Business Verification" copy="This final stage is mandatory for every Seller and is reviewed together with the completed Seller application.">
+          <VerificationVideoEvidence
+            title="Business Verification video"
+            value={verificationVideoPath}
+            disabled={busy}
+            instructions="Appear and speak in a short walkthrough. Show the storefront or workspace, business surroundings, and inventory or work area where applicable. This is private evidence for human Admin review, not automated location or identity scoring."
+            onCapture={() => void pickEvidence('verification-video', setVerificationVideoPath, ['videos'], 'camera')}
+            onUpload={() => void pickEvidence('verification-video', setVerificationVideoPath, ['videos'])}
+          />
+        </Section>
+      ) : null}
+      {step === 5 ? (
         <Section title="Review & submit" copy="Confirm each section before sending one organized application to Admin.">
           <SummaryRow label="Seller type" value={sellerType === 'gst' ? 'GST Registered Seller' : 'Non-GST / Enrolment Seller'} />
           <SummaryRow label="Business" value={`${businessName || 'Incomplete'} · ${registeredState || 'State missing'}`} />
@@ -457,7 +479,7 @@ export function SellerOnboardingScreen() {
 
       <View style={styles.footerActions}>
         <Pressable accessibilityRole="button" disabled={busy} onPress={() => step === 0 ? router.back() : setStep((value) => Math.max(0, value - 1))} style={styles.backButton}><Text style={styles.backButtonText}>Back</Text></Pressable>
-        {step < 4 ? <PrimaryButton compact label="Continue" busy={busy} onPress={() => void next()} /> : null}
+        {step < 5 ? <PrimaryButton compact label="Continue" busy={busy} onPress={() => void next()} /> : null}
       </View>
       {!locked ? <Pressable accessibilityRole="button" disabled={busy} onPress={() => void persist(step, true)} style={styles.saveExit}><Text style={styles.saveExitText}>Save & Exit</Text></Pressable> : null}
     </ScrollView>
@@ -475,6 +497,7 @@ export function CreatorOnboardingScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [macroCategory, setMacroCategory] = useState('Content & Digital Media');
   const [specializations, setSpecializations] = useState<string[]>(['Vlogger']);
+  const [specializationQuery, setSpecializationQuery] = useState('');
   const [about, setAbout] = useState('');
   const [audienceTier, setAudienceTier] = useState<AudienceTier>('Nano');
   const [instagram, setInstagram] = useState('');
@@ -500,6 +523,11 @@ export function CreatorOnboardingScreen() {
   const professionalRule = credentialRuleFor(specializations);
   const steps = useMemo(() => [...creatorOnboardingBaseSteps, ...(professionalRequired ? ['Professional credentials'] : []), 'Review'], [professionalRequired]);
   const reviewStep = steps.length - 1;
+  const visibleSpecializations = useMemo(() => {
+    const query = specializationQuery.trim().toLowerCase();
+    const values = creatorSpecializationsFor(macroCategory);
+    return query ? values.filter((value) => value.toLowerCase().includes(query)) : values;
+  }, [macroCategory, specializationQuery]);
 
   const socialHandles = useMemo(() => ({ instagram, youtube, facebook, tiktok, website }), [facebook, instagram, tiktok, website, youtube]);
 
@@ -508,8 +536,12 @@ export function CreatorOnboardingScreen() {
     setProfessional(professionalRequest);
     const payload = creator?.applicationPayload ?? {};
     if (creator) {
-      setMacroCategory(payloadString(payload, 'macroCategory') || creator.category || 'Content & Digital Media');
-      setSpecializations(payloadStrings(payload, 'specializations').length ? payloadStrings(payload, 'specializations') : ['Vlogger']);
+      const storedMacro = payloadString(payload, 'macroCategory') || creator.macroCategory || creator.category;
+      const nextMacro = creatorCategories.some((item) => item.name === storedMacro) ? storedMacro : 'Content & Digital Media';
+      const storedSpecializations = creator.specializations.length ? creator.specializations : payloadStrings(payload, 'specializations');
+      const nextSpecializations = normalizeCreatorSpecializations(nextMacro, storedSpecializations);
+      setMacroCategory(nextMacro);
+      setSpecializations(nextSpecializations.length ? nextSpecializations : [creatorSpecializationsFor(nextMacro)[0]]);
       setAbout(payloadString(payload, 'about') || creator.about);
       setAudienceTier((payloadString(payload, 'audienceTier') || 'Nano') as AudienceTier);
       const handles = (payload.socialHandles && typeof payload.socialHandles === 'object' ? payload.socialHandles : creator.socialHandles) as Record<string, string>;
@@ -562,10 +594,11 @@ export function CreatorOnboardingScreen() {
   });
 
   const persist = async (targetStep: number, exit = false) => {
-    if (!supabase || busy) return;
+    if (!supabase || !user || busy) return;
     setBusy(true); setNotice(null);
     try {
       await saveCommerceOnboardingDraft(supabase, 'creator', creatorPayload(targetStep, Math.max(step, targetStep)));
+      setApplication(await getMyCreatorApplication(supabase, user.id));
       setStep(targetStep); setNotice('Progress saved');
       if (exit) router.replace('/commerce');
     } catch (cause) { setNotice(errorMessage(cause)); }
@@ -586,11 +619,21 @@ export function CreatorOnboardingScreen() {
     await persist(Math.min(reviewStep, step + 1));
   };
 
-  const pickEvidence = async (kind: ApplicationKind, documentKind: string, setter: (value: string) => void, mediaTypes: ImagePicker.MediaType[] = ['images']) => {
+  const pickEvidence = async (
+    kind: ApplicationKind,
+    documentKind: string,
+    setter: (value: string) => void,
+    mediaTypes: ImagePicker.MediaType[] = ['images'],
+    source: 'library' | 'camera' = 'library',
+  ) => {
     if (!supabase || !user) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const permission = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) { Alert.alert('Permission required', 'Allow media access to attach verification evidence.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes, quality: 0.82 });
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync({ mediaTypes, quality: 0.82, videoMaxDuration: 120 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes, quality: 0.82 });
     if (result.canceled) return;
     setBusy(true);
     try { setter(await uploadCommerceEvidence(supabase, user.id, kind, documentKind, result.assets[0])); }
@@ -607,14 +650,16 @@ export function CreatorOnboardingScreen() {
     }
     setBusy(true);
     try {
-      const creator = await submitCreatorApplication(supabase, user.id, {
-        creatorType: professionalRequired ? 'professional' : 'general',
-        category: macroCategory, about, socialHandles, identityName, identityDocumentPath,
-        applicationPayload: creatorPayload(reviewStep, steps.length),
-      });
-      if (professionalRequired && professionalRule) {
+      let creatorDraft = application ?? await getMyCreatorApplication(supabase, user.id);
+      if (!creatorDraft) {
+        await saveCommerceOnboardingDraft(supabase, 'creator', creatorPayload(reviewStep, steps.length));
+        creatorDraft = await getMyCreatorApplication(supabase, user.id);
+      }
+      if (!creatorDraft) throw new Error('Creator draft could not be prepared for submission.');
+      const professionalCanSubmit = !professional || ['draft', 'more_information_required', 'rejected'].includes(professional.status);
+      if (professionalRequired && professionalRule && professionalCanSubmit) {
         await submitProfessionalVerification(supabase, user.id, {
-          creatorApplicationId: creator.id,
+          creatorApplicationId: creatorDraft.id,
           professionalCategory: professionalRule.specialization,
           professionalTitle,
           degree,
@@ -625,7 +670,14 @@ export function CreatorOnboardingScreen() {
           socialHandles,
           applicationPayload: { onboardingVersion: 2, macroCategory, specializations, credentialRule: professionalRule.specialization },
         });
+      } else if (professionalRequired && professionalRule && professional?.professionalCategory !== professionalRule.specialization) {
+        throw new Error('The selected professional specialization does not match the locked verification request. Ask Admin to request updated information before changing it.');
       }
+      await submitCreatorApplication(supabase, user.id, {
+        creatorType: professionalRequired ? 'professional' : 'general',
+        category: macroCategory, macroCategory, specializations, about, socialHandles, identityName, identityDocumentPath,
+        applicationPayload: creatorPayload(reviewStep, steps.length),
+      });
       await refresh();
       hydrate(await getMyCreatorApplication(supabase, user.id), await getMyProfessionalRequest(supabase, user.id));
       Alert.alert('Submitted for review', professionalRequired ? 'Creator approval and Professional Credential approval will be reviewed separately.' : 'Your general Creator application does not require a degree or professional license.');
@@ -646,9 +698,11 @@ export function CreatorOnboardingScreen() {
 
       {step === 0 ? (
         <Section title="What do you create?" copy="Choose one main category and up to three specializations. This controls whether professional credentials are relevant.">
-          <ChipGroup values={creatorCategories.map((item) => item.name)} selected={[macroCategory]} onPress={(value) => { setMacroCategory(value); setSpecializations([]); }} />
+          <ChipGroup values={creatorCategories.map((item) => item.name)} selected={[macroCategory]} onPress={(value) => { setMacroCategory(value); setSpecializations([]); setSpecializationQuery(''); }} />
           <Text style={styles.fieldLabel}>Specializations ({specializations.length}/3)</Text>
-          <ChipGroup values={[...creatorSpecializationsFor(macroCategory)]} selected={specializations} onPress={(value) => setSpecializations((current) => selectCreatorSpecialization(current, value))} />
+          <Field label="Search specializations" value={specializationQuery} onChangeText={setSpecializationQuery} placeholder="Try Doctor, Travel Vlogger, Chef…" autoCapitalize="none" />
+          <ChipGroup values={visibleSpecializations} selected={specializations} onPress={(value) => setSpecializations((current) => selectCreatorSpecialization(current, value))} />
+          {!visibleSpecializations.length ? <Text style={styles.helper}>No specialization matches this search.</Text> : null}
           <Field label="About you" value={about} onChangeText={setAbout} multiline placeholder="Tell sellers and your audience what you create." />
           {professionalRequired ? <Banner tone="info" title="Professional credentials required" message={`${professionalRule?.title ?? 'Professional verification'} will appear later in this setup.`} /> : <Banner tone="success" title="No degree required" message="This Creator path uses normal identity and Admin review only." />}
         </Section>
@@ -684,7 +738,14 @@ export function CreatorOnboardingScreen() {
           <Field label={professionalRule?.institutionLabel ?? 'Institution'} value={institution} onChangeText={setInstitution} />
           <Field label={professionalRule?.registrationLabel ?? 'Registration number'} value={registrationNumber} onChangeText={setRegistrationNumber} />
           <UploadRow title={professionalRule?.credentialLabel ?? 'Credential document'} value={credentialPath} disabled={busy} onPress={() => void pickEvidence('professional', 'credential-document', setCredentialPath)} />
-          <UploadRow title="Short professional verification video" value={professionalVideoPath} disabled={busy} onPress={() => void pickEvidence('professional', 'verification-video', setProfessionalVideoPath, ['videos'])} />
+          <VerificationVideoEvidence
+            title="Professional Verification video"
+            value={professionalVideoPath}
+            disabled={busy}
+            instructions={professionalRule?.verificationInstructions ?? 'Appear and speak in a short walkthrough showing the relevant professional workplace context for Admin review.'}
+            onCapture={() => void pickEvidence('professional', 'verification-video', setProfessionalVideoPath, ['videos'], 'camera')}
+            onUpload={() => void pickEvidence('professional', 'verification-video', setProfessionalVideoPath, ['videos'])}
+          />
           <Text style={styles.helper}>Uploading a credential does not grant a Blue Tick. Admin approval is required for Professional Credential status.</Text>
         </Section>
       ) : null}
@@ -864,6 +925,39 @@ function UploadRow({ title, value, disabled, onPress }: { title: string; value: 
   return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.upload, disabled && styles.disabled]}><View style={styles.uploadIcon}><FileUp size={20} color={green} /></View><View style={{ flex: 1 }}><Text style={styles.uploadTitle}>{title}</Text><Text numberOfLines={1} style={styles.uploadCopy}>{value ? 'Evidence attached privately' : 'Tap to attach'}</Text></View><Text style={styles.uploadAction}>{value ? 'Replace' : 'Add'}</Text></Pressable>;
 }
 
+function VerificationVideoEvidence({
+  title,
+  value,
+  disabled,
+  instructions,
+  onCapture,
+  onUpload,
+}: {
+  title: string;
+  value: string | null;
+  disabled?: boolean;
+  instructions: string;
+  onCapture: () => void;
+  onUpload: () => void;
+}) {
+  return (
+    <View style={styles.videoEvidenceCard}>
+      <View style={styles.videoEvidenceHeader}>
+        <View style={styles.uploadIcon}><FileUp size={20} color={green} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.uploadTitle}>{title}</Text>
+          <Text style={styles.uploadCopy}>{value ? 'Private verification video attached' : 'MP4, WebM, or MOV · maximum 15 MB'}</Text>
+        </View>
+      </View>
+      <Text style={styles.videoInstructions}>{instructions}</Text>
+      <View style={styles.rowWrap}>
+        <SmallAction label={value ? 'Record replacement' : 'Record video'} disabled={disabled} onPress={onCapture} />
+        <SmallAction label={value ? 'Upload replacement' : 'Upload video'} disabled={disabled} onPress={onUpload} />
+      </View>
+    </View>
+  );
+}
+
 function CheckRow({ checked, label, onPress }: { checked: boolean; label: string; onPress: () => void }) {
   return <Pressable accessibilityRole="checkbox" accessibilityState={{ checked }} onPress={onPress} style={styles.checkRow}><View style={[styles.checkbox, checked && styles.checkboxActive]}>{checked ? <Check size={14} color="#fff" /> : null}</View><Text style={styles.checkLabel}>{label}</Text></Pressable>;
 }
@@ -953,6 +1047,9 @@ const styles = StyleSheet.create({
   uploadTitle: { color: ink, fontSize: 14, fontWeight: '900' },
   uploadCopy: { marginTop: 3, color: muted, fontSize: 12 },
   uploadAction: { color: green, fontSize: 12, fontWeight: '900' },
+  videoEvidenceCard: { borderRadius: 18, borderWidth: 1, borderColor: '#bde1cc', padding: 15, backgroundColor: mint, gap: 12 },
+  videoEvidenceHeader: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  videoInstructions: { color: '#456158', fontSize: 13, lineHeight: 20 },
   outlineButton: { minHeight: 50, borderRadius: 15, borderWidth: 1, borderColor: '#bde1cc', backgroundColor: mint, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
   outlineButtonText: { color: green, fontSize: 14, fontWeight: '900' },
   checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
