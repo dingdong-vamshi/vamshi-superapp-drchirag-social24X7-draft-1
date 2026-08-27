@@ -409,6 +409,7 @@ export function SellerOnboardingScreen() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
       <ScreenHeader title="Start Selling" subtitle="A guided setup you can save and resume." />
       <Stepper labels={sellerOnboardingSteps} step={step} />
+      <ApplicationFeedback application={application} />
       {notice ? <Banner tone={notice === 'Progress saved' ? 'success' : 'error'} title={notice} /> : null}
 
       {step === 0 ? <SellerTypeStep value={sellerType} onChange={setSellerType} /> : null}
@@ -694,6 +695,8 @@ export function CreatorOnboardingScreen() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
       <ScreenHeader title="Become a Creator" subtitle="Only answer questions relevant to the Creator work you choose." />
       <Stepper labels={steps} step={step} />
+      <ApplicationFeedback application={application} />
+      <ApplicationFeedback application={professional} label="Professional verification" />
       {notice ? <Banner tone={notice === 'Progress saved' ? 'success' : 'error'} title={notice} /> : null}
 
       {step === 0 ? (
@@ -975,7 +978,24 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 }
 
 function ReviewState({ kind, application, professional, onOpen, onRefresh }: { kind: 'Seller' | 'Creator'; application: SellerApplication | CreatorApplication; professional?: ProfessionalVerificationRequest | null; onOpen: () => void; onRefresh: () => Promise<void> }) {
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.centerPage}><BadgeCheck size={48} color={application.status === 'approved' ? greenBright : green} /><Text style={styles.reviewTitle}>{kind} application {statusText(application.status).toLowerCase()}</Text><Text style={styles.reviewCopy}>{application.status === 'approved' ? `${kind} access is active.` : 'Your saved application is locked while Admin controls the current review state.'}</Text>{professional ? <SummaryRow label="Professional credential" value={statusText(professional.status)} /> : null}{application.requestedInformation ? <Banner tone="info" title="Information requested" message={application.requestedInformation} /> : null}<PrimaryButton label={application.status === 'approved' ? `Open ${kind === 'Seller' ? 'Seller Studio' : 'Creator Centre'}` : 'Back to Earn & Sell'} onPress={onOpen} /><SmallAction label="Refresh approval status" onPress={() => void onRefresh()} /></ScrollView>;
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.centerPage}><BadgeCheck size={48} color={application.status === 'approved' ? greenBright : green} /><Text style={styles.reviewTitle}>{kind} application {statusText(application.status).toLowerCase()}</Text><Text style={styles.reviewCopy}>{application.status === 'approved' ? `${kind} access is active.` : 'Your saved application is locked while Admin controls the current review state.'}</Text>{professional ? <SummaryRow label="Professional credential" value={statusText(professional.status)} /> : null}<ApplicationFeedback application={application} /><ApplicationFeedback application={professional} label="Professional verification" /><PrimaryButton label={application.status === 'approved' ? `Open ${kind === 'Seller' ? 'Seller Studio' : 'Creator Centre'}` : 'Back to Earn & Sell'} onPress={onOpen} /><SmallAction label="Refresh approval status" onPress={() => void onRefresh()} /></ScrollView>;
+}
+
+function ApplicationFeedback({
+  application,
+  label = 'Application',
+}: {
+  application: SellerApplication | CreatorApplication | ProfessionalVerificationRequest | null | undefined;
+  label?: string;
+}) {
+  if (!application) return null;
+  if (application.status === 'more_information_required' && application.requestedInformation) {
+    return <Banner tone="info" title={`${label}: More information required`} message={application.requestedInformation} />;
+  }
+  if (application.status === 'rejected' && application.reviewNote) {
+    return <Banner tone="error" title={`${label} rejected`} message={application.reviewNote} />;
+  }
+  return null;
 }
 
 function Metric({ label, value, icon: Icon }: { label: string; value: string; icon: CommerceIcon }) {

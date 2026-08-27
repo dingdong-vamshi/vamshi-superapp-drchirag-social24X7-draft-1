@@ -24,3 +24,9 @@ test('evidence rejects empty and oversized files before upload', () => {
 test('rejected professional applications can replace evidence and resubmit', () => {
   assert.match(redesignedOnboardingSource, /\['draft', 'more_information_required', 'rejected'\]\.includes\(professional\.status\)/);
 });
+
+test('rejected and more-information applications display the Admin message during resubmission', () => {
+  assert.match(redesignedOnboardingSource, /application\.status === 'more_information_required' && application\.requestedInformation/);
+  assert.match(redesignedOnboardingSource, /application\.status === 'rejected' && application\.reviewNote/);
+  assert.match(redesignedOnboardingSource, /<ApplicationFeedback application=\{professional\} label="Professional verification" \/>/);
+});
