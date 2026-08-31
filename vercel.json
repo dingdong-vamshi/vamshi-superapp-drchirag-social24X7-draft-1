@@ -39,6 +39,18 @@
       "destination": "/business-chat/[id]"
     },
     {
+      "source": "/chat-details/:id",
+      "destination": "/chat-details/[id]"
+    },
+    {
+      "source": "/creator-chat/:id",
+      "destination": "/creator-chat/[id]"
+    },
+    {
+      "source": "/seller/creator-chat/:id",
+      "destination": "/seller/creator-chat/[id]"
+    },
+    {
       "source": "/commerce/order/:id",
       "destination": "/commerce/order/[id]"
     },
