@@ -56,6 +56,7 @@ import {
 
 import { unconfiguredCallAdapter } from "./callAdapter";
 import DocumentScannerModal, { type ScannedDocumentPage } from "./DocumentScannerModal";
+import SafeLinkText from "./SafeLinkText";
 import { normalizeChatMedia, normalizeImagePickerDurationMs, readWebMediaBlob } from "./chatMediaUtils";
 import {
   CURRENT_USER_ID,
@@ -673,11 +674,15 @@ export default function ChatScreen({
           setSelected(accepted);
           return accepted;
         }}
-	        onBack={() => {
-	          setSelected(null);
-	          setError(null);
-	          void loadConversations("refresh");
-	        }}
+        onBack={() => {
+          if (initialConversationId && onBack) {
+            onBack();
+            return;
+          }
+          setSelected(null);
+          setError(null);
+          void loadConversations("refresh");
+        }}
       />
     );
   return (
@@ -1640,9 +1645,13 @@ function ConversationView({
     list.current?.scrollToEnd({ animated: true });
   }, [messages.length]);
   const presenceLabel = conversation.storefront
-    ? conversation.businessRole === "seller"
-      ? `Customer · ${conversation.storefront.name}`
-      : `${conversation.storefront.verificationStatus === "approved" ? "Verified store" : "Store"} · Messages are private`
+    ? conversation.businessContext === "creator_seller"
+      ? conversation.businessRole === "seller"
+        ? "Creator commerce · Messages are private"
+        : "Approved Seller · Messages are private"
+      : conversation.businessRole === "seller"
+        ? `Customer · ${conversation.storefront.name}`
+        : `${conversation.storefront.verificationStatus === "approved" ? "Verified store" : "Store"} · Messages are private`
     : conversation.kind === "group"
       ? `${conversation.memberCount || 0} members · Messages are private`
     : conversation.participant.isOnline
@@ -2518,16 +2527,17 @@ function MessageBubble({
               </View>
             </View>
           ) : null}
-          <Text
+          <SafeLinkText
             style={[
               styles.messageText,
               message.type === "sticker" && styles.stickerText,
               (message.type === "order_event" || message.attachment || message.location || message.contact || message.poll || message.event) && styles.hiddenMessageBody,
               mine && styles.mineText,
             ]}
+            linkStyle={mine ? styles.mineText : styles.messageLink}
           >
             {message.text}
-          </Text>
+          </SafeLinkText>
           <Text style={[styles.messageTime, mine && styles.mineTime]}>
             {formatTime(message.createdAt)}
             {mine && message.status === "read" ? " · Read" : ""}
@@ -4238,6 +4248,7 @@ const styles = StyleSheet.create({
   messageAvatarImage: { width: "100%", height: "100%" },
   messageAvatarText: { color: "#078549", fontSize: 9, fontWeight: "900" },
   messageText: { color: "#111111", fontSize: 15, lineHeight: 21 },
+  messageLink: { color: "#087443" },
   hiddenMessageBody: { display: "none" },
   orderEventCard: {
     minWidth: 238,

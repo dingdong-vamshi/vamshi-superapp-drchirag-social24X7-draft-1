@@ -57,6 +57,7 @@ type ConversationRow = {
   kind: 'personal' | 'business' | 'group' | 'support';
   storefront_id: string | null;
   business_customer_id: string | null;
+  business_context: 'buyer_seller' | 'creator_seller' | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -184,6 +185,7 @@ const CONVERSATION_SELECT = `
   kind,
   storefront_id,
   business_customer_id,
+  business_context,
   created_by,
   created_at,
   updated_at,
@@ -350,9 +352,11 @@ const createClientMessageId = () => {
 export const createSupabaseChatRepository = ({
   client,
   user,
+  context = 'standard',
 }: {
   client: SupabaseClient;
   user: User | null;
+  context?: 'standard' | 'creator_seller';
 }): ChatDataSource => {
   const viewerId = user?.id && isUuid(user.id) ? user.id : null;
   const listeners = new Set<() => void>();
@@ -377,11 +381,18 @@ export const createSupabaseChatRepository = ({
 
   const fetchConversationRows = async (
     kinds: ConversationRow['kind'][] = ['personal', 'business', 'group'],
+    enforceContext = true,
   ) => {
-    const { data, error } = await client
+    let query = client
       .from('conversations')
       .select(CONVERSATION_SELECT)
-      .in('kind', kinds)
+      .in('kind', context === 'creator_seller' && enforceContext ? ['business'] : kinds);
+    if (enforceContext) {
+      query = context === 'creator_seller'
+        ? query.eq('business_context', 'creator_seller')
+        : query.or('business_context.is.null,business_context.neq.creator_seller');
+    }
+    const { data, error } = await query
       .order('updated_at', { ascending: false })
       .limit(100);
 
@@ -411,10 +422,14 @@ export const createSupabaseChatRepository = ({
 
   const fetchConversationRowById = async (conversationId: string) => {
     if (!isUuid(conversationId)) return null;
-    const { data, error } = await client
+    let query = client
       .from('conversations')
       .select(CONVERSATION_SELECT)
-      .eq('id', conversationId)
+      .eq('id', conversationId);
+    query = context === 'creator_seller'
+      ? query.eq('business_context', 'creator_seller')
+      : query.or('business_context.is.null,business_context.neq.creator_seller');
+    const { data, error } = await query
       .maybeSingle();
 
     if (error) throw new Error(error.message);
@@ -424,7 +439,7 @@ export const createSupabaseChatRepository = ({
     return row;
   };
 
-  const fetchPersonalConversationRows = () => fetchConversationRows(['personal']);
+  const fetchPersonalConversationRows = () => fetchConversationRows(['personal'], false);
 
   const fetchMessagesByConversationIds = async (conversationIds: string[]) => {
     if (!conversationIds.length) return new Map<string, MessageRow[]>();
@@ -788,6 +803,7 @@ export const createSupabaseChatRepository = ({
       requestStatus,
       requestMessage,
       businessRole,
+      businessContext: row.business_context ?? undefined,
       storefront: storefront
         ? {
             id: storefront.id,
@@ -964,6 +980,23 @@ export const createSupabaseChatRepository = ({
   return {
     async listConversations() {
       if (!viewerId) return [];
+
+      if (context === 'creator_seller') {
+        const conversationRows = await fetchConversationRows(['business']);
+        const messagesByConversationId = await fetchMessagesByConversationIds(
+          conversationRows.map((row) => row.id),
+        );
+        return conversationRows.map((row) => {
+          const messages = messagesByConversationId.get(row.id) ?? [];
+          return toConversation({
+            row,
+            messages,
+            latestMessage: messages.at(-1),
+            viewerProfileId: viewerId,
+            requestStatus: 'accepted',
+          });
+        }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      }
 
       const { data, error } = await client
         .from('connection_requests')

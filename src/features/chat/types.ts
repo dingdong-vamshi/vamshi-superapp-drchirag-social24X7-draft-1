@@ -222,6 +222,7 @@ export type Conversation = {
   requestMessage?: string;
   storefront?: BusinessStorefrontIdentity;
   businessRole?: 'customer' | 'seller';
+  businessContext?: 'buyer_seller' | 'creator_seller';
   groupName?: string;
   memberCount?: number;
 };
