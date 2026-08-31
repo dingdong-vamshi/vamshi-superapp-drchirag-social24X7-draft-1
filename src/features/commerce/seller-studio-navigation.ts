@@ -29,6 +29,7 @@ export type SellerSection =
   | "finance"
   | "storefront"
   | "business_chat"
+  | "creator_chat"
   | "discoverability"
   | "operations";
 
@@ -78,6 +79,7 @@ export const sellerNavigation: SellerNavigationGroup[] = [
   { key: "finance", label: "Finance", defaultSection: "finance", children: [child("finance", "Finance")] },
   { key: "storefront", label: "Storefront", defaultSection: "storefront", utility: true, children: [child("storefront", "Storefront")] },
   { key: "business_chat", label: "Business Chat", defaultSection: "business_chat", utility: true, children: [child("business_chat", "Business Chat")] },
+  { key: "creator_chat", label: "Creator Chats", defaultSection: "creator_chat", utility: true, children: [child("creator_chat", "Creator Chats")] },
   { key: "discoverability", label: "SEO & AI", defaultSection: "discoverability", utility: true, children: [child("discoverability", "SEO & AI")] },
   { key: "operations", label: "Operations", defaultSection: "operations", utility: true, children: [child("operations", "Operations")] },
 ];
@@ -94,4 +96,13 @@ export function sellerGroupForSection(section: SellerSection) {
 
 export function sellerSectionLabel(section: SellerSection) {
   return sellerSections.find((item) => item.key === section)?.label ?? "Seller Studio";
+}
+
+export function toggleSellerNavigationGroup(
+  currentGroup: string,
+  clickedGroup: string,
+  hasSubmenu: boolean,
+) {
+  if (!hasSubmenu) return "";
+  return currentGroup === clickedGroup ? "" : clickedGroup;
 }

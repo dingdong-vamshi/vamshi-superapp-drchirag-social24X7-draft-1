@@ -161,6 +161,7 @@ export type SellerOrder = {
   customerName: string;
   customerUsername: string;
   createdAt: string;
+  dispatchAt: string | null;
   totalPaise: number;
   paymentStatus: string;
   status: SellerOrderStatus;
@@ -186,6 +187,31 @@ export type BusinessMessage = {
   senderId: string;
   body: string;
   createdAt: string;
+};
+
+export type CreatorConversationSummary = {
+  id: string;
+  creatorId: string;
+  creatorName: string;
+  creatorUsername: string;
+  lastMessage: string;
+  updatedAt: string;
+  unreadCount: number;
+};
+
+export type CreatorConversationMessage = {
+  id: string;
+  senderId: string;
+  body: string;
+  createdAt: string;
+  kind: string;
+  productTitle?: string;
+};
+
+export type CreatorDirectoryEntry = {
+  userId: string;
+  displayName: string;
+  username: string;
 };
 
 export type SellerAnalytics = {
@@ -218,6 +244,7 @@ export type SellerReturn = {
   buyerName: string;
   buyerUsername: string;
   productTitle: string;
+  productCategory: string;
   itemSubtotalPaise: number;
   status: string;
   reason: string;
@@ -225,6 +252,7 @@ export type SellerReturn = {
   sellerNote?: string;
   requestedAt: string;
   reviewedAt?: string;
+  trackingStatus: string;
   evidence: SellerReturnEvidence[];
 };
 
@@ -274,6 +302,12 @@ export interface ShopRepository {
   listBusinessConversations(): Promise<BusinessConversationSummary[]>;
   listBusinessMessages(conversationId: string): Promise<BusinessMessage[]>;
   sendBusinessMessage(conversationId: string, body: string): Promise<void>;
+  listCreatorConversations(): Promise<CreatorConversationSummary[]>;
+  listCreatorMessages(conversationId: string): Promise<CreatorConversationMessage[]>;
+  sendCreatorMessage(conversationId: string, body: string): Promise<void>;
+  searchApprovedCreators(query: string): Promise<CreatorDirectoryEntry[]>;
+  openCreatorConversation(creatorId: string): Promise<string>;
+  subscribeCreatorMessages(conversationId: string, onChange: () => void): () => void;
   submitSellerApplication(
     draft: SellerApplicationDraft,
   ): Promise<StorefrontSummary>;
@@ -571,6 +605,24 @@ export const localShopRepository: ShopRepository = {
   },
   async sendBusinessMessage() {
     throw new Error("Business chat requires a real Social Chat 24/7 seller account.");
+  },
+  async listCreatorConversations() {
+    return [];
+  },
+  async listCreatorMessages() {
+    return [];
+  },
+  async sendCreatorMessage() {
+    throw new Error("Creator Chat requires a real Social Chat 24/7 seller account.");
+  },
+  async searchApprovedCreators() {
+    return [];
+  },
+  async openCreatorConversation() {
+    throw new Error("Creator Chat requires a real Social Chat 24/7 seller account.");
+  },
+  subscribeCreatorMessages() {
+    return () => {};
   },
   async submitSellerApplication() {
     throw new Error(

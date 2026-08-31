@@ -3,6 +3,9 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import {
   type BusinessConversationSummary,
   type BusinessMessage,
+  type CreatorConversationMessage,
+  type CreatorConversationSummary,
+  type CreatorDirectoryEntry,
   type CartLine,
   type ProductDraft,
   type SellerApplicationDraft,
@@ -118,30 +121,44 @@ type OrderRow = {
         tracking_number: string | null;
         package_reference: string | null;
         customer_note: string | null;
+        updated_at: string | null;
       }
     | {
         carrier: string | null;
         tracking_number: string | null;
         package_reference: string | null;
         customer_note: string | null;
+        updated_at: string | null;
       }[]
+    | null;
+  order_events:
+    | Array<{ status: string; created_at: string }>
+    | { status: string; created_at: string }
     | null;
 };
 
 type BusinessConversationRow = {
   id: string;
   created_by: string;
+  business_customer_id?: string | null;
   updated_at: string;
   conversation_participants:
     | Array<{
         user_id: string;
+        last_read_at?: string | null;
+        manually_unread_at?: string | null;
         profiles:
           | { display_name: string | null; username: string | null }
           | { display_name: string | null; username: string | null }[]
           | null;
       }>
     | null;
-  messages: Array<{ body: string | null; created_at: string }> | null;
+  messages: Array<{
+    sender_id?: string | null;
+    body: string | null;
+    created_at: string;
+    payload?: Record<string, unknown> | null;
+  }> | null;
 };
 
 type BusinessMessageRow = {
@@ -149,6 +166,8 @@ type BusinessMessageRow = {
   sender_id: string;
   body: string | null;
   created_at: string;
+  kind?: string;
+  payload?: Record<string, unknown> | null;
 };
 
 type SellerReturnRow = {
@@ -168,6 +187,7 @@ type SellerReturnItemRow = {
   id: string;
   product_title_snapshot: string;
   subtotal_minor: number;
+  products: { category: string | null } | { category: string | null }[] | null;
 };
 
 type SellerReturnEvidenceRow = {
@@ -665,7 +685,7 @@ export function createSupabaseShopRepository({
       const { data, error } = await client
         .from("orders")
         .select(
-          "id,customer_id,status,total_minor,payment_status,created_at,profiles!orders_customer_id_fkey(display_name,username),order_fulfillments(carrier,tracking_number,package_reference,customer_note)",
+          "id,customer_id,status,total_minor,payment_status,created_at,profiles!orders_customer_id_fkey(display_name,username),order_fulfillments(carrier,tracking_number,package_reference,customer_note,updated_at),order_events(status,created_at)",
         )
         .eq("storefront_id", storefront.id)
         .order("created_at", { ascending: false })
@@ -675,12 +695,16 @@ export function createSupabaseShopRepository({
       return ((data as OrderRow[] | null) ?? []).map((row) => {
         const profile = firstRelation(row.profiles);
         const fulfillment = firstRelation(row.order_fulfillments);
+        const dispatchEvent = (Array.isArray(row.order_events) ? row.order_events : row.order_events ? [row.order_events] : [])
+          .filter((event) => event.status === "shipped")
+          .sort((left, right) => left.created_at.localeCompare(right.created_at))[0];
         return {
           id: row.id,
           customerId: row.customer_id,
           customerName: profile?.display_name?.trim() || profile?.username || "Customer",
           customerUsername: profile?.username || row.customer_id.slice(0, 8),
           createdAt: row.created_at,
+          dispatchAt: dispatchEvent?.created_at ?? null,
           totalPaise: row.total_minor,
           paymentStatus: row.payment_status || "Payment pending",
           status: row.status,
@@ -721,7 +745,7 @@ export function createSupabaseShopRepository({
       const returnIds = requests.map((request) => request.id);
       const [profilesResult, itemsResult, evidenceResult] = await Promise.all([
         client.from("profiles").select("id,display_name,username").in("id", buyerIds),
-        client.from("order_items").select("id,product_title_snapshot,subtotal_minor").in("id", itemIds),
+        client.from("order_items").select("id,product_title_snapshot,subtotal_minor,products(category)").in("id", itemIds),
         client.from("commerce_order_evidence")
           .select("id,return_request_id,storage_path,file_name,mime_type,evidence_source,captured_at,created_at")
           .in("return_request_id", returnIds)
@@ -750,6 +774,7 @@ export function createSupabaseShopRepository({
           buyerName: buyer?.display_name?.trim() || buyer?.username || "Buyer",
           buyerUsername: buyer?.username || request.buyer_id.slice(0, 8),
           productTitle: item?.product_title_snapshot ?? "Product",
+          productCategory: firstRelation(item?.products)?.category ?? "Uncategorised",
           itemSubtotalPaise: item?.subtotal_minor ?? 0,
           status: request.status,
           reason: request.reason,
@@ -757,6 +782,19 @@ export function createSupabaseShopRepository({
           sellerNote: request.admin_note ?? undefined,
           requestedAt: request.requested_at,
           reviewedAt: request.reviewed_at ?? undefined,
+          trackingStatus: request.status === "submitted"
+            ? "Return Requested"
+            : request.status === "under_review"
+              ? "More Information Required"
+              : request.status === "approved"
+                ? "Awaiting Return Dispatch"
+                : request.status === "received"
+                  ? "Returned to Seller"
+                  : request.status === "refunded"
+                    ? "Refunded / Closed"
+                    : request.status === "cancelled"
+                      ? "Cancelled"
+                      : "Closed",
           evidence: evidenceRows
             .filter((evidence) => evidence.return_request_id === request.id)
             .map((evidence) => ({
@@ -834,6 +872,7 @@ export function createSupabaseShopRepository({
           "id,created_by,updated_at,conversation_participants(user_id,profiles!conversation_participants_user_id_fkey(display_name,username)),messages(body,created_at)",
         )
         .eq("kind", "business")
+        .eq("business_context", "buyer_seller")
         .eq("storefront_id", storefront.id)
         .order("updated_at", { ascending: false })
         .limit(100);
@@ -887,6 +926,151 @@ export function createSupabaseShopRepository({
         kind: "text",
       });
       if (error) throw new Error(error.message);
+    },
+
+    async listCreatorConversations() {
+      const authUser = requireUser();
+      const { data: storefront, error: storefrontError } = await client
+        .from("storefronts")
+        .select("id")
+        .eq("owner_id", authUser.id)
+        .maybeSingle();
+      if (storefrontError) throw new Error(storefrontError.message);
+      if (!storefront) return [];
+
+      const { data, error } = await client
+        .from("conversations")
+        .select(
+          "id,created_by,business_customer_id,updated_at,conversation_participants(user_id,last_read_at,manually_unread_at,profiles!conversation_participants_user_id_fkey(display_name,username)),messages(sender_id,body,created_at,payload)",
+        )
+        .eq("kind", "business")
+        .eq("business_context", "creator_seller")
+        .eq("storefront_id", storefront.id)
+        .order("updated_at", { ascending: false })
+        .limit(100);
+      if (error) throw new Error(error.message);
+
+      return ((data as BusinessConversationRow[] | null) ?? []).map((row) => {
+        const creatorId = row.business_customer_id ?? row.created_by;
+        const creator = (row.conversation_participants ?? []).find(
+          (participant) => participant.user_id === creatorId,
+        );
+        const profile = firstRelation(creator?.profiles);
+        // The tag identifies the Creator-commerce conversation; the canonical thread includes every participant message.
+        const latest = [...(row.messages ?? [])].sort((left, right) =>
+          right.created_at.localeCompare(left.created_at),
+        )[0];
+        const viewerState = (row.conversation_participants ?? []).find(
+          (participant) => participant.user_id === authUser.id,
+        );
+        const unreadCount = (row.messages ?? []).filter((message) =>
+          message.sender_id
+          && message.sender_id !== authUser.id
+          && (!viewerState?.last_read_at || message.created_at > viewerState.last_read_at)
+        ).length || (viewerState?.manually_unread_at ? 1 : 0);
+        return {
+          id: row.id,
+          creatorId,
+          creatorName: profile?.display_name?.trim() || profile?.username || "Creator",
+          creatorUsername: profile?.username || "creator",
+          lastMessage: latest?.body || "Creator commerce enquiry",
+          updatedAt: latest?.created_at || row.updated_at,
+          unreadCount,
+        } satisfies CreatorConversationSummary;
+      });
+    },
+
+    async listCreatorMessages(conversationId) {
+      requireUser();
+      // The tag identifies the Creator-commerce conversation; the canonical thread includes every participant message.
+      const { data, error } = await client
+        .from("messages")
+        .select("id,sender_id,body,created_at,kind,payload")
+        .eq("conversation_id", conversationId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true })
+        .limit(200);
+      if (error) throw new Error(error.message);
+      const marked = await client.rpc("mark_personal_conversation_read", { target_conversation: conversationId });
+      if (marked.error) throw new Error(marked.error.message);
+      return ((data as BusinessMessageRow[] | null) ?? []).map((row) => ({
+        id: row.id,
+        senderId: row.sender_id,
+        body: row.body ?? "",
+        createdAt: row.created_at,
+        kind: row.kind ?? "text",
+        productTitle: typeof row.payload?.product_title === "string"
+          ? row.payload.product_title
+          : undefined,
+      } satisfies CreatorConversationMessage));
+    },
+
+    async sendCreatorMessage(conversationId, body) {
+      const text = body.trim();
+      if (!text) return;
+      const { error } = await client.rpc("send_personal_message", {
+        target_conversation: conversationId,
+        message_body: text,
+        message_kind: "text",
+        message_payload: { commerce_channel: "creator_seller" },
+        message_client_id: globalThis.crypto.randomUUID(),
+      });
+      if (error) throw new Error(error.message);
+    },
+
+    async searchApprovedCreators(query) {
+      requireUser();
+      const { data, error } = await client.rpc("search_creator_seller_counterparties", {
+        p_role: "creator",
+        p_query: query.trim(),
+        p_limit: 20,
+      });
+      if (error) throw new Error(error.message);
+      return ((data ?? []) as Array<{ user_id: string; display_name: string | null; username: string | null }>).map((row) => ({
+        userId: row.user_id,
+        displayName: row.display_name?.trim() || row.username || "Creator",
+        username: row.username || row.user_id.slice(0, 8),
+      } satisfies CreatorDirectoryEntry));
+    },
+
+    async openCreatorConversation(creatorId) {
+      requireUser();
+      const { data, error } = await client.rpc("open_creator_seller_conversation", {
+        target_user: creatorId,
+        p_role: "creator",
+      });
+      if (error) throw new Error(error.message);
+      const conversationId = data as string;
+      const existing = await client
+        .from("messages")
+        .select("id")
+        .eq("conversation_id", conversationId)
+        .contains("payload", { commerce_channel: "creator_seller", directory_context: true })
+        .limit(1);
+      if (existing.error) throw new Error(existing.error.message);
+      if (!existing.data?.length) {
+        const sent = await client.rpc("send_personal_message", {
+          target_conversation: conversationId,
+          message_body: "Creator collaboration conversation opened.",
+          message_kind: "product",
+          message_payload: { commerce_channel: "creator_seller", directory_context: true, product_title: "General collaboration" },
+          message_client_id: globalThis.crypto.randomUUID(),
+        });
+        if (sent.error) throw new Error(sent.error.message);
+      }
+      return conversationId;
+    },
+
+    subscribeCreatorMessages(conversationId, onChange) {
+      const channel = client
+        .channel(`seller-creator-commerce-${conversationId}-${globalThis.crypto.randomUUID()}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
+          () => onChange(),
+        )
+        .subscribe();
+      return () => { void client.removeChannel(channel); };
     },
 
     async submitSellerApplication(draft) {

@@ -1,16 +1,18 @@
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { SellerStudioScreen } from "../../src/features/commerce/SellerStudioScreen";
 import { createSupabaseShopRepository } from "../../src/features/commerce/supabaseShopRepository";
+import { isSellerSection } from "../../src/features/commerce/seller-studio-navigation";
 import { localShopRepository } from "../../src/features/commerce/shopRepository";
 import { getCreatorCommerceAccess } from "../../src/features/creatorCommerce/accessRepository";
 import { useAuth } from "../../src/lib/AuthContext";
 import { supabase } from "../../src/lib/supabase";
 
 export default function SellerStudioPage() {
-  const { user } = useAuth();
+  const params = useLocalSearchParams<{ section?: string }>();
+  const { user, signOut } = useAuth();
   const [allowed, setAllowed] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -21,6 +23,7 @@ export default function SellerStudioPage() {
       user: user && "identities" in user ? user : null,
     });
   }, [user]);
+  const initialSection = isSellerSection(params.section) ? params.section : undefined;
 
   const verifySellerAccess = useCallback(async () => {
     setChecking(true);
@@ -71,7 +74,12 @@ export default function SellerStudioPage() {
   return (
     <SellerStudioScreen
       repository={repository}
+      initialSection={initialSection}
       persistenceKey={user ? `seller-studio-work:${user.id}` : undefined}
+      onSignOut={async () => {
+        await signOut();
+        router.replace("/login");
+      }}
       pickProductImages={async () => {
         const permission =
           await ImagePicker.requestMediaLibraryPermissionsAsync();

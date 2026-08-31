@@ -6,6 +6,7 @@ import {
   sellerGroupForSection,
   sellerNavigation,
   sellerSectionLabel,
+  toggleSellerNavigationGroup,
 } from "./seller-studio-navigation.ts";
 
 test("Seller Studio exposes the requested hierarchy without a flat module list", () => {
@@ -24,8 +25,17 @@ test("Seller Studio exposes the requested hierarchy without a flat module list",
   ]);
 });
 
+test("Seller Studio submenu state is controlled only by explicit primary-item clicks", () => {
+  assert.equal(toggleSellerNavigationGroup("", "orders", true), "orders");
+  assert.equal(toggleSellerNavigationGroup("orders", "orders", true), "");
+  assert.equal(toggleSellerNavigationGroup("orders", "products", true), "products");
+  assert.equal(toggleSellerNavigationGroup("products", "home", false), "");
+});
+
 test("functional and Coming Soon routes are explicit and refresh-safe", () => {
   assert.equal(sellerGroupForSection("affiliate_products").key, "affiliate");
+  assert.equal(sellerGroupForSection("creator_chat").key, "creator_chat");
+  assert.equal(sellerSectionLabel("creator_chat"), "Creator Chats");
   assert.equal(sellerSectionLabel("orders_returns"), "Manage Returns");
   assert.equal(isSellerSection("products_manage"), true);
   assert.equal(isSellerSection("catalog"), false);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { Asset } from "expo-asset";
+import { router } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import {
   BarChart3,
@@ -34,6 +35,7 @@ import {
   PhoneCall,
   Send,
   LayoutGrid,
+  LogOut,
   MessageCircle,
   PackagePlus,
   Plus,
@@ -48,6 +50,8 @@ import {
 import {
   type BusinessConversationSummary,
   type BusinessMessage,
+  type CreatorConversationMessage,
+  type CreatorConversationSummary,
   type ProductDraft,
   type SellerApplicationDraft,
   type SellerAnalytics,
@@ -65,13 +69,25 @@ import {
   type UploadAsset,
   formatInr,
 } from "./shopRepository";
+import {
+  filterAndSortSellerOrders,
+  filterAndSortSellerReturns,
+  groupReturnPerformance,
+  type SellerDateFilter,
+  type SellerOrderSort,
+  type SellerOrderStatusFilter,
+  type SellerReturnSort,
+} from "./seller-order-return-filters";
 import SellerAnalyticsCharts from "./SellerAnalyticsCharts";
+import SelectDropdown from "../../components/SelectDropdown";
+import SafeLinkText from "../chat/SafeLinkText";
 import {
   isSellerSection,
   sellerGroupForSection,
   sellerNavigation,
   sellerSections,
   sellerSectionLabel,
+  toggleSellerNavigationGroup,
   type SellerSection,
 } from "./seller-studio-navigation";
 
@@ -79,6 +95,8 @@ type Props = {
   repository: ShopRepository;
   pickProductImages?: () => Promise<UploadAsset[]>;
   persistenceKey?: string;
+  initialSection?: SellerSection;
+  onSignOut?: () => void | Promise<void>;
 };
 
 const ink = "#0e1726";
@@ -93,6 +111,13 @@ const dark = "#111111";
 const desktopFlyoutGap = 6;
 const desktopFlyoutMinTop = 12;
 const desktopFlyoutBottomPadding = 16;
+const dateFilterOptions: Array<[SellerDateFilter, string]> = [
+  ["all", "All dates"],
+  ["today", "Today"],
+  ["last_7_days", "Last 7 days"],
+  ["last_30_days", "Last 30 days"],
+  ["custom", "Custom range"],
+];
 const commerceFont = Platform.select({
   web: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   default: "System",
@@ -113,6 +138,7 @@ const navigationIcons: Record<string, React.ComponentType<{ size?: number; color
   finance: WalletCards,
   storefront: Store,
   business_chat: MessageSquareText,
+  creator_chat: MessageCircle,
   discoverability: SearchCheck,
   operations: Settings2,
 };
@@ -174,6 +200,8 @@ export function SellerStudioScreen({
   repository,
   pickProductImages,
   persistenceKey,
+  initialSection,
+  onSignOut,
 }: Props) {
   const { width: viewportWidth } = useWindowDimensions();
   const mobileLayout = viewportWidth < 900;
@@ -191,10 +219,8 @@ export function SellerStudioScreen({
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeSection, setActiveSection] =
-    useState<SellerSection>("overview");
-  const [expandedNavigationGroup, setExpandedNavigationGroup] = useState("home");
-  const navigationHoverLockRef = useRef(0);
-  const navigationHoverCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useState<SellerSection>(initialSection ?? "overview");
+  const [expandedNavigationGroup, setExpandedNavigationGroup] = useState("");
   const [navigationAnchors, setNavigationAnchors] = useState<Record<string, { top: number; height: number }>>({});
   const [navigationViewportTop, setNavigationViewportTop] = useState(0);
   const [navigationViewportHeight, setNavigationViewportHeight] = useState(0);
@@ -221,6 +247,28 @@ export function SellerStudioScreen({
     useState<BusinessConversationSummary | null>(null);
   const [businessMessages, setBusinessMessages] = useState<BusinessMessage[]>([]);
   const [businessMessageDraft, setBusinessMessageDraft] = useState("");
+  const [creatorConversations, setCreatorConversations] = useState<CreatorConversationSummary[]>([]);
+  const [selectedCreatorConversation, setSelectedCreatorConversation] = useState<CreatorConversationSummary | null>(null);
+  const [creatorMessages, setCreatorMessages] = useState<CreatorConversationMessage[]>([]);
+  const [creatorMessageDraft, setCreatorMessageDraft] = useState("");
+  const [creatorConversationSearch, setCreatorConversationSearch] = useState("");
+  const [creatorDirectoryResults, setCreatorDirectoryResults] = useState<Array<{ userId: string; displayName: string; username: string }>>([]);
+  const [creatorDirectoryBusy, setCreatorDirectoryBusy] = useState(false);
+  const [orderStatusFilter, setOrderStatusFilter] = useState<SellerOrderStatusFilter>("all");
+  const [orderDateFilter, setOrderDateFilter] = useState<SellerDateFilter>("all");
+  const [dispatchDateFilter, setDispatchDateFilter] = useState<SellerDateFilter>("all");
+  const [orderSort, setOrderSort] = useState<SellerOrderSort>("newest");
+  const [customOrderStart, setCustomOrderStart] = useState("");
+  const [customOrderEnd, setCustomOrderEnd] = useState("");
+  const [customDispatchStart, setCustomDispatchStart] = useState("");
+  const [customDispatchEnd, setCustomDispatchEnd] = useState("");
+  const [returnStatusFilter, setReturnStatusFilter] = useState("all");
+  const [returnCategoryFilter, setReturnCategoryFilter] = useState("all");
+  const [returnDateFilter, setReturnDateFilter] = useState<SellerDateFilter>("all");
+  const [returnSort, setReturnSort] = useState<SellerReturnSort>("newest");
+  const [customReturnStart, setCustomReturnStart] = useState("");
+  const [customReturnEnd, setCustomReturnEnd] = useState("");
+  const [returnCountDescending, setReturnCountDescending] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -248,9 +296,9 @@ export function SellerStudioScreen({
           : legacySection === "orders"
             ? "orders_manage"
             : legacySection;
-        if (isSellerSection(restoredSection)) {
+        if (!initialSection && isSellerSection(restoredSection)) {
           setActiveSection(restoredSection);
-          setExpandedNavigationGroup(sellerGroupForSection(restoredSection).key);
+          setExpandedNavigationGroup("");
         }
       } catch {
         // A corrupt local draft should never block Seller Studio.
@@ -260,7 +308,13 @@ export function SellerStudioScreen({
     };
     void restoreProductWork();
     return () => { active = false; };
-  }, [persistenceKey]);
+  }, [initialSection, persistenceKey]);
+
+  useEffect(() => {
+    if (!initialSection) return;
+    setActiveSection(initialSection);
+    setExpandedNavigationGroup("");
+  }, [initialSection]);
 
   useEffect(() => {
     if (!persistenceKey || !draftRestored) return;
@@ -378,10 +432,21 @@ export function SellerStudioScreen({
     }
   };
 
+  const loadCreatorDesk = async () => {
+    try {
+      const next = await repository.listCreatorConversations();
+      setCreatorConversations(next);
+      if (!selectedCreatorConversation && next[0]) setSelectedCreatorConversation(next[0]);
+    } catch (error) {
+      Alert.alert("Unable to load Creator Chats", error instanceof Error ? error.message : "Please try again.");
+    }
+  };
+
   useEffect(() => {
-    if (["orders_manage", "logistics_overview", "logistics_fulfillment", "logistics_shipping"].includes(activeSection)) void loadOrders();
+    if (["orders_manage", "orders_returns", "logistics_overview", "logistics_fulfillment", "logistics_shipping"].includes(activeSection)) void loadOrders();
     if (activeSection === "orders_returns") void loadReturns();
     if (activeSection === "business_chat") void loadBusinessDesk();
+    if (activeSection === "creator_chat") void loadCreatorDesk();
     if (activeSection === "overview" || activeSection === "analytics") void loadAnalytics();
     if (activeSection === "finance") void loadFinance();
   }, [activeSection, refreshKey]);
@@ -396,6 +461,20 @@ export function SellerStudioScreen({
       .then(setBusinessMessages)
       .catch(() => setBusinessMessages([]));
   }, [repository, selectedBusinessConversation?.id]);
+
+  useEffect(() => {
+    if (!selectedCreatorConversation) {
+      setCreatorMessages([]);
+      return;
+    }
+    const refreshCreatorMessages = () => {
+      void repository.listCreatorMessages(selectedCreatorConversation.id)
+        .then(setCreatorMessages)
+        .catch(() => setCreatorMessages([]));
+    };
+    refreshCreatorMessages();
+    return repository.subscribeCreatorMessages(selectedCreatorConversation.id, refreshCreatorMessages);
+  }, [repository, selectedCreatorConversation?.id]);
 
   const productCount = dashboard?.products.length ?? 0;
   const totalInventory =
@@ -423,22 +502,28 @@ export function SellerStudioScreen({
   ];
   const completedHealthChecks = healthChecks.filter((item) => item.complete).length;
   const healthScore = Math.round((completedHealthChecks / healthChecks.length) * 100);
-
-  const cancelNavigationClose = () => {
-    if (navigationHoverCloseRef.current) {
-      clearTimeout(navigationHoverCloseRef.current);
-      navigationHoverCloseRef.current = null;
-    }
-  };
-
-  const scheduleNavigationClose = () => {
-    if (mobileLayout) return;
-    cancelNavigationClose();
-    navigationHoverCloseRef.current = setTimeout(() => {
-      setExpandedNavigationGroup(sellerGroupForSection(activeSection).key);
-      navigationHoverCloseRef.current = null;
-    }, 160);
-  };
+  const filteredOrders = useMemo(() => filterAndSortSellerOrders(orders, {
+    status: orderStatusFilter,
+    orderDate: orderDateFilter,
+    dispatchDate: dispatchDateFilter,
+    customOrderStart,
+    customOrderEnd,
+    customDispatchStart,
+    customDispatchEnd,
+    sort: orderSort,
+  }), [orders, orderStatusFilter, orderDateFilter, dispatchDateFilter, customOrderStart, customOrderEnd, customDispatchStart, customDispatchEnd, orderSort]);
+  const filteredReturns = useMemo(() => filterAndSortSellerReturns(returns, {
+    status: returnStatusFilter,
+    category: returnCategoryFilter,
+    date: returnDateFilter,
+    customStart: customReturnStart,
+    customEnd: customReturnEnd,
+    sort: returnSort,
+  }), [returns, returnStatusFilter, returnCategoryFilter, returnDateFilter, customReturnStart, customReturnEnd, returnSort]);
+  const returnPerformance = useMemo(() => {
+    const rows = groupReturnPerformance(filteredReturns);
+    return returnCountDescending ? rows : [...rows].reverse();
+  }, [filteredReturns, returnCountDescending]);
 
   const rememberNavigationAnchor = (groupKey: string, event: LayoutChangeEvent) => {
     const { y, height } = event.nativeEvent.layout;
@@ -644,6 +729,51 @@ export function SellerStudioScreen({
     }
   };
 
+  const sendCreatorDeskMessage = async () => {
+    if (!selectedCreatorConversation || !creatorMessageDraft.trim()) return;
+    setBusy(true);
+    try {
+      await repository.sendCreatorMessage(selectedCreatorConversation.id, creatorMessageDraft);
+      setCreatorMessageDraft("");
+      const [messages] = await Promise.all([
+        repository.listCreatorMessages(selectedCreatorConversation.id),
+        loadCreatorDesk(),
+      ]);
+      setCreatorMessages(messages);
+    } catch (error) {
+      Alert.alert("Unable to send Creator reply", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const searchApprovedCreators = async () => {
+    setCreatorDirectoryBusy(true);
+    try {
+      setCreatorDirectoryResults(await repository.searchApprovedCreators(creatorConversationSearch));
+    } catch (error) {
+      Alert.alert("Creator directory unavailable", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setCreatorDirectoryBusy(false);
+    }
+  };
+
+  const openCreatorDirectoryConversation = async (creatorId: string) => {
+    setCreatorDirectoryBusy(true);
+    try {
+      const conversationId = await repository.openCreatorConversation(creatorId);
+      const next = await repository.listCreatorConversations();
+      setCreatorConversations(next);
+      setSelectedCreatorConversation(next.find((conversation) => conversation.id === conversationId) ?? null);
+      setCreatorDirectoryResults([]);
+      setCreatorConversationSearch("");
+    } catch (error) {
+      Alert.alert("Unable to open Creator chat", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setCreatorDirectoryBusy(false);
+    }
+  };
+
   const updateAffiliateProduct = async (product: ShopProduct, enabled: boolean, commissionBps?: number) => {
     setAffiliateBusyProductId(product.id);
     try {
@@ -683,9 +813,8 @@ export function SellerStudioScreen({
   };
 
   const selectSection = (section: SellerSection) => {
-    cancelNavigationClose();
     setActiveSection(section);
-    setExpandedNavigationGroup(sellerGroupForSection(section).key);
+    setExpandedNavigationGroup("");
     if (mobileLayout) setMobileNavigationOpen(false);
   };
 
@@ -792,17 +921,14 @@ export function SellerStudioScreen({
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`${group.label}${hasSubmenu ? " submenu" : ""}`}
-                    onHoverIn={() => {
-                      if (!mobileLayout && hasSubmenu && Date.now() >= navigationHoverLockRef.current) {
-                        cancelNavigationClose();
-                        setExpandedNavigationGroup(group.key);
-                      }
-                    }}
-                    onHoverOut={hasSubmenu ? scheduleNavigationClose : undefined}
                     onPress={() => {
-                      navigationHoverLockRef.current = Date.now() + 350;
-                      setExpandedNavigationGroup(group.key);
-                      if (!hasSubmenu || !mobileLayout) selectSection(group.defaultSection);
+                      if (hasSubmenu) {
+                        setExpandedNavigationGroup((current) =>
+                          toggleSellerNavigationGroup(current, group.key, true),
+                        );
+                        return;
+                      }
+                      selectSection(group.defaultSection);
                     }}
                     style={[styles.navItem, groupActive && styles.navItemActive]}
                   >
@@ -836,6 +962,12 @@ export function SellerStudioScreen({
                 </View>
               );
             })}
+            {mobileLayout && onSignOut ? (
+              <Pressable accessibilityRole="button" accessibilityLabel="Log out" onPress={() => void onSignOut()} style={styles.sidebarSignOut}>
+                <LogOut size={14} color="#b42318" />
+                <Text style={styles.sidebarSignOutText}>Log out</Text>
+              </Pressable>
+            ) : null}
           </ScrollView>
         ) : null}
 
@@ -843,9 +975,7 @@ export function SellerStudioScreen({
           const group = sellerNavigation.find((item) => item.key === expandedNavigationGroup);
           if (!group || group.children.length < 2) return null;
           return (
-            <Pressable
-              onHoverIn={cancelNavigationClose}
-              onHoverOut={scheduleNavigationClose}
+            <View
               onLayout={(event) => setDesktopFlyoutHeight(event.nativeEvent.layout.height)}
               style={[styles.desktopFlyout, { top: getDesktopFlyoutTop(group.key, group.children.length) }]}
             >
@@ -868,7 +998,7 @@ export function SellerStudioScreen({
                   );
                 })}
               </View>
-            </Pressable>
+            </View>
           );
         })() : null}
 
@@ -878,6 +1008,7 @@ export function SellerStudioScreen({
             <Text style={styles.sidebarFooterCopy}>
               Seller support is available from your Social Chat 24/7 account.
             </Text>
+            {onSignOut ? <Pressable accessibilityRole="button" accessibilityLabel="Log out" onPress={() => void onSignOut()} style={styles.sidebarSignOut}><LogOut size={14} color="#b42318" /><Text style={styles.sidebarSignOutText}>Log out</Text></Pressable> : null}
           </View>
         ) : null}
       </View>
@@ -897,7 +1028,7 @@ export function SellerStudioScreen({
               <Bell size={18} color={ink} strokeWidth={2.1} />
               <View style={styles.notificationDot} />
             </Pressable>
-            {activeSection !== "business_chat" ? <Pressable
+            {!['business_chat', 'creator_chat'].includes(activeSection) ? <Pressable
               onPress={() => selectSection("products_add")}
               style={[styles.topPrimaryAction, mobileLayout && styles.topPrimaryActionMobile]}
             >
@@ -1500,10 +1631,27 @@ export function SellerStudioScreen({
                 <Text style={styles.secondaryButtonText}>Refresh orders</Text>
               </Pressable>
             </View>
+            <View style={styles.filterPanel}>
+              <CycleFilter label="Status" value={orderStatusFilter} onChange={setOrderStatusFilter} options={[
+                ["all", "All statuses"], ["on_hold", "On hold"], ["pending", "Pending"], ["ready_to_ship", "Ready to ship"],
+                ["shipped", "Shipped"], ["cancelled", "Cancelled"], ["confirmed", "Confirmed"], ["processing", "Processing"],
+                ["out_for_delivery", "Out for delivery"], ["delivered", "Delivered"],
+              ]} />
+              <CycleFilter label="Order date" value={orderDateFilter} onChange={setOrderDateFilter} options={dateFilterOptions} />
+              <CycleFilter label="Dispatch date" value={dispatchDateFilter} onChange={setDispatchDateFilter} options={dateFilterOptions} />
+              <CycleFilter label="Sort" value={orderSort} onChange={setOrderSort} options={[
+                ["newest", "Newest first"], ["oldest", "Oldest first"], ["value_high", "Value high–low"], ["value_low", "Value low–high"],
+              ]} />
+              <Text style={styles.filterCount}>{filteredOrders.length} of {orders.length} Orders</Text>
+              <Pressable accessibilityRole="button" onPress={() => { setOrderStatusFilter("all"); setOrderDateFilter("all"); setDispatchDateFilter("all"); setOrderSort("newest"); setCustomOrderStart(""); setCustomOrderEnd(""); setCustomDispatchStart(""); setCustomDispatchEnd(""); }} style={styles.filterReset}><Text style={styles.filterResetText}>Reset filters</Text></Pressable>
+            </View>
+            {orderDateFilter === "custom" ? <DateRangeFields label="Order date range" start={customOrderStart} end={customOrderEnd} setStart={setCustomOrderStart} setEnd={setCustomOrderEnd} /> : null}
+            {dispatchDateFilter === "custom" ? <DateRangeFields label="Dispatch date range" start={customDispatchStart} end={customDispatchEnd} setStart={setCustomDispatchStart} setEnd={setCustomDispatchEnd} /> : null}
+            {dispatchDateFilter !== "all" && !orders.some((order) => order.dispatchAt) ? <Text style={styles.filterNote}>No Orders have an authoritative dispatch timestamp yet.</Text> : null}
             {ordersLoading ? <ActivityIndicator color={green} /> : null}
             {mobileLayout ? (
               <View style={styles.mobileOrderList}>
-                {orders.length ? orders.map((order) => (
+                {filteredOrders.length ? filteredOrders.map((order) => (
                   <Pressable key={order.id} onPress={() => setSelectedOrder(order)} style={styles.mobileOrderCard}>
                     <View style={styles.mobileOrderHeader}>
                       <View style={styles.mobileOrderIdentity}>
@@ -1526,7 +1674,7 @@ export function SellerStudioScreen({
                       </View>
                     </View>
                   </Pressable>
-                )) : <EmptyHint text="No orders have arrived yet. New buyer orders will appear here automatically." />}
+                )) : <EmptyHint text={orders.length ? "No Orders match these filters." : "No orders have arrived yet. New buyer orders will appear here automatically."} />}
               </View>
             ) : (
               <View style={styles.tableShell}>
@@ -1537,7 +1685,7 @@ export function SellerStudioScreen({
                   <Text style={[styles.tableHeaderText, { flex: 1 }]}>Fulfilment</Text>
                   <Text style={[styles.tableHeaderText, { flex: 0.75 }]}>Action</Text>
                 </View>
-                {orders.length ? orders.map((order) => (
+                {filteredOrders.length ? filteredOrders.map((order) => (
                   <Pressable key={order.id} onPress={() => setSelectedOrder(order)} style={styles.orderRow}>
                     <View style={{ flex: 1.2 }}>
                       <Text style={styles.tablePrimary}>#{order.id.slice(0, 8).toUpperCase()}</Text>
@@ -1556,7 +1704,7 @@ export function SellerStudioScreen({
                       <Text style={styles.manageOrderText}>Manage</Text>
                     </View>
                   </Pressable>
-                )) : <EmptyHint text="No orders have arrived yet. New buyer orders will appear here automatically." />}
+                )) : <EmptyHint text={orders.length ? "No Orders match these filters." : "No orders have arrived yet. New buyer orders will appear here automatically."} />}
               </View>
             )}
           </SectionShell>
@@ -1571,9 +1719,40 @@ export function SellerStudioScreen({
               <View><Text style={styles.tableTitle}>Return queue</Text><Text style={styles.orderToolbarCopy}>Approve, reject, or request more information. Refund handoff remains provider-neutral.</Text></View>
               <Pressable style={styles.secondaryButton} onPress={() => void loadReturns()}><Text style={styles.secondaryButtonText}>Refresh returns</Text></Pressable>
             </View>
+            <View style={styles.metricsRow}>
+              <MetricCard icon={ClipboardList} label="Total Returns" value={String(returns.length)} blurb="Authoritative Return requests" />
+              <MetricCard icon={PackageCheck} label="Approved" value={String(returns.filter((item) => item.status === "approved").length)} blurb="Approved requests" />
+              <MetricCard icon={X} label="Rejected" value={String(returns.filter((item) => item.status === "rejected").length)} blurb="Rejected requests" />
+              <MetricCard icon={WalletCards} label="Return value" value={formatInr(returns.reduce((sum, item) => sum + item.itemSubtotalPaise, 0))} blurb={orders.length ? `${((returns.length / orders.length) * 100).toFixed(1)}% requests per loaded Order` : "No loaded Order denominator"} />
+            </View>
+            <View style={styles.filterPanel}>
+              <CycleFilter label="Status" value={returnStatusFilter} onChange={setReturnStatusFilter} options={[
+                ["all", "All statuses"], ["submitted", "Submitted"], ["under_review", "Under review"], ["approved", "Approved"],
+                ["rejected", "Rejected"], ["cancelled", "Cancelled"], ["received", "Received"], ["refunded", "Refunded"],
+              ]} />
+              <CycleFilter label="Product category" value={returnCategoryFilter} onChange={setReturnCategoryFilter} options={[
+                ["all", "All categories"], ...Array.from(new Set(returns.map((item) => item.productCategory))).filter(Boolean).sort().map((category) => [category, category] as [string, string]),
+              ]} />
+              <CycleFilter label="Request date" value={returnDateFilter} onChange={setReturnDateFilter} options={dateFilterOptions} />
+              <CycleFilter label="Sort" value={returnSort} onChange={setReturnSort} options={[
+                ["newest", "Newest first"], ["oldest", "Oldest first"], ["value_high", "Value high–low"], ["value_low", "Value low–high"],
+              ]} />
+              <Text style={styles.filterCount}>{filteredReturns.length} of {returns.length} Returns</Text>
+              <Pressable accessibilityRole="button" onPress={() => { setReturnStatusFilter("all"); setReturnCategoryFilter("all"); setReturnDateFilter("all"); setReturnSort("newest"); setCustomReturnStart(""); setCustomReturnEnd(""); }} style={styles.filterReset}><Text style={styles.filterResetText}>Reset filters</Text></Pressable>
+            </View>
+            {returnDateFilter === "custom" ? <DateRangeFields label="Return request range" start={customReturnStart} end={customReturnEnd} setStart={setCustomReturnStart} setEnd={setCustomReturnEnd} /> : null}
+            {returnPerformance.length ? (
+              <View style={styles.performancePanel}>
+                <View style={styles.performanceHeading}>
+                  <View><Text style={styles.tablePrimary}>Top returned Products</Text><Text style={styles.tableSecondary}>Grouped from the filtered Return queue</Text></View>
+                  <Pressable onPress={() => setReturnCountDescending((current) => !current)} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>{returnCountDescending ? "Most returns first" : "Fewest returns first"}</Text></Pressable>
+                </View>
+                {returnPerformance.slice(0, 8).map((item) => <View key={item.productTitle} style={styles.performanceRow}><View style={{ flex: 1 }}><Text style={styles.tablePrimary}>{item.productTitle}</Text><Text style={styles.tableSecondary}>{item.category}</Text></View><Text style={styles.performanceCount}>{item.count} Return{item.count === 1 ? "" : "s"}</Text><Text style={styles.performanceValue}>{formatInr(item.valuePaise)}</Text></View>)}
+              </View>
+            ) : null}
             {returnsLoading ? <ActivityIndicator color={green} /> : null}
             <View style={styles.returnList}>
-              {returns.length ? returns.map((request) => {
+              {filteredReturns.length ? filteredReturns.map((request) => {
                 const open = ["submitted", "under_review"].includes(request.status);
                 return (
                   <View key={request.id} style={styles.returnCard}>
@@ -1588,6 +1767,8 @@ export function SellerStudioScreen({
                       <InfoRow label="Requested" value={formatDate(request.requestedAt)} />
                       <InfoRow label="Item value" value={formatInr(request.itemSubtotalPaise)} />
                       <InfoRow label="Reason" value={request.reason} />
+                      <InfoRow label="Internal tracking" value={request.trackingStatus} />
+                      <InfoRow label="Product category" value={request.productCategory} />
                     </View>
                     {request.details ? <Text style={styles.returnDetails}>{request.details}</Text> : null}
                     {request.sellerNote ? <Text style={styles.returnSellerNote}>Seller note: {request.sellerNote}</Text> : null}
@@ -1611,7 +1792,7 @@ export function SellerStudioScreen({
                     ) : null}
                   </View>
                 );
-              }) : <EmptyHint text="No Return requests yet. Buyer requests will appear here automatically." />}
+              }) : <EmptyHint text={returns.length ? "No Returns match these filters." : "No Return requests yet. Buyer requests will appear here automatically."} />}
             </View>
           </SectionShell>
         ) : null}
@@ -1755,7 +1936,7 @@ export function SellerStudioScreen({
                     <ScrollView style={styles.messageRail} contentContainerStyle={styles.messageRailContent}>
                       {businessMessages.map((message) => {
                         const isSeller = message.senderId !== selectedBusinessConversation.customerId;
-                        return <View key={message.id} style={[styles.businessBubble, isSeller ? styles.businessBubbleSeller : styles.businessBubbleCustomer]}><Text style={[styles.businessBubbleText, isSeller && styles.businessBubbleTextSeller]}>{message.body}</Text><Text style={[styles.messageTime, isSeller && styles.messageTimeSeller]}>{formatTime(message.createdAt)}</Text></View>;
+                        return <View key={message.id} style={[styles.businessBubble, isSeller ? styles.businessBubbleSeller : styles.businessBubbleCustomer]}><SafeLinkText style={[styles.businessBubbleText, isSeller && styles.businessBubbleTextSeller]} linkStyle={isSeller ? styles.businessBubbleTextSeller : styles.chatLink}>{message.body}</SafeLinkText><Text style={[styles.messageTime, isSeller && styles.messageTimeSeller]}>{formatTime(message.createdAt)}</Text></View>;
                       })}
                     </ScrollView>
                     <View style={styles.replyComposer}>
@@ -1764,6 +1945,42 @@ export function SellerStudioScreen({
                     </View>
                   </>
                 ) : <BusinessDeskEmpty />}
+              </View>
+            </View>
+          </SectionShell>
+        ) : null}
+
+        {activeSection === "creator_chat" ? (
+          <SectionShell title="Creator Chats" subtitle="Dedicated Product and promotion conversations with Creators, isolated from customer Business Chat." showArtwork={false}>
+            <View style={[styles.businessDesk, mobileLayout && styles.businessDeskMobile]}>
+              <View style={[styles.businessList, mobileLayout && styles.businessListMobile]}>
+                <View style={styles.businessListHeader}>
+                  <View><Text style={styles.businessListTitle}>Creator inbox</Text><Text style={styles.businessListMeta}>Product-context conversations</Text></View>
+                  <View style={styles.onlineBadge}><View style={styles.onlineDot} /><Text style={styles.onlineText}>Live</Text></View>
+                </View>
+                <View style={styles.creatorSearch}><SearchCheck size={16} color={muted} /><TextInput accessibilityLabel="Search Creators" value={creatorConversationSearch} onChangeText={setCreatorConversationSearch} placeholder="Search existing or approved Creators" placeholderTextColor="#98a2b3" style={styles.creatorSearchInput} /></View>
+                <Pressable accessibilityRole="button" disabled={creatorDirectoryBusy} onPress={() => void searchApprovedCreators()} style={[styles.creatorDirectoryButton, creatorDirectoryBusy && styles.disabledButton]}><Text style={styles.creatorDirectoryButtonText}>{creatorDirectoryBusy ? "Searching…" : "Search approved Creators"}</Text></Pressable>
+                {creatorDirectoryResults.map((creator) => <Pressable key={creator.userId} accessibilityRole="button" disabled={creatorDirectoryBusy} onPress={() => void openCreatorDirectoryConversation(creator.userId)} style={styles.creatorDirectoryResult}><View style={styles.businessAvatar}><Text style={styles.businessAvatarText}>{creator.displayName.slice(0, 1).toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={styles.businessCustomerName}>{creator.displayName}</Text><Text style={styles.businessListMeta}>@{creator.username} · Approved Creator</Text></View><Text style={styles.creatorDirectoryAction}>Start chat</Text></Pressable>)}
+                {creatorConversations.filter((conversation) => { const query = creatorConversationSearch.trim().toLowerCase(); return !query || [conversation.creatorName, conversation.creatorUsername, conversation.lastMessage].some((value) => value.toLowerCase().includes(query)); }).length ? creatorConversations.filter((conversation) => { const query = creatorConversationSearch.trim().toLowerCase(); return !query || [conversation.creatorName, conversation.creatorUsername, conversation.lastMessage].some((value) => value.toLowerCase().includes(query)); }).map((conversation) => (
+                  <Pressable key={conversation.id} onPress={() => setSelectedCreatorConversation(conversation)} style={[styles.businessConversation, selectedCreatorConversation?.id === conversation.id && styles.businessConversationActive]}>
+                    <View style={styles.businessAvatar}><Text style={styles.businessAvatarText}>{conversation.creatorName.slice(0, 1).toUpperCase()}</Text></View>
+                    <View style={{ flex: 1 }}><View style={styles.conversationTitleRow}><Text style={styles.businessCustomerName}>{conversation.creatorName}</Text><Text style={styles.businessConversationTime}>{formatTime(conversation.updatedAt)}</Text></View><View style={styles.conversationTitleRow}><Text style={[styles.businessLastMessage, { flex: 1 }]} numberOfLines={1}>{conversation.lastMessage}</Text>{conversation.unreadCount ? <View style={styles.unreadBadge}><Text style={styles.unreadBadgeText}>{conversation.unreadCount}</Text></View> : null}</View></View>
+                  </Pressable>
+                )) : <View style={styles.inboxEmpty}><View style={styles.inboxEmptyMark}><MessageCircle size={22} color={green} /></View><Text style={styles.inboxEmptyTitle}>No matching Creator conversations</Text><Text style={styles.inboxEmptyCopy}>Creator enquiries started from Affiliate-enabled Products will appear here.</Text></View>}
+              </View>
+              <View style={styles.businessThread}>
+                {selectedCreatorConversation ? <>
+                  <View style={styles.threadHeader}>
+                    <View style={styles.threadIdentity}><View style={styles.businessAvatar}><Text style={styles.businessAvatarText}>{selectedCreatorConversation.creatorName.slice(0, 1).toUpperCase()}</Text></View><View><Text style={styles.businessCustomerName}>{selectedCreatorConversation.creatorName}</Text><Text style={styles.threadMeta}>@{selectedCreatorConversation.creatorUsername} · Creator commerce</Text></View></View><Pressable accessibilityRole="button" onPress={() => router.push({ pathname: '/seller/creator-chat/[id]', params: { id: selectedCreatorConversation.id } })} style={styles.threadFullChat}><Text style={styles.threadFullChatText}>Open full chat</Text></Pressable>
+                  </View>
+                  <ScrollView style={styles.messageRail} contentContainerStyle={styles.messageRailContent}>
+                    {creatorMessages.map((message) => {
+                      const isSeller = message.senderId !== selectedCreatorConversation.creatorId;
+                      return <View key={message.id} style={[styles.businessBubble, isSeller ? styles.businessBubbleSeller : styles.businessBubbleCustomer]}>{message.productTitle ? <Text style={[styles.productContextLabel, isSeller && styles.productContextLabelSeller]}>Product · {message.productTitle}</Text> : null}<SafeLinkText style={[styles.businessBubbleText, isSeller && styles.businessBubbleTextSeller]} linkStyle={isSeller ? styles.businessBubbleTextSeller : styles.chatLink}>{message.body}</SafeLinkText><Text style={[styles.messageTime, isSeller && styles.messageTimeSeller]}>{formatTime(message.createdAt)}</Text></View>;
+                    })}
+                  </ScrollView>
+                  <View style={styles.replyComposer}><TextInput value={creatorMessageDraft} onChangeText={setCreatorMessageDraft} placeholder="Reply to Creator…" placeholderTextColor="#98a2b3" style={styles.replyInput} /><Pressable accessibilityRole="button" accessibilityLabel="Send Creator reply" onPress={() => void sendCreatorDeskMessage()} disabled={busy} style={styles.replySend}><Send size={17} color="#ffffff" /></Pressable></View>
+                </> : <BusinessDeskEmpty />}
               </View>
             </View>
           </SectionShell>
@@ -2385,6 +2602,42 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function CycleFilter<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: Array<[T, string]>;
+  onChange: (value: T) => void;
+}) {
+  return <SelectDropdown label={label} value={value} options={options} onChange={onChange} style={styles.filterControl} />;
+}
+
+function DateRangeFields({
+  label,
+  start,
+  end,
+  setStart,
+  setEnd,
+}: {
+  label: string;
+  start: string;
+  end: string;
+  setStart: (value: string) => void;
+  setEnd: (value: string) => void;
+}) {
+  return (
+    <View style={styles.dateRangeRow}>
+      <Text style={styles.filterLabel}>{label}</Text>
+      <TextInput accessibilityLabel={`${label} start`} value={start} onChangeText={setStart} placeholder="Start YYYY-MM-DD" placeholderTextColor="#8b978f" style={styles.dateRangeInput} />
+      <TextInput accessibilityLabel={`${label} end`} value={end} onChangeText={setEnd} placeholder="End YYYY-MM-DD" placeholderTextColor="#8b978f" style={styles.dateRangeInput} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   page: {
     flex: 1,
@@ -2518,6 +2771,8 @@ const styles = StyleSheet.create({
   },
   sidebarFooterTitle: { color: ink, fontWeight: "800", fontSize: 12 },
   sidebarFooterCopy: { color: muted, marginTop: 5, fontSize: 11, lineHeight: 16 },
+  sidebarSignOut: { alignSelf: "flex-start", marginTop: 10, minHeight: 30, paddingHorizontal: 9, borderRadius: 8, backgroundColor: "#fff1f0", flexDirection: "row", alignItems: "center", gap: 5 },
+  sidebarSignOutText: { color: "#b42318", fontSize: 11, fontWeight: "800" },
   main: { flex: 1 },
   mainMobile: { width: "100%" },
   mainContent: { padding: 22, gap: 18, paddingBottom: 44, maxWidth: 1500, width: "100%", alignSelf: "center" },
@@ -2830,6 +3085,17 @@ const styles = StyleSheet.create({
   orderToolbar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 16 },
   orderToolbarMobile: { flexDirection: "column", alignItems: "stretch", gap: 12 },
   orderToolbarCopy: { color: muted, fontSize: 12, marginTop: 5 },
+  filterPanel: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", gap: 10, borderRadius: 14, borderWidth: 1, borderColor: "#e1e9e4", backgroundColor: "#f8fbf9", padding: 12 },
+  filterControl: { minWidth: 145, minHeight: 54, borderRadius: 10, borderWidth: 1, borderColor: "#dce5df", backgroundColor: "#ffffff", paddingHorizontal: 11, paddingVertical: 8, justifyContent: "center" },
+  filterReset: { minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: "#cfe0d6", backgroundColor: "#ffffff", paddingHorizontal: 13, alignItems: "center", justifyContent: "center" },
+  filterResetText: { color: greenDeep, fontSize: 11, fontWeight: "900" },
+  filterLabel: { color: muted, fontSize: 9, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.45 },
+  filterValueRow: { marginTop: 4, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  filterValue: { color: ink, fontSize: 12, fontWeight: "800" },
+  filterCount: { color: greenDeep, fontSize: 11, fontWeight: "900", paddingHorizontal: 4, paddingBottom: 10 },
+  filterNote: { color: "#835f19", fontSize: 11, lineHeight: 17, backgroundColor: "#fff8e8", borderRadius: 9, padding: 10 },
+  dateRangeRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 9, borderRadius: 11, backgroundColor: "#f6f9f7", padding: 10 },
+  dateRangeInput: { minWidth: 160, minHeight: 38, borderRadius: 9, borderWidth: 1, borderColor: line, backgroundColor: "#ffffff", color: ink, paddingHorizontal: 10, fontSize: 12 },
   secondaryButton: { minHeight: 36, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: "#dfe5e2", backgroundColor: "#ffffff", alignItems: "center", justifyContent: "center" },
   secondaryButtonText: { color: "#315240", fontSize: 12, fontWeight: "800" },
   orderTableHeader: { flexDirection: "row", paddingHorizontal: 18, paddingVertical: 12, backgroundColor: "#f7f9f8", borderTopWidth: 1, borderTopColor: "#e2ebe5" },
@@ -2896,8 +3162,17 @@ const styles = StyleSheet.create({
   trackingText: { marginTop: 4, color: muted, fontSize: 10 },
   manageOrderText: { color: greenDeep, fontWeight: "800", fontSize: 12 },
   businessDesk: { minHeight: 620, flexDirection: "row", borderWidth: 1, borderColor: "#dce5e0", borderRadius: 18, overflow: "hidden", backgroundColor: "#ffffff", shadowColor: "#2b4938", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 24, elevation: 5 },
+  businessDeskMobile: { minHeight: 720, flexDirection: "column" },
   businessList: { width: 330, borderRightWidth: 1, borderRightColor: "#e5ece8", backgroundColor: "#fbfcfb" },
+  businessListMobile: { width: "100%", maxHeight: 260, borderRightWidth: 0, borderBottomWidth: 1, borderBottomColor: "#e5ece8" },
   businessListHeader: { paddingHorizontal: 18, paddingTop: 18, paddingBottom: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  creatorSearch: { minHeight: 40, marginHorizontal: 14, marginBottom: 8, borderWidth: 1, borderColor: "#dce6df", borderRadius: 10, backgroundColor: "#ffffff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
+  creatorSearchInput: { flex: 1, color: ink, fontSize: 12 },
+  creatorDirectoryButton: { minHeight: 36, marginHorizontal: 14, marginBottom: 8, borderRadius: 9, borderWidth: 1, borderColor: "#cfe0d6", backgroundColor: "#ffffff", alignItems: "center", justifyContent: "center" },
+  creatorDirectoryButtonText: { color: greenDeep, fontSize: 11, fontWeight: "900" },
+  creatorDirectoryResult: { minHeight: 58, marginHorizontal: 14, marginBottom: 7, borderRadius: 11, borderWidth: 1, borderColor: "#dce6df", backgroundColor: "#f8fbf9", paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 9 },
+  creatorDirectoryAction: { color: greenDeep, fontSize: 10, fontWeight: "900" },
+  disabledButton: { opacity: 0.5 },
   businessListTitle: { color: ink, fontWeight: "900", fontSize: 18, letterSpacing: -0.3 },
   businessListMeta: { color: "#829087", fontSize: 11, marginTop: 3 },
   inboxSearch: { marginHorizontal: 14, height: 38, borderRadius: 10, backgroundColor: "#f0f4f1", paddingHorizontal: 12, justifyContent: "center" },
@@ -2914,8 +3189,15 @@ const styles = StyleSheet.create({
   businessAvatarText: { color: greenDeep, fontWeight: "900", fontSize: 13 },
   businessCustomerName: { color: ink, fontSize: 12, fontWeight: "800" },
   businessLastMessage: { marginTop: 4, color: muted, fontSize: 11 },
+  conversationTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  businessConversationTime: { marginLeft: "auto", color: muted, fontSize: 9 },
+  unreadBadge: { minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, backgroundColor: green, alignItems: "center", justifyContent: "center" },
+  unreadBadgeText: { color: "#ffffff", fontSize: 9, fontWeight: "900" },
   businessThread: { flex: 1, minWidth: 0, backgroundColor: "#ffffff" },
   threadHeader: { minHeight: 66, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: "#e6ebe8" },
+  threadFullChat: { minHeight: 34, borderRadius: 9, borderWidth: 1, borderColor: "#cfe0d6", paddingHorizontal: 10, alignItems: "center", justifyContent: "center" },
+  threadFullChatText: { color: greenDeep, fontSize: 10, fontWeight: "900" },
+  chatLink: { color: greenDeep },
   threadIdentity: { flexDirection: "row", gap: 10, alignItems: "center" },
   threadMeta: { color: muted, fontSize: 10, marginTop: 3 },
   threadActions: { flexDirection: "row", gap: 8 },
@@ -2926,6 +3208,8 @@ const styles = StyleSheet.create({
   businessBubbleCustomer: { alignSelf: "flex-start", backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e3e8e5", borderBottomLeftRadius: 4 },
   businessBubbleText: { color: ink, fontSize: 12, lineHeight: 18 },
   businessBubbleTextSeller: { color: "#ffffff" },
+  productContextLabel: { color: greenDeep, fontSize: 9, fontWeight: "900", marginBottom: 4, textTransform: "uppercase" },
+  productContextLabelSeller: { color: "#d5f6e3" },
   messageTime: { marginTop: 4, color: "#8b97a2", fontSize: 9, alignSelf: "flex-end" },
   messageTimeSeller: { color: "#d5f6e3" },
   replyComposer: { padding: 12, borderTopWidth: 1, borderTopColor: "#e6ebe8", flexDirection: "row", gap: 8, backgroundColor: "#ffffff" },
@@ -3002,6 +3286,11 @@ const styles = StyleSheet.create({
   infoLabel: { color: muted, fontSize: 12, fontWeight: "700" },
   infoValue: { color: ink, fontSize: 13, fontWeight: "800", flexShrink: 1, textAlign: "right" },
   returnList: { gap: 12 },
+  performancePanel: { borderRadius: 14, borderWidth: 1, borderColor: line, backgroundColor: "#ffffff", overflow: "hidden" },
+  performanceHeading: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, padding: 14, backgroundColor: "#f8fbf9" },
+  performanceRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#edf2ef" },
+  performanceCount: { minWidth: 86, color: greenDeep, fontSize: 12, fontWeight: "900" },
+  performanceValue: { minWidth: 90, color: ink, fontSize: 12, fontWeight: "800", textAlign: "right" },
   returnCard: { gap: 12, borderWidth: 1, borderColor: line, borderRadius: 16, padding: 16, backgroundColor: "#fff" },
   returnHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   returnFacts: { gap: 1 },
