@@ -14,6 +14,7 @@ export type LifecycleProduct = {
   id: string;
   storefrontId: string;
   storefrontName: string;
+  storefrontSlug: string;
   sellerId: string;
   title: string;
   slug: string;
@@ -205,7 +206,7 @@ type ProductRow = {
   return_window_days: number;
   review_note: string | null;
   updated_at: string;
-  storefronts?: { id: string; name: string; owner_id: string } | { id: string; name: string; owner_id: string }[] | null;
+  storefronts?: { id: string; name: string; slug: string; owner_id: string } | { id: string; name: string; slug: string; owner_id: string }[] | null;
   product_media?: Array<{
     path: string;
     position: number | null;
@@ -220,7 +221,7 @@ type ProductRow = {
 };
 
 const productSelect =
-  'id,storefront_id,title,slug,category,short_description,description,price_minor,sale_price_minor,inventory,inventory_reserved,sku,status,product_approval_status,creator_promotion_enabled,creator_commission_bps,return_window_days,review_note,updated_at,storefronts!products_storefront_id_fkey(id,name,owner_id),product_media(path,position,is_primary,storage_bucket,original_filename,mime_type,bytes,width,height)';
+  'id,storefront_id,title,slug,category,short_description,description,price_minor,sale_price_minor,inventory,inventory_reserved,sku,status,product_approval_status,creator_promotion_enabled,creator_commission_bps,return_window_days,review_note,updated_at,storefronts!products_storefront_id_fkey(id,name,slug,owner_id),product_media(path,position,is_primary,storage_bucket,original_filename,mime_type,bytes,width,height)';
 
 const first = <T,>(value: T | T[] | null | undefined) => Array.isArray(value) ? value[0] : value ?? null;
 
@@ -243,6 +244,7 @@ const productFromRow = (row: ProductRow): LifecycleProduct => {
     id: row.id,
     storefrontId: row.storefront_id,
     storefrontName: storefront?.name ?? 'Storefront',
+    storefrontSlug: storefront?.slug ?? '',
     sellerId: storefront?.owner_id ?? '',
     title: row.title,
     slug: row.slug,

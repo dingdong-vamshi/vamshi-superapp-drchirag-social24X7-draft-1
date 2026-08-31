@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ChatMessage } from "./types.ts";
-import { groupChatDetailsContent, searchConversationMessages } from "./chatDetailsUtils.ts";
+import { groupChatDetailsContent, searchConversationMessages, splitChatTextLinks } from "./chatDetailsUtils.ts";
 
 const message = (input: Partial<ChatMessage> & Pick<ChatMessage, "id" | "text">): ChatMessage => ({
   conversationId: "conversation",
@@ -31,4 +31,32 @@ test("searches message body and real attachment filename", () => {
   ];
   assert.deepEqual(searchConversationMessages(messages, "quarterly").map((item) => item.id), ["two"]);
   assert.deepEqual(searchConversationMessages(messages, "hi").map((item) => item.id), ["one"]);
+});
+
+test("splits only safe http(s) links and preserves surrounding punctuation", () => {
+  assert.deepEqual(splitChatTextLinks("Open https://social24.example/help, then http://localhost:8081/chats. javascript:alert(1)"), [
+    { kind: "text", value: "Open " },
+    { kind: "link", value: "https://social24.example/help" },
+    { kind: "text", value: "," },
+    { kind: "text", value: " then " },
+    { kind: "link", value: "http://localhost:8081/chats" },
+    { kind: "text", value: "." },
+    { kind: "text", value: " javascript:alert(1)" },
+  ]);
+});
+
+test("preserves Affiliate Link query parameters exactly", () => {
+  const affiliateUrl = "http://localhost:8081/store/arjun-qa-store/product/arjun-direct-publish-test?ref=5f3cc463e05d4a";
+  assert.deepEqual(splitChatTextLinks(`[QA] ${affiliateUrl}`), [
+    { kind: "text", value: "[QA] " },
+    { kind: "link", value: affiliateUrl },
+  ]);
+});
+
+test("keeps smart reply quotes outside safe links", () => {
+  assert.deepEqual(splitChatTextLinks('↪ “https://social24.example/reply”'), [
+    { kind: "text", value: "↪ “" },
+    { kind: "link", value: "https://social24.example/reply" },
+    { kind: "text", value: "”" },
+  ]);
 });
