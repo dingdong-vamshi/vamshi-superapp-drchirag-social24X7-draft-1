@@ -14,5 +14,5 @@ export default function CheckoutPage() {
     return createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null });
   }, [initialized, user]);
   if (!supabase || !repository) return null;
-  return <CheckoutScreen repository={repository} client={supabase} onBack={() => router.back()} onSuccess={(checkoutId, paymentMethod, totalMinor) => router.replace({ pathname: "/checkout/success", params: { checkoutId, paymentMethod, totalMinor: String(totalMinor) } })} />;
+  return <CheckoutScreen repository={repository} client={supabase} onBack={() => router.canGoBack() ? router.back() : router.replace("/cart")} onSuccess={(checkoutId, paymentMethod, totalMinor) => router.replace({ pathname: "/checkout/success", params: { checkoutId, paymentMethod, totalMinor: String(totalMinor) } })} />;
 }

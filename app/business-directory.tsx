@@ -87,7 +87,7 @@ export default function BusinessDirectoryPage() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.back}><ArrowLeft size={20} color="#111827" /></Pressable>
+        <Pressable onPress={() => router.canGoBack() ? router.back() : router.replace("/chats")} style={styles.back}><ArrowLeft size={20} color="#111827" /></Pressable>
         <View><Text style={styles.title}>Business chat</Text><Text style={styles.subtitle}>Find a store and message its team</Text></View>
       </View>
       <View style={styles.searchBox}><Search size={19} color="#718096" /><TextInput value={query} onChangeText={setQuery} placeholder="Search business or storefront name" placeholderTextColor="#8794a3" style={styles.searchInput} autoFocus /></View>

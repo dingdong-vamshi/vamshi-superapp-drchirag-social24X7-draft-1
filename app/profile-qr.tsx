@@ -55,7 +55,7 @@ export default function ProfileQrPage() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.icon}><ArrowLeft color="#172235" size={24} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.canGoBack() ? router.back() : router.replace("/profile")} style={styles.icon}><ArrowLeft color="#172235" size={24} /></Pressable>
         <Text accessibilityRole="header" style={styles.title}>Profile QR</Text>
         <View style={styles.icon} />
       </View>

@@ -112,7 +112,7 @@ export default function StorefrontPage() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Pressable style={styles.back} onPress={() => router.back()}>
+          <Pressable style={styles.back} onPress={() => router.canGoBack() ? router.back() : router.replace("/shop")}>
             <ArrowLeft size={18} color="#111111" />
           </Pressable>
           <Text style={styles.headerTitle}>Storefront</Text>

@@ -21,7 +21,7 @@ export default function ChatDetailsPage() {
     <ChatDetailsScreen
       dataSource={repository}
       conversationId={id}
-      onBack={() => router.back()}
+      onBack={() => router.canGoBack() ? router.back() : router.replace("/chats")}
       onViewProfile={(userId) => router.push({ pathname: "/social-profile", params: { userId } })}
     />
   );

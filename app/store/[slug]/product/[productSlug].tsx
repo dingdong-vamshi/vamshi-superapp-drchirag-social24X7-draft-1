@@ -112,7 +112,7 @@ export default function ProductPage() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Pressable style={styles.back} onPress={() => router.back()}>
+          <Pressable style={styles.back} onPress={() => router.canGoBack() ? router.back() : router.replace({ pathname: "/store/[slug]", params: { slug } })}>
             <ArrowLeft size={18} color="#111111" />
           </Pressable>
           <Text style={styles.headerTitle}>Product</Text>

@@ -14,5 +14,5 @@ export default function CartPage() {
     return createSupabaseShopRepository({ client: supabase, user: user && "identities" in user ? user : null });
   }, [initialized, user]);
   if (!supabase || !repository) return null;
-  return <CartScreen repository={repository} client={supabase} onBack={() => router.back()} onContinue={() => router.push("/checkout")} />;
+  return <CartScreen repository={repository} client={supabase} onBack={() => router.canGoBack() ? router.back() : router.replace("/shop")} onContinue={() => router.push("/checkout")} />;
 }
