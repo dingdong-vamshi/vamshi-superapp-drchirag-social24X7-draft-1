@@ -111,6 +111,8 @@ test("global contact discovery is limited to accepted Personal Chat counterparti
 
 test("contextual Assistant accepts an authorized contact display-name alias", () => {
   const orchestrator = read("../../../supabase/functions/ai-assistant/index.ts");
+  assert.match(orchestrator, /requestedTokens = requested\.split/);
+  assert.match(orchestrator, /requestedTokens\.some\(\(token\) => value\.includes\(token\)/);
   assert.match(orchestrator, /matchingContacts = await searchContacts\(client, plan\.recipientQuery\)/);
   assert.match(orchestrator, /contact\.user_id === scoped\.user_id/);
   assert.match(orchestrator, /contact\.conversation_id === scoped\.conversation_id/);

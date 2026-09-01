@@ -247,7 +247,12 @@ const resolveContact = async (
   if (scoped && plan.recipientQuery) {
     const requested = plan.recipientQuery.toLocaleLowerCase().replace(/^@/, "");
     const scopedNames = [scoped.display_name, scoped.username].map((value) => value.toLocaleLowerCase());
-    if (scopedNames.some((value) => value.includes(requested) || requested.includes(value))) {
+    const requestedTokens = requested.split(/[^a-z0-9_]+/).filter((value) => value.length >= 3);
+    if (scopedNames.some((value) =>
+      value.includes(requested) ||
+      requested.includes(value) ||
+      requestedTokens.some((token) => value.includes(token) || token.includes(value))
+    )) {
       return { kind: "resolved" as const, contact: scoped };
     }
     const matchingContacts = await searchContacts(client, plan.recipientQuery);
