@@ -863,7 +863,7 @@ export const createSupabaseChatRepository = ({
     // Keep chat usable if a deployment temporarily omits a table from the
     // Realtime publication. Postgres Changes remains the fast path; this quiet
     // fallback reconciles inbox/detail state without requiring a reload.
-    syncFallback ??= setInterval(notify, 4_000);
+    syncFallback ??= setInterval(notify, 30_000);
 
   };
 
