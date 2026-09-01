@@ -19,6 +19,7 @@ import {
   LockKeyhole,
   Mail,
   MessageCircle,
+  Smartphone,
 } from "lucide-react-native";
 import {
   loginErrorMessage,
@@ -34,6 +35,7 @@ const line = "#d9dee7";
 export default function LoginScreen() {
   const { signIn, configured } = useAuth();
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<AuthFieldErrors>({});
@@ -43,7 +45,7 @@ export default function LoginScreen() {
   const submit = async () => {
     if (isBusy) return;
 
-    const validation = validateLogin({ email, password });
+    const validation = validateLogin({ email, phone, password });
     setErrors(validation.errors);
     setFormError("");
     if (!validation.valid) return;
@@ -57,6 +59,7 @@ export default function LoginScreen() {
     try {
       const result = await signIn({
         email: normalizeEmail(email),
+        phone,
         password,
       });
       if (result.error) {
@@ -102,7 +105,8 @@ export default function LoginScreen() {
           <View style={styles.hero}>
             <Text style={styles.title}>Welcome back</Text>
             <Text style={styles.subtitle}>
-              Log in with the email linked to your account.
+              Log in with the email, phone number and password linked to your
+              account.
             </Text>
           </View>
 
@@ -128,6 +132,22 @@ export default function LoginScreen() {
                 setFormError("");
               }}
               onSubmitEditing={() => void submit()}
+            />
+
+            <AuthField
+              icon={Smartphone}
+              label="Phone number"
+              value={phone}
+              autoCapitalize="none"
+              autoComplete="tel"
+              keyboardType="phone-pad"
+              error={errors.phone}
+              editable={!isBusy}
+              onChangeText={(value) => {
+                setPhone(value);
+                setErrors((current) => ({ ...current, phone: undefined }));
+                setFormError("");
+              }}
             />
 
             <AuthField
@@ -222,8 +242,8 @@ function AuthField({
   onChangeText: (value: string) => void;
   onSubmitEditing?: () => void;
   autoCapitalize?: "none" | "words";
-  autoComplete?: "email" | "current-password";
-  keyboardType?: "default" | "email-address";
+  autoComplete?: "email" | "tel" | "current-password";
+  keyboardType?: "default" | "email-address" | "phone-pad";
   secureTextEntry?: boolean;
   editable?: boolean;
   error?: string;

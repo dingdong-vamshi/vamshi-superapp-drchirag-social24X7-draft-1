@@ -37,6 +37,12 @@ type Props = {
   onOpenOrders?: () => void;
   onOpenSaved?: () => void;
   onOpenCreatorCommerce?: () => void;
+  onOpenNotifications?: () => void;
+  onOpenPrivacy?: () => void;
+  onOpenLocation?: () => void;
+  onOpenPayments?: () => void;
+  onOpenSecurity?: () => void;
+  onOpenHelp?: () => void;
   onSignOut?: () => void;
 };
 type Status = "loading" | "ready" | "error";
@@ -46,6 +52,12 @@ export function ProfileScreen({
   onOpenOrders,
   onOpenSaved,
   onOpenCreatorCommerce,
+  onOpenNotifications,
+  onOpenPrivacy,
+  onOpenLocation,
+  onOpenPayments,
+  onOpenSecurity,
+  onOpenHelp,
   onSignOut,
 }: Props) {
   const [status, setStatus] = useState<Status>("loading");
@@ -94,7 +106,10 @@ export function ProfileScreen({
   const changePhoto = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("Photo access needed", "Allow photo access to choose a profile picture.");
+      Alert.alert(
+        "Photo access needed",
+        "Allow photo access to choose a profile picture.",
+      );
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -115,9 +130,12 @@ export function ProfileScreen({
         extension: asset.fileName?.split(".").pop() || null,
       });
       setProfile(updated);
-      setDraft((current) => current ? { ...current, ...updated } : current);
+      setDraft((current) => (current ? { ...current, ...updated } : current));
     } catch {
-      Alert.alert("Photo not updated", "Please check your connection and try again.");
+      Alert.alert(
+        "Photo not updated",
+        "Please check your connection and try again.",
+      );
     } finally {
       setSaving(false);
     }
@@ -159,11 +177,16 @@ export function ProfileScreen({
         <Pressable
           accessibilityRole="imagebutton"
           accessibilityLabel="Open profile picture"
-          onPress={() => profile.avatarUrl ? setAvatarPreviewOpen(true) : void changePhoto()}
+          onPress={() =>
+            profile.avatarUrl ? setAvatarPreviewOpen(true) : void changePhoto()
+          }
           style={styles.avatar}
         >
           {profile.avatarUrl ? (
-            <Image source={{ uri: profile.avatarUrl }} style={styles.avatarImage} />
+            <Image
+              source={{ uri: profile.avatarUrl }}
+              style={styles.avatarImage}
+            />
           ) : (
             <Text style={styles.avatarText}>{profile.avatarInitials}</Text>
           )}
@@ -213,6 +236,7 @@ export function ProfileScreen({
           icon={Bell}
           title="Notifications"
           subtitle="Messages, orders and activity"
+          onPress={onOpenNotifications}
         />
         <SettingsRow
           icon={LockKeyhole}
@@ -222,15 +246,13 @@ export function ProfileScreen({
               ? "Visible to people you approve"
               : "Not discoverable"
           }
-          onPress={() => {
-            setDraft(profile);
-            setEditorOpen(true);
-          }}
+          onPress={onOpenPrivacy}
         />
         <SettingsRow
           icon={MapPin}
           title="Location preferences"
           subtitle="Control nearby features"
+          onPress={onOpenLocation}
         />
       </View>
       <Text style={styles.sectionTitle}>Payments & support</Text>
@@ -239,16 +261,19 @@ export function ProfileScreen({
           icon={CreditCard}
           title="Payments"
           subtitle="Payment methods are protected"
+          onPress={onOpenPayments}
         />
         <SettingsRow
           icon={ShieldCheck}
           title="Security"
           subtitle="Password and active sessions"
+          onPress={onOpenSecurity}
         />
         <SettingsRow
           icon={CircleHelp}
           title="Help centre"
           subtitle="Get support with your account"
+          onPress={onOpenHelp}
         />
       </View>
       <Pressable
@@ -294,12 +319,20 @@ export function ProfileScreen({
           </View>
           {draft && (
             <>
-              <Pressable style={styles.editorAvatarBlock} onPress={() => void changePhoto()}>
+              <Pressable
+                style={styles.editorAvatarBlock}
+                onPress={() => void changePhoto()}
+              >
                 <View style={styles.editorAvatar}>
                   {draft.avatarUrl ? (
-                    <Image source={{ uri: draft.avatarUrl }} style={styles.editorAvatarImage} />
+                    <Image
+                      source={{ uri: draft.avatarUrl }}
+                      style={styles.editorAvatarImage}
+                    />
                   ) : (
-                    <Text style={styles.avatarText}>{draft.displayName.slice(0, 1).toUpperCase() || "?"}</Text>
+                    <Text style={styles.avatarText}>
+                      {draft.displayName.slice(0, 1).toUpperCase() || "?"}
+                    </Text>
                   )}
                 </View>
                 <Text style={styles.changePhoto}>Change profile photo</Text>
@@ -346,9 +379,23 @@ export function ProfileScreen({
           )}
         </ScrollView>
       </Modal>
-      <Modal visible={avatarPreviewOpen} transparent animationType="fade" onRequestClose={() => setAvatarPreviewOpen(false)}>
-        <Pressable style={styles.avatarLightbox} onPress={() => setAvatarPreviewOpen(false)}>
-          {profile.avatarUrl ? <Image source={{ uri: profile.avatarUrl }} style={styles.avatarLightboxImage} resizeMode="contain" /> : null}
+      <Modal
+        visible={avatarPreviewOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAvatarPreviewOpen(false)}
+      >
+        <Pressable
+          style={styles.avatarLightbox}
+          onPress={() => setAvatarPreviewOpen(false)}
+        >
+          {profile.avatarUrl ? (
+            <Image
+              source={{ uri: profile.avatarUrl }}
+              style={styles.avatarLightboxImage}
+              resizeMode="contain"
+            />
+          ) : null}
         </Pressable>
       </Modal>
     </ScrollView>

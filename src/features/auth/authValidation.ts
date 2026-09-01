@@ -2,6 +2,7 @@ export type AuthField =
   | "displayName"
   | "username"
   | "email"
+  | "phone"
   | "password"
   | "confirmPassword";
 
@@ -14,6 +15,7 @@ export type AuthValidationResult = {
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const usernamePattern = /^[A-Za-z0-9_]{3,30}$/;
+const e164Pattern = /^\+[1-9]\d{7,14}$/;
 
 export function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
@@ -23,8 +25,17 @@ export function normalizeUsername(value: string) {
   return value.trim().toLowerCase();
 }
 
+export function normalizePhone(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) return `+91${digits}`;
+  return `+${digits}`;
+}
+
 export function validateLogin(input: {
   email: string;
+  phone: string;
   password: string;
 }): AuthValidationResult {
   const errors: AuthFieldErrors = {};
@@ -34,6 +45,11 @@ export function validateLogin(input: {
     errors.email = "Enter your email address.";
   } else if (!emailPattern.test(email)) {
     errors.email = "Enter a valid email address.";
+  }
+
+  const phone = normalizePhone(input.phone);
+  if (!phone || !e164Pattern.test(phone)) {
+    errors.phone = "Enter a valid phone number.";
   }
 
   if (!input.password) {
@@ -47,6 +63,7 @@ export function validateSignup(input: {
   displayName: string;
   username: string;
   email: string;
+  phone: string;
   password: string;
   confirmPassword: string;
 }): AuthValidationResult {
@@ -54,6 +71,7 @@ export function validateSignup(input: {
   const displayName = input.displayName.trim();
   const username = normalizeUsername(input.username);
   const email = normalizeEmail(input.email);
+  const phone = normalizePhone(input.phone);
 
   if (!displayName) {
     errors.displayName = "Enter your display name.";
@@ -71,6 +89,12 @@ export function validateSignup(input: {
     errors.email = "Enter your email address.";
   } else if (!emailPattern.test(email)) {
     errors.email = "Enter a valid email address.";
+  }
+
+  if (!phone) {
+    errors.phone = "Enter your phone number with country code.";
+  } else if (!e164Pattern.test(phone)) {
+    errors.phone = "Use international format, for example +91 98765 43210.";
   }
 
   if (!input.password) {
@@ -102,14 +126,17 @@ function errorText(error: AuthErrorLike | null | undefined) {
 
 export function loginErrorMessage(error: AuthErrorLike | null | undefined) {
   const text = errorText(error);
-  if (text.includes("email_not_confirmed") || text.includes("email not confirmed")) {
+  if (
+    text.includes("email_not_confirmed") ||
+    text.includes("email not confirmed")
+  ) {
     return "Verify your email before logging in.";
   }
   if (
     text.includes("invalid_credentials") ||
     text.includes("invalid login credentials")
   ) {
-    return "Incorrect email or password.";
+    return "Incorrect email, phone number or password.";
   }
   if (
     error?.status === 429 ||
@@ -160,8 +187,15 @@ export function signupErrorMessage(error: AuthErrorLike | null | undefined) {
   return "Unable to create your account right now. Please try again.";
 }
 
-export function isDuplicateSignupResponse(user: {
-  identities?: unknown[] | null;
-} | null | undefined) {
-  return Boolean(user && Array.isArray(user.identities) && user.identities.length === 0);
+export function isDuplicateSignupResponse(
+  user:
+    | {
+        identities?: unknown[] | null;
+      }
+    | null
+    | undefined,
+) {
+  return Boolean(
+    user && Array.isArray(user.identities) && user.identities.length === 0,
+  );
 }

@@ -1,17 +1,19 @@
-import { useMemo } from 'react';
-import { useRouter } from 'expo-router';
-import { ProfileScreen } from '../../src/features/profile/ProfileScreen';
-import { createLocalProfileRepository, createSupabaseProfileRepository, localProfileRepository } from '../../src/features/profile/profileRepository';
-import { useAuth } from '../../src/lib/AuthContext';
-import { supabaseConfigured } from '../../src/lib/supabase';
+import { useMemo } from "react";
+import { useRouter } from "expo-router";
+import { ProfileScreen } from "../../src/features/profile/ProfileScreen";
+import {
+  createLocalProfileRepository,
+  createSupabaseProfileRepository,
+  localProfileRepository,
+} from "../../src/features/profile/profileRepository";
+import { useAuth } from "../../src/lib/AuthContext";
+import { supabaseConfigured } from "../../src/lib/supabase";
 
 export default function ProfilePage() {
   const { user, signOut } = useAuth();
   const router = useRouter();
   const isDemoUser = Boolean(
-    user &&
-      "app_metadata" in user &&
-      user.app_metadata?.provider === "demo",
+    user && "app_metadata" in user && user.app_metadata?.provider === "demo",
   );
   const repository = useMemo(() => {
     if (!user) {
@@ -31,10 +33,40 @@ export default function ProfilePage() {
   return (
     <ProfileScreen
       repository={repository}
-      onOpenCreatorCommerce={() => router.push('/commerce')}
+      onOpenOrders={() => router.push("/orders")}
+      onOpenSaved={() => router.push("/wishlist")}
+      onOpenCreatorCommerce={() => router.push("/commerce")}
+      onOpenNotifications={() =>
+        router.push({ pathname: "/social", params: { notifications: "1" } })
+      }
+      onOpenPrivacy={() =>
+        router.push({
+          pathname: "/account-settings",
+          params: { section: "privacy" },
+        })
+      }
+      onOpenLocation={() =>
+        router.push({
+          pathname: "/account-settings",
+          params: { section: "location" },
+        })
+      }
+      onOpenPayments={() =>
+        router.push({
+          pathname: "/account-settings",
+          params: { section: "payments" },
+        })
+      }
+      onOpenSecurity={() =>
+        router.push({
+          pathname: "/account-settings",
+          params: { section: "security" },
+        })
+      }
+      onOpenHelp={() => router.push("/support-feedback")}
       onSignOut={async () => {
         await signOut();
-        router.replace('/login');
+        router.replace("/login");
       }}
     />
   );

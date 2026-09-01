@@ -21,11 +21,13 @@ import {
   LockKeyhole,
   Mail,
   MessageCircle,
+  Phone,
   UserRound,
 } from "lucide-react-native";
 import {
   isDuplicateSignupResponse,
   normalizeEmail,
+  normalizePhone,
   normalizeUsername,
   signupErrorMessage,
   validateSignup,
@@ -44,6 +46,7 @@ export default function SignupScreen() {
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -65,6 +68,7 @@ export default function SignupScreen() {
       displayName,
       username,
       email,
+      phone,
       password,
       confirmPassword,
     });
@@ -82,6 +86,7 @@ export default function SignupScreen() {
       const normalizedEmail = normalizeEmail(email);
       const result = await signUp({
         email: normalizedEmail,
+        phone: normalizePhone(phone),
         password,
         name: displayName.trim(),
         username: normalizeUsername(username),
@@ -225,6 +230,21 @@ export default function SignupScreen() {
               }}
             />
             <AuthField
+              icon={Phone}
+              label="Phone number"
+              value={phone}
+              keyboardType="phone-pad"
+              autoCapitalize="none"
+              autoComplete="tel"
+              error={errors.phone}
+              editable={!isBusy}
+              onChangeText={(value) => {
+                setPhone(value);
+                clearFieldError("phone");
+              }}
+              helper="Required · include country code, for example +91 98765 43210"
+            />
+            <AuthField
               icon={LockKeyhole}
               label="Password"
               value={password}
@@ -342,8 +362,8 @@ function AuthField({
   onSubmitEditing?: () => void;
   autoCapitalize?: "none" | "words";
   autoCorrect?: boolean;
-  autoComplete?: "name" | "username-new" | "email" | "password-new";
-  keyboardType?: "default" | "email-address";
+  autoComplete?: "name" | "username-new" | "email" | "tel" | "password-new";
+  keyboardType?: "default" | "email-address" | "phone-pad";
   secureTextEntry?: boolean;
   editable?: boolean;
   error?: string;

@@ -1,24 +1,31 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
-import { AuthProvider } from '../src/lib/AuthContext';
-import { useAuth } from '../src/lib/AuthContext';
-import { CallProvider } from '../src/features/chat/CallProvider';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Stack } from "expo-router";
+import { useState } from "react";
+import { ActivityIndicator, View } from "react-native";
+import { AuthProvider } from "../src/lib/AuthContext";
+import { useAuth } from "../src/lib/AuthContext";
+import { CallProvider } from "../src/features/chat/CallProvider";
 
 function RootNavigator() {
   const { loading, session } = useAuth();
 
   if (loading) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f7f9f8' }}>
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#f7f9f8",
+        }}
+      >
         <ActivityIndicator color="#0f9f5f" />
       </View>
     );
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+    <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
       <Stack.Protected guard={Boolean(session?.user)}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="(creator-commerce)" />
@@ -33,6 +40,10 @@ function RootNavigator() {
         <Stack.Screen name="checkout/index" />
         <Stack.Screen name="checkout/success" />
         <Stack.Screen name="profile-qr" />
+        <Stack.Screen name="account-settings" />
+        <Stack.Screen name="orders" />
+        <Stack.Screen name="wishlist" />
+        <Stack.Screen name="support-feedback" />
         <Stack.Screen name="games/index" />
         <Stack.Screen name="games/[id]" />
       </Stack.Protected>
@@ -46,7 +57,12 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
-  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: 2, staleTime: 15_000 } } }));
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: 2, staleTime: 15_000 } },
+      }),
+  );
   return (
     <QueryClientProvider client={client}>
       <AuthProvider>

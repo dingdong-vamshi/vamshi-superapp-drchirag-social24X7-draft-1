@@ -8,7 +8,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { AuthResponse, Session, User } from "@supabase/supabase-js";
+import {
+  AuthError,
+  type AuthResponse,
+  type Session,
+  type User,
+} from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./supabase";
 
 type AuthContextValue = {
@@ -17,9 +22,14 @@ type AuthContextValue = {
   session: Session | null;
   user: User | null;
   configured: boolean;
-  signIn: (input: { email: string; password: string }) => Promise<AuthResponse>;
+  signIn: (input: {
+    email: string;
+    phone: string;
+    password: string;
+  }) => Promise<AuthResponse>;
   signUp: (input: {
     email: string;
+    phone: string;
     password: string;
     name?: string;
     username?: string;
@@ -95,13 +105,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback(
-    async (input: { email: string; password: string }) => {
+    async (input: { email: string; phone: string; password: string }) => {
       if (!supabase) throw authNotReady;
       const result = await supabase.auth.signInWithPassword({
         email: input.email.trim().toLowerCase(),
         password: input.password,
       });
-      if (result.data.session) setSession(result.data.session);
+      if (result.error || !result.data.session) return result;
+
+      const { data: phoneMatches, error: phoneError } = await supabase.rpc(
+        "verify_my_login_phone",
+        { p_phone: input.phone },
+      );
+      if (phoneError || phoneMatches !== true) {
+        await supabase.auth.signOut();
+        setSession(null);
+        return {
+          data: { user: null, session: null },
+          error: new AuthError(
+            "Invalid login credentials",
+            400,
+            "invalid_credentials",
+          ),
+        };
+      }
+      setSession(result.data.session);
       return result;
     },
     [],
@@ -110,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = useCallback(
     async (input: {
       email: string;
+      phone: string;
       password: string;
       name?: string;
       username?: string;
@@ -123,7 +152,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         options: {
           data: {
             name: input.name?.trim() || undefined,
-            preferred_username: input.username?.trim().toLowerCase() || undefined,
+            preferred_username:
+              input.username?.trim().toLowerCase() || undefined,
+            phone_e164: input.phone.trim(),
             reward_referral_code: /^[A-Z0-9]{12}$/.test(referralCode)
               ? referralCode
               : undefined,
