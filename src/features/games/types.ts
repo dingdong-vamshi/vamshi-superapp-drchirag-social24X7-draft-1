@@ -133,3 +133,15 @@ export type CreateGameRoomInput = {
   entryPoints: number;
   isPrivate?: boolean;
 };
+
+export type QuickGameCoinStatus = {
+  balanceMicrounits: number;
+  costMicrounits: number;
+};
+
+export type QuickGameCoinSession = {
+  id: string;
+  gameKey: string;
+  costMicrounits: number;
+  status: "active" | "completed" | "abandoned";
+};

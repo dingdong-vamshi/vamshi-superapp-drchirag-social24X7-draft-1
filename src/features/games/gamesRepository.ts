@@ -13,6 +13,8 @@ import type {
   GameRoomMember,
   GameStats,
   GamesDashboard,
+  QuickGameCoinSession,
+  QuickGameCoinStatus,
 } from "./types";
 
 type GameUser = Pick<User, "id" | "app_metadata"> | null | undefined;
@@ -223,6 +225,59 @@ export async function getGamesDashboard(user: GameUser) {
   return normalizeDashboard(data);
 }
 
+export async function getQuickGameCoinStatus(user: GameUser): Promise<QuickGameCoinStatus> {
+  const client = requireGamesClient(user);
+  const [{ data: balance, error: balanceError }, { data: config, error: configError }] = await Promise.all([
+    client.rpc("get_my_spendable_mined_coins"),
+    client.from("game_coin_config").select("quick_game_cost_microunits").eq("singleton", true).single(),
+  ]);
+  if (balanceError) throw balanceError;
+  if (configError) throw configError;
+  return {
+    balanceMicrounits: asNumber(balance, 0),
+    costMicrounits: asNumber(config?.quick_game_cost_microunits, 1_000_000),
+  };
+}
+
+export async function startQuickGameWithMinedCoins(
+  user: GameUser,
+  gameKey: string,
+  idempotencyKey: string,
+): Promise<QuickGameCoinSession> {
+  const client = requireGamesClient(user);
+  const { data, error } = await client.rpc("start_quick_game_with_mined_coins", {
+    p_game_key: gameKey,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) throw error;
+  return normalizeQuickGameCoinSession(data);
+}
+
+export async function validateQuickGameCoinSession(
+  user: GameUser,
+  sessionId: string,
+  gameKey: string,
+): Promise<QuickGameCoinSession> {
+  const client = requireGamesClient(user);
+  const { data, error } = await client
+    .from("game_coin_sessions")
+    .select("id, game_key, cost_microunits, status")
+    .eq("id", sessionId)
+    .eq("game_key", gameKey)
+    .single();
+  if (error) throw error;
+  return normalizeQuickGameCoinSession(data);
+}
+
+function normalizeQuickGameCoinSession(raw: unknown): QuickGameCoinSession {
+  return {
+    id: asString(pick(raw, "id")),
+    gameKey: asString(pick(raw, "gameKey", "game_key")),
+    costMicrounits: asNumber(pick(raw, "costMicrounits", "cost_microunits")),
+    status: asString(pick(raw, "status"), "active") as QuickGameCoinSession["status"],
+  };
+}
+
 export async function getGameRoomDetail(user: GameUser, roomId: string) {
   const client = requireGamesClient(user);
   const { data, error } = await client.rpc("get_game_room_detail", { p_room_id: roomId });
@@ -308,6 +363,8 @@ export function subscribeGames(onChange: () => void) {
     { table: "game_matches" },
     { table: "game_statistics" },
     { table: "game_point_accounts" },
+    { table: "game_coin_sessions" },
+    { table: "reward_ledger" },
   ]);
 }
 

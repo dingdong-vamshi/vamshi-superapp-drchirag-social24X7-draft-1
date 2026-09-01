@@ -54,6 +54,7 @@ import {
   rollSnakeLadder,
   startGameRoom,
   subscribeGameRoom,
+  validateQuickGameCoinSession,
 } from "./gamesRepository";
 import type { GameMatch, GameMove, GameRoomDetail, GameRoomMember } from "./types";
 
@@ -81,11 +82,11 @@ const quickGameCopy: Record<QuickGameId, { title: string; subtitle: string; icon
 };
 
 export default function GameRoomScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, coinSession } = useLocalSearchParams<{ id: string; coinSession?: string }>();
   const roomId = Array.isArray(id) ? id[0] : id;
 
   if (isQuickGameId(roomId)) {
-    return <QuickGameRoom gameId={roomId} />;
+    return <QuickGameRoom gameId={roomId} coinSession={Array.isArray(coinSession) ? coinSession[0] : coinSession} />;
   }
 
   return <RealtimeGameRoom roomId={roomId} />;
@@ -212,9 +213,16 @@ function RealtimeGameRoom({ roomId }: { roomId: string }) {
   );
 }
 
-function QuickGameRoom({ gameId }: { gameId: QuickGameId }) {
+function QuickGameRoom({ gameId, coinSession }: { gameId: QuickGameId; coinSession?: string }) {
+  const { user } = useAuth();
   const copy = quickGameCopy[gameId];
   const Icon = copy.icon;
+  const accessQuery = useQuery({
+    queryKey: ["quick-game-access", gameId, coinSession, user?.id],
+    queryFn: () => validateQuickGameCoinSession(user, coinSession || "", gameId),
+    enabled: Boolean(coinSession && user?.id),
+    retry: false,
+  });
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -232,9 +240,19 @@ function QuickGameRoom({ gameId }: { gameId: QuickGameId }) {
           </View>
         </View>
 
-        {gameId === "quick-tic-tac-toe" ? <QuickTicTacToe /> : null}
-        {gameId === "quick-snake-ladder" ? <QuickSnakeLadder /> : null}
-        {gameId === "quick-memory-match" ? <QuickMemoryMatch /> : null}
+        {!coinSession ? (
+          <StateCard title="Mined-coin entry required" message="Start this game from the Games screen so the wallet can authorize one atomic entry debit." actionLabel="Back to Games" onAction={() => router.replace("/games")} />
+        ) : accessQuery.isLoading ? (
+          <LoadingCard message="Verifying game entry…" />
+        ) : accessQuery.isError ? (
+          <StateCard title="Game entry could not be verified" message="This link has no valid mined-coin game session." actionLabel="Back to Games" onAction={() => router.replace("/games")} />
+        ) : (
+          <>
+            {gameId === "quick-tic-tac-toe" ? <QuickTicTacToe /> : null}
+            {gameId === "quick-snake-ladder" ? <QuickSnakeLadder /> : null}
+            {gameId === "quick-memory-match" ? <QuickMemoryMatch /> : null}
+          </>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

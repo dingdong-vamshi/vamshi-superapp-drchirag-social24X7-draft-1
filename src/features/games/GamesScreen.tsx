@@ -34,6 +34,8 @@ import {
   createGameRoom,
   getGamesDashboard,
   getGamesUnavailableReason,
+  getQuickGameCoinStatus,
+  startQuickGameWithMinedCoins,
   subscribeGames,
 } from "./gamesRepository";
 import type { CreateGameRoomInput, GameKind, GameMatch, GameRoom } from "./types";
@@ -86,6 +88,27 @@ export default function GamesScreen() {
   const queryClient = useQueryClient();
   const unavailableReason = getGamesUnavailableReason(user);
   const [createOpen, setCreateOpen] = useState(false);
+  const [startingGameId, setStartingGameId] = useState<string | null>(null);
+
+  const coinStatusQuery = useQuery({
+    queryKey: ["quick-game-coins", user?.id],
+    queryFn: () => getQuickGameCoinStatus(user),
+    enabled: !unavailableReason,
+  });
+
+  const quickStartMutation = useMutation({
+    mutationFn: async (gameId: string) => {
+      setStartingGameId(gameId);
+      return startQuickGameWithMinedCoins(user, gameId, createIdempotencyKey());
+    },
+    onSuccess: (session) => {
+      void queryClient.invalidateQueries({ queryKey: ["quick-game-coins", user?.id] });
+      void queryClient.invalidateQueries({ queryKey: ["reward-snapshot", user?.id] });
+      router.push({ pathname: "/games/[id]", params: { id: session.gameKey, coinSession: session.id } });
+    },
+    onError: (cause) => Alert.alert("Could not start game", cause instanceof Error ? cause.message : "Please try again."),
+    onSettled: () => setStartingGameId(null),
+  });
 
   const dashboardQuery = useQuery({
     queryKey: ["games-dashboard", user?.id],
@@ -117,9 +140,17 @@ export default function GamesScreen() {
             <Text style={styles.title}>Games</Text>
             <Text style={styles.subtitle}>Arcade play + realtime rooms</Text>
           </View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Create realtime game room" onPress={() => setCreateOpen(true)} style={styles.createIcon}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Realtime rooms status" onPress={() => Alert.alert("Realtime rooms", "Coming Soon. The three mined-coin Quick Play games are available now.")} style={styles.createIcon}>
             <Plus color="#ffffff" size={28} />
           </Pressable>
+        </View>
+
+        <View style={styles.balanceCard}>
+          <View>
+            <Text style={styles.balanceLabel}>Spendable mined coins</Text>
+            <Text style={styles.balanceValue}>{coinStatusQuery.isLoading ? "…" : formatCoins(coinStatusQuery.data?.balanceMicrounits ?? 0)}</Text>
+          </View>
+          <ShieldCheck color="#16a34a" size={32} />
         </View>
 
         <View style={styles.heroCard}>
@@ -128,19 +159,25 @@ export default function GamesScreen() {
           </View>
           <View style={styles.heroCopy}>
             <Text style={styles.heroTitle}>Quick Play Arcade</Text>
-            <Text style={styles.heroText}>Playable right now for manual testing. No backend room setup needed.</Text>
+            <Text style={styles.heroText}>Each arcade entry uses mined Social24 Coins through an atomic wallet debit.</Text>
           </View>
         </View>
 
         <View style={styles.quickGrid}>
           {quickGames.map((game) => (
-            <QuickGameCard key={game.id} game={game} />
+            <QuickGameCard
+              key={game.id}
+              game={game}
+              costMicrounits={coinStatusQuery.data?.costMicrounits ?? 1_000_000}
+              loading={startingGameId === game.id}
+              onPress={() => quickStartMutation.mutate(game.id)}
+            />
           ))}
         </View>
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Realtime rooms</Text>
-          <Pressable accessibilityRole="button" onPress={() => setCreateOpen(true)} style={styles.smallCreateButton}>
+          <Pressable accessibilityRole="button" onPress={() => Alert.alert("Realtime rooms", "Coming Soon. Quick Play games are fully available with mined-coin entry.")} style={styles.smallCreateButton}>
             <Plus color="#ffffff" size={18} />
             <Text style={styles.smallCreateText}>Create</Text>
           </Pressable>
@@ -162,14 +199,6 @@ export default function GamesScreen() {
           />
         ) : (
           <>
-            <View style={styles.balanceCard}>
-              <View>
-                <Text style={styles.balanceLabel}>Game Points</Text>
-                <Text style={styles.balanceValue}>{dashboardQuery.data?.account.balance ?? 0}</Text>
-              </View>
-              <ShieldCheck color="#16a34a" size={32} />
-            </View>
-
             <View style={styles.statGrid}>
               <Stat label="Played" value={stats?.gamesPlayed ?? 0} />
               <Stat label="Won" value={stats?.gamesWon ?? 0} />
@@ -195,20 +224,44 @@ export default function GamesScreen() {
   );
 }
 
-function QuickGameCard({ game }: { game: (typeof quickGames)[number] }) {
+function QuickGameCard({
+  game,
+  costMicrounits,
+  loading,
+  onPress,
+}: {
+  game: (typeof quickGames)[number];
+  costMicrounits: number;
+  loading: boolean;
+  onPress: () => void;
+}) {
   const Icon = game.icon;
   return (
-    <Pressable accessibilityRole="button" onPress={() => router.push(`/games/${game.id}`)} style={styles.quickCard}>
+    <Pressable accessibilityRole="button" disabled={loading} onPress={onPress} style={styles.quickCard}>
       <View style={[styles.quickIcon, { backgroundColor: game.background }]}>
         <Icon color={game.accent} size={28} />
       </View>
       <View style={styles.quickBody}>
         <Text style={styles.quickTitle}>{game.title}</Text>
         <Text style={styles.quickSubtitle}>{game.subtitle}</Text>
-        <Text style={[styles.quickMeta, { color: game.accent }]}>{game.meta}</Text>
+        <Text style={[styles.quickMeta, { color: game.accent }]}>{loading ? "Starting securely…" : `${game.meta} • ${formatCoins(costMicrounits)} coin entry`}</Text>
       </View>
     </Pressable>
   );
+}
+
+function formatCoins(microunits: number) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(microunits / 1_000_000);
+}
+
+function createIdempotencyKey() {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  if (randomUuid) return randomUuid;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {

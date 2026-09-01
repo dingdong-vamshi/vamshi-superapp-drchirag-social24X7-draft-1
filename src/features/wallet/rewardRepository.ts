@@ -43,6 +43,7 @@ export type RewardRepository = {
   openChat(contactId: string): Promise<string>;
   shareReferralToChat(contactId: string, referralUrl: string): Promise<string>;
   transferCoins(input: { recipientId: string; amountMicrounits: number; note?: string; idempotencyKey?: string }): Promise<void>;
+  subscribe(listener: () => void): () => void;
 };
 
 const unavailable = (): never => {
@@ -61,6 +62,7 @@ export const unavailableRewardRepository: RewardRepository = {
   async openChat() { return unavailable(); },
   async shareReferralToChat() { return unavailable(); },
   async transferCoins() { return unavailable(); },
+  subscribe() { return () => undefined; },
 };
 
 const asNumber = (value: unknown) => Number(value || 0);
@@ -217,6 +219,13 @@ export function createSupabaseRewardRepository(client: SupabaseClient): RewardRe
         p_idempotency_key: input.idempotencyKey || createTransferIdempotencyKey(),
       });
       if (error) throw new Error(error.message);
+    },
+    subscribe(listener) {
+      const channel = client
+        .channel(`wallet-ledger:${Date.now()}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "reward_ledger" }, listener)
+        .subscribe();
+      return () => { void client.removeChannel(channel); };
     },
   };
 }

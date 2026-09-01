@@ -7,7 +7,7 @@ import {
   UsersRound,
   WalletCards,
 } from "lucide-react-native";
-import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, useWindowDimensions, View } from "react-native";
 import { Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../src/lib/AuthContext";
@@ -18,6 +18,8 @@ const inactive = "#98a2b3";
 export default function TabLayout() {
   const { session, loading, user } = useAuth();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const desktopRail = Platform.OS === "web" && width >= 1180;
 
   if (loading) {
     return (
@@ -36,14 +38,33 @@ export default function TabLayout() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarHideOnKeyboard: true,
+        tabBarPosition: desktopRail ? "left" : "bottom",
+        tabBarVariant: desktopRail ? "material" : "uikit",
+        tabBarLabelPosition: "below-icon",
         tabBarActiveTintColor: active,
         tabBarInactiveTintColor: inactive,
         tabBarShowLabel: false,
-        tabBarItemStyle: {
+        sceneStyle: undefined,
+        tabBarItemStyle: desktopRail ? {
+          width: 92,
+          minHeight: 74,
+          paddingVertical: 9,
+        } : {
           paddingTop: 6,
           paddingBottom: 6,
         },
-        tabBarStyle: {
+        tabBarStyle: desktopRail ? {
+          width: 104,
+          height: "100%",
+          paddingTop: 22,
+          paddingBottom: 22,
+          borderTopWidth: 0,
+          borderRightWidth: 1,
+          borderRightColor: "#e5e7eb",
+          backgroundColor: "#ffffff",
+          elevation: 0,
+          shadowOpacity: 0,
+        } : {
           height: Math.max(72 + insets.bottom, Platform.select({ ios: 82, default: 72 }) ?? 72),
           paddingTop: 6,
           paddingBottom: Math.max(insets.bottom, 10),

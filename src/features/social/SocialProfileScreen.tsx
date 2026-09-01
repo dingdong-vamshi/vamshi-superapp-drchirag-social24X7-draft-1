@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Linking from "expo-linking";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   ActivityIndicator,
@@ -7,6 +8,7 @@ import {
   Pressable,
   SafeAreaView,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -84,9 +86,59 @@ export function SocialProfileScreen({
   const [recommendations, setRecommendations] = useState<CreatorRecommendation[]>([]);
   const [isFollowing, setIsFollowing] = useState(false);
   const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
+  const [connectionList, setConnectionList] = useState<"followers" | "following" | null>(null);
+  const [connectionUsers, setConnectionUsers] = useState<ProfileViewModel[]>([]);
+  const [connectionLoading, setConnectionLoading] = useState(false);
 
   const profileUserId = selectedUserId || viewer.id;
   const isOwnProfile = profileUserId === viewer.id;
+
+  const shareProfile = useCallback(async () => {
+    const url = Linking.createURL("/social-profile", { queryParams: { userId: profileUserId } });
+    await Share.share({ message: `${profile?.displayName ?? "Social24 profile"} on Social24\n${url}`, url });
+  }, [profile?.displayName, profileUserId]);
+
+  const openConnections = useCallback(async (kind: "followers" | "following") => {
+    setConnectionList(kind);
+    setConnectionLoading(true);
+    setConnectionUsers([]);
+    if (!supabaseClient || !isUuid(profileUserId)) {
+      setConnectionLoading(false);
+      return;
+    }
+    try {
+      const idColumn = kind === "followers" ? "follower_id" : "following_id";
+      const matchColumn = kind === "followers" ? "following_id" : "follower_id";
+      const { data: rows, error: followError } = await supabaseClient
+        .from("follows")
+        .select(idColumn)
+        .eq(matchColumn, profileUserId)
+        .limit(200);
+      if (followError) throw followError;
+      const ids = ((rows ?? []) as Array<Record<string, unknown>>).map((row) => String(row[idColumn])).filter(isUuid);
+      if (!ids.length) return;
+      const { data: profiles, error: profileError } = await supabaseClient.rpc("get_public_social_profiles", { target_ids: ids });
+      if (profileError) throw profileError;
+      const normalized = await Promise.all(((profiles as Array<Record<string, unknown>> | null) ?? []).map(async (row) => {
+        const avatarPath = typeof row.avatar_path === "string" ? row.avatar_path : null;
+        const signed = avatarPath
+          ? await supabaseClient.storage.from("profile-media").createSignedUrl(avatarPath, 3600)
+          : { data: null };
+        return {
+          id: String(row.id),
+          displayName: String(row.display_name || row.username || "Social24 user"),
+          handle: String(row.username || "user"),
+          bio: String(row.bio || ""),
+          avatarUrl: signed.data?.signedUrl || absoluteUrl(avatarPath),
+        } satisfies ProfileViewModel;
+      }));
+      setConnectionUsers(normalized);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load this list.");
+    } finally {
+      setConnectionLoading(false);
+    }
+  }, [profileUserId, supabaseClient]);
 
   useEffect(() => {
     let mounted = true;
@@ -279,7 +331,9 @@ export function SocialProfileScreen({
           </Pressable>
           <Text style={styles.headerTitle}>{isOwnProfile ? "My Social Profile" : profile.displayName}</Text>
           <Pressable
-            onPress={() => (isOwnProfile ? router.push("/profile") : router.push("/chats"))}
+            accessibilityRole="button"
+            accessibilityLabel={isOwnProfile ? "Edit profile" : "Share profile"}
+            onPress={() => isOwnProfile ? router.push("/profile") : void shareProfile()}
             style={styles.headerIcon}
           >
             {isOwnProfile ? <UserRound size={20} color={ink} /> : <Share2 size={20} color={ink} />}
@@ -298,14 +352,14 @@ export function SocialProfileScreen({
             <Text style={styles.statValue}>{posts.length}</Text>
             <Text style={styles.statLabel}>Posts</Text>
           </View>
-          <View style={styles.stat}>
+          <Pressable accessibilityRole="button" accessibilityLabel={`View ${followers} followers`} onPress={() => void openConnections("followers")} style={styles.stat}>
             <Text style={styles.statValue}>{formatCount(followers)}</Text>
             <Text style={styles.statLabel}>Followers</Text>
-          </View>
-          <View style={styles.stat}>
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={`View ${following} following`} onPress={() => void openConnections("following")} style={styles.stat}>
             <Text style={styles.statValue}>{formatCount(following)}</Text>
             <Text style={styles.statLabel}>Following</Text>
-          </View>
+          </Pressable>
         </View>
 
         <Text style={styles.name}>{profile.displayName}</Text>
@@ -332,12 +386,12 @@ export function SocialProfileScreen({
             <Text style={styles.primaryButtonText}>{isOwnProfile ? "Edit profile" : isFollowing ? "Following" : "Follow"}</Text>
           </Pressable>
           <Pressable
-            onPress={() => router.push("/chats")}
+            onPress={() => isOwnProfile ? void shareProfile() : router.push("/chats")}
             style={styles.secondaryButton}
           >
             <Text style={styles.secondaryButtonText}>{isOwnProfile ? "Share profile" : "Message"}</Text>
           </Pressable>
-          <Pressable style={styles.iconAction}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Share profile" onPress={() => void shareProfile()} style={styles.iconAction}>
             <Share2 size={22} color={ink} />
           </Pressable>
         </View>
@@ -472,6 +526,40 @@ export function SocialProfileScreen({
           {profile.avatarUrl ? <Image source={{ uri: profile.avatarUrl }} style={styles.avatarLightboxImage} resizeMode="contain" /> : null}
         </Pressable>
       </Modal>
+      <Modal visible={Boolean(connectionList)} transparent animationType="slide" onRequestClose={() => setConnectionList(null)}>
+        <View style={styles.connectionBackdrop}>
+          <SafeAreaView style={styles.connectionCard}>
+            <View style={styles.connectionHeader}>
+              <Text style={styles.connectionTitle}>{connectionList === "followers" ? "Followers" : "Following"}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close people list" onPress={() => setConnectionList(null)} style={styles.headerIcon}>
+                <Text style={styles.connectionClose}>×</Text>
+              </Pressable>
+            </View>
+            {connectionLoading ? <ActivityIndicator color={brand} size="large" style={styles.connectionLoading} /> : (
+              <ScrollView contentContainerStyle={styles.connectionList}>
+                {connectionUsers.length ? connectionUsers.map((item) => (
+                  <Pressable
+                    key={item.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${item.displayName}'s profile`}
+                    onPress={() => {
+                      setConnectionList(null);
+                      router.push({ pathname: "/social-profile", params: { userId: item.id, handle: item.handle, displayName: item.displayName, avatarUrl: item.avatarUrl || "" } });
+                    }}
+                    style={styles.connectionRow}
+                  >
+                    <Avatar name={item.displayName} avatarUrl={item.avatarUrl} size={48} />
+                    <View style={styles.connectionCopy}>
+                      <Text style={styles.connectionName}>{item.displayName}</Text>
+                      <Text style={styles.connectionHandle}>@{item.handle}</Text>
+                    </View>
+                  </Pressable>
+                )) : <Text style={styles.connectionEmpty}>No {connectionList} yet.</Text>}
+              </ScrollView>
+            )}
+          </SafeAreaView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -589,6 +677,18 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 34, fontWeight: "700", color: ink },
   avatarLightbox: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center", padding: 20 },
   avatarLightboxImage: { width: "100%", height: "82%" },
+  connectionBackdrop: { flex: 1, backgroundColor: "rgba(15,23,42,0.46)", justifyContent: "flex-end" },
+  connectionCard: { width: "100%", maxWidth: 620, maxHeight: "82%", alignSelf: "center", borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: "#ffffff" },
+  connectionHeader: { minHeight: 72, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e4e7ec" },
+  connectionTitle: { color: ink, fontSize: 23, fontWeight: "900", textTransform: "capitalize" },
+  connectionClose: { color: ink, fontSize: 30, lineHeight: 32 },
+  connectionLoading: { padding: 48 },
+  connectionList: { padding: 14, paddingBottom: 28 },
+  connectionRow: { minHeight: 70, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e4e7ec" },
+  connectionCopy: { flex: 1 },
+  connectionName: { color: ink, fontSize: 16, fontWeight: "800" },
+  connectionHandle: { color: muted, fontSize: 13, marginTop: 3 },
+  connectionEmpty: { color: muted, textAlign: "center", padding: 42 },
   stat: { flex: 1, alignItems: "center" },
   statValue: { fontSize: 18, fontWeight: "800", color: ink },
   statLabel: { marginTop: 4, fontSize: 14, color: muted, fontWeight: "600" },

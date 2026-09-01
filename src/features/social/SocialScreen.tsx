@@ -42,6 +42,10 @@ import type {
   UploadedMedia,
 } from "./types";
 import { flattenStoryGroups, groupStoriesByAuthor } from "./socialUtils";
+import type {
+  AppNotification,
+  NotificationRepository,
+} from "../notifications/notificationRepository";
 
 const brand = "#00A859";
 const ink = "#182334";
@@ -65,9 +69,15 @@ const INTEREST_KEYWORDS: Record<string, string[]> = {
 
 function inferTopics(caption: string) {
   const normalized = caption.toLocaleLowerCase();
-  const hashtags = [...normalized.matchAll(/#([a-z0-9-]+)/g)].map((match) => match[1]);
+  const hashtags = [...normalized.matchAll(/#([a-z0-9-]+)/g)].map(
+    (match) => match[1],
+  );
   return Object.entries(INTEREST_KEYWORDS)
-    .filter(([slug, words]) => hashtags.includes(slug) || words.some((word) => normalized.includes(word)))
+    .filter(
+      ([slug, words]) =>
+        hashtags.includes(slug) ||
+        words.some((word) => normalized.includes(word)),
+    )
     .map(([slug]) => slug)
     .slice(0, 8);
 }
@@ -81,6 +91,9 @@ type Props = {
   onOpenProfile?: (user: SocialUser) => void;
   onOpenOwnProfile?: () => void;
   onShareToChat?: ShareToChat;
+  notificationRepository?: NotificationRepository;
+  onOpenNotification?: (notification: AppNotification) => void;
+  initialNotificationsOpen?: boolean;
 };
 
 function initials(name: string) {
@@ -133,6 +146,9 @@ export function SocialScreen({
   onOpenProfile,
   onOpenOwnProfile,
   onShareToChat,
+  notificationRepository,
+  onOpenNotification,
+  initialNotificationsOpen = false,
 }: Props) {
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [stories, setStories] = useState<SocialStory[]>([]);
@@ -155,6 +171,34 @@ export function SocialScreen({
   const [storyQueue, setStoryQueue] = useState<SocialStory[]>([]);
   const [storyComposerOpen, setStoryComposerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+
+  useEffect(() => {
+    if (initialNotificationsOpen) setNotificationsOpen(true);
+  }, [initialNotificationsOpen]);
+
+  const loadNotifications = useCallback(async () => {
+    if (!notificationRepository) return;
+    setNotificationsLoading(true);
+    try {
+      setNotifications(await notificationRepository.list());
+    } catch (cause) {
+      Alert.alert(
+        "Notifications unavailable",
+        cause instanceof Error ? cause.message : "Please try again.",
+      );
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [notificationRepository]);
+
+  useEffect(() => {
+    if (!notificationRepository) return undefined;
+    void loadNotifications();
+    return notificationRepository.subscribe(() => void loadNotifications());
+  }, [loadNotifications, notificationRepository]);
 
   const load = useCallback(
     async (refresh = false) => {
@@ -303,8 +347,13 @@ export function SocialScreen({
         current.map((story) => (story.id === temporary.id ? saved : story)),
       );
     } catch {
-      setStories((current) => current.filter((story) => story.id !== temporary.id));
-      Alert.alert("Story not published", "Nothing was shared. Please try again.");
+      setStories((current) =>
+        current.filter((story) => story.id !== temporary.id),
+      );
+      Alert.alert(
+        "Story not published",
+        "Nothing was shared. Please try again.",
+      );
     }
   };
 
@@ -426,9 +475,11 @@ export function SocialScreen({
         onOpen={openStoryGroup}
         onOpenOwnProfile={onOpenOwnProfile}
         onSearch={() => setSearchOpen(true)}
+        notificationCount={notifications.filter((item) => !item.readAt).length}
+        onNotifications={() => setNotificationsOpen(true)}
       />
     ),
-    [storyGroups, viewer, onOpenOwnProfile, openStoryGroup],
+    [notifications, storyGroups, viewer, onOpenOwnProfile, openStoryGroup],
   );
 
   if (loading) return <Centered label="Loading social" />;
@@ -515,7 +566,9 @@ export function SocialScreen({
           setStoryComposerOpen(false);
           void createStory();
         }}
-        createText={(text, background) => void createTextStory(text, background)}
+        createText={(text, background) =>
+          void createTextStory(text, background)
+        }
       />
       <SocialSearch
         visible={searchOpen}
@@ -526,7 +579,136 @@ export function SocialScreen({
           onOpenProfile?.(user);
         }}
       />
+      <NotificationCenter
+        visible={notificationsOpen}
+        items={notifications}
+        loading={notificationsLoading}
+        close={() => setNotificationsOpen(false)}
+        markAll={async () => {
+          await notificationRepository?.markAllRead();
+          await loadNotifications();
+        }}
+        open={async (item) => {
+          await notificationRepository?.markRead(item);
+          setNotifications((current) =>
+            current.map((candidate) =>
+              candidate.id === item.id && candidate.source === item.source
+                ? { ...candidate, readAt: new Date().toISOString() }
+                : candidate,
+            ),
+          );
+          setNotificationsOpen(false);
+          onOpenNotification?.(item);
+        }}
+      />
     </SafeAreaView>
+  );
+}
+
+function NotificationCenter({
+  visible,
+  items,
+  loading,
+  close,
+  markAll,
+  open,
+}: {
+  visible: boolean;
+  items: AppNotification[];
+  loading: boolean;
+  close: () => void;
+  markAll: () => Promise<void>;
+  open: (item: AppNotification) => Promise<void>;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={close}
+    >
+      <View style={styles.notificationModalBackdrop}>
+        <SafeAreaView style={styles.notificationModalCard}>
+          <View style={styles.notificationModalHeader}>
+            <View>
+              <Text
+                accessibilityRole="header"
+                style={styles.notificationModalTitle}
+              >
+                Notifications
+              </Text>
+              <Text style={styles.notificationModalSubtitle}>
+                Messages, commerce and social activity
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close notifications"
+              onPress={close}
+              style={styles.notificationClose}
+            >
+              <X color={ink} size={23} />
+            </Pressable>
+          </View>
+          {items.some((item) => !item.readAt) ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void markAll()}
+              style={styles.markAllButton}
+            >
+              <Text style={styles.markAllText}>Mark all as read</Text>
+            </Pressable>
+          ) : null}
+          {loading && !items.length ? (
+            <ActivityIndicator
+              color={brand}
+              size="large"
+              style={styles.notificationLoading}
+            />
+          ) : (
+            <FlatList
+              data={items}
+              keyExtractor={(item) => `${item.source}:${item.id}`}
+              contentContainerStyle={styles.notificationList}
+              ListEmptyComponent={
+                <Text style={styles.notificationEmpty}>
+                  You’re all caught up.
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void open(item)}
+                  style={[
+                    styles.notificationRow,
+                    !item.readAt && styles.notificationRowUnread,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.notificationDot,
+                      item.readAt && styles.notificationDotRead,
+                    ]}
+                  />
+                  <View style={styles.notificationCopy}>
+                    <View style={styles.notificationTitleRow}>
+                      <Text style={styles.notificationTitle}>{item.title}</Text>
+                      <Text style={styles.notificationSource}>
+                        {item.source}
+                      </Text>
+                    </View>
+                    <Text style={styles.notificationBody}>{item.body}</Text>
+                    <Text style={styles.notificationTime}>
+                      {ago(item.createdAt)}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+            />
+          )}
+        </SafeAreaView>
+      </View>
+    </Modal>
   );
 }
 
@@ -537,6 +719,8 @@ function Stories({
   onOpen,
   onOpenOwnProfile,
   onSearch,
+  notificationCount,
+  onNotifications,
 }: {
   groups: ReturnType<typeof groupStoriesByAuthor>;
   viewer: SocialUser;
@@ -544,6 +728,8 @@ function Stories({
   onOpen: (authorId: string) => void;
   onOpenOwnProfile?: () => void;
   onSearch: () => void;
+  notificationCount: number;
+  onNotifications: () => void;
 }) {
   return (
     <View style={styles.storyBlock}>
@@ -563,12 +749,17 @@ function Stories({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Open notifications"
+          onPress={onNotifications}
           style={styles.notificationButton}
         >
           <Bell size={24} color="#111111" />
-          <View style={styles.notificationBadge}>
-            <Text style={styles.notificationBadgeText}>3</Text>
-          </View>
+          {notificationCount > 0 ? (
+            <View style={styles.notificationBadge}>
+              <Text style={styles.notificationBadgeText}>
+                {notificationCount > 99 ? "99+" : notificationCount}
+              </Text>
+            </View>
+          ) : null}
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -609,7 +800,12 @@ function Stories({
             style={styles.story}
             onPress={() => onOpen(item.author.id)}
           >
-            <View style={[styles.storyRing, item.stories.every((story) => story.seen) && styles.seenStory]}>
+            <View
+              style={[
+                styles.storyRing,
+                item.stories.every((story) => story.seen) && styles.seenStory,
+              ]}
+            >
               <StoryThumbnail story={item.stories[0]} />
             </View>
             <Text numberOfLines={1} style={styles.storyName}>
@@ -622,15 +818,26 @@ function Stories({
   );
 }
 
-const STORY_BACKGROUNDS = ["forest", "sunset", "ocean", "berry", "midnight"] as const;
+const STORY_BACKGROUNDS = [
+  "forest",
+  "sunset",
+  "ocean",
+  "berry",
+  "midnight",
+] as const;
 
 function storyBackground(value: SocialStory["backgroundStyle"]) {
   switch (value) {
-    case "sunset": return { backgroundColor: "#DB6B45" };
-    case "ocean": return { backgroundColor: "#176B87" };
-    case "berry": return { backgroundColor: "#8B3A62" };
-    case "midnight": return { backgroundColor: "#1D2740" };
-    default: return { backgroundColor: "#087A4B" };
+    case "sunset":
+      return { backgroundColor: "#DB6B45" };
+    case "ocean":
+      return { backgroundColor: "#176B87" };
+    case "berry":
+      return { backgroundColor: "#8B3A62" };
+    case "midnight":
+      return { backgroundColor: "#1D2740" };
+    default:
+      return { backgroundColor: "#087A4B" };
   }
 }
 
@@ -643,11 +850,15 @@ function StoryComposer({
   visible: boolean;
   close: () => void;
   createMedia: () => void;
-  createText: (text: string, background: (typeof STORY_BACKGROUNDS)[number]) => void;
+  createText: (
+    text: string,
+    background: (typeof STORY_BACKGROUNDS)[number],
+  ) => void;
 }) {
   const [mode, setMode] = useState<"choose" | "text">("choose");
   const [draft, setDraft] = useState("");
-  const [background, setBackground] = useState<(typeof STORY_BACKGROUNDS)[number]>("forest");
+  const [background, setBackground] =
+    useState<(typeof STORY_BACKGROUNDS)[number]>("forest");
   useEffect(() => {
     if (visible) return;
     setMode("choose");
@@ -655,31 +866,53 @@ function StoryComposer({
     setBackground("forest");
   }, [visible]);
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={close}
+    >
       <SafeAreaView style={styles.composerScreen}>
         <View style={styles.composerHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Close story composer" onPress={close}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close story composer"
+            onPress={close}
+          >
             <X color={ink} size={27} />
           </Pressable>
-          <Text accessibilityRole="header" style={styles.composerTitle}>New story</Text>
+          <Text accessibilityRole="header" style={styles.composerTitle}>
+            New story
+          </Text>
           <View style={{ width: 27 }} />
         </View>
         {mode === "choose" ? (
           <View style={styles.storyComposerChoices}>
             <Pressable style={styles.storyComposerChoice} onPress={createMedia}>
               <ImagePlus color={brand} size={28} />
-              <Text style={styles.storyComposerChoiceTitle}>Photo or video</Text>
-              <Text style={styles.storyComposerChoiceCopy}>Choose media from your device.</Text>
+              <Text style={styles.storyComposerChoiceTitle}>
+                Photo or video
+              </Text>
+              <Text style={styles.storyComposerChoiceCopy}>
+                Choose media from your device.
+              </Text>
             </Pressable>
-            <Pressable style={styles.storyComposerChoice} onPress={() => setMode("text")}>
+            <Pressable
+              style={styles.storyComposerChoice}
+              onPress={() => setMode("text")}
+            >
               <Text style={styles.storyComposerTextIcon}>Aa</Text>
               <Text style={styles.storyComposerChoiceTitle}>Text story</Text>
-              <Text style={styles.storyComposerChoiceCopy}>Share a short update for 24 hours.</Text>
+              <Text style={styles.storyComposerChoiceCopy}>
+                Share a short update for 24 hours.
+              </Text>
             </Pressable>
           </View>
         ) : (
           <View style={styles.textStoryComposer}>
-            <View style={[styles.textStoryPreview, storyBackground(background)]}>
+            <View
+              style={[styles.textStoryPreview, storyBackground(background)]}
+            >
               <TextInput
                 accessibilityLabel="Text story content"
                 autoFocus
@@ -700,7 +933,11 @@ function StoryComposer({
                   accessibilityLabel={`${value} story background`}
                   accessibilityState={{ selected: background === value }}
                   onPress={() => setBackground(value)}
-                  style={[styles.storySwatch, storyBackground(value), background === value && styles.storySwatchSelected]}
+                  style={[
+                    styles.storySwatch,
+                    storyBackground(value),
+                    background === value && styles.storySwatchSelected,
+                  ]}
                 />
               ))}
             </View>
@@ -708,7 +945,10 @@ function StoryComposer({
               accessibilityRole="button"
               accessibilityLabel="Publish text story"
               disabled={!draft.trim()}
-              style={[styles.publishStoryButton, !draft.trim() && styles.disabledButton]}
+              style={[
+                styles.publishStoryButton,
+                !draft.trim() && styles.disabledButton,
+              ]}
               onPress={() => createText(draft, background)}
             >
               <Text style={styles.publishStoryButtonText}>Share story</Text>
@@ -752,21 +992,43 @@ function SocialSearch({
     const timer = setTimeout(() => {
       setSearching(true);
       setSearchError(null);
-      repository.search(clean)
-        .then((next) => { if (active) setResults(next); })
-        .catch(() => { if (active) setSearchError("Search is unavailable. Please try again."); })
-        .finally(() => { if (active) setSearching(false); });
+      repository
+        .search(clean)
+        .then((next) => {
+          if (active) setResults(next);
+        })
+        .catch(() => {
+          if (active)
+            setSearchError("Search is unavailable. Please try again.");
+        })
+        .finally(() => {
+          if (active) setSearching(false);
+        });
     }, 350);
-    return () => { active = false; clearTimeout(timer); };
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [query, repository, visible]);
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={close}
+    >
       <SafeAreaView style={styles.composerScreen}>
         <View style={styles.composerHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Close social search" onPress={close}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close social search"
+            onPress={close}
+          >
             <X color={ink} size={27} />
           </Pressable>
-          <Text accessibilityRole="header" style={styles.composerTitle}>Search social</Text>
+          <Text accessibilityRole="header" style={styles.composerTitle}>
+            Search social
+          </Text>
           <View style={{ width: 27 }} />
         </View>
         <View style={styles.socialSearchInputRow}>
@@ -782,23 +1044,43 @@ function SocialSearch({
           />
           {searching ? <ActivityIndicator color={brand} /> : null}
         </View>
-        {searchError ? <Text style={styles.searchError}>{searchError}</Text> : null}
+        {searchError ? (
+          <Text style={styles.searchError}>{searchError}</Text>
+        ) : null}
         <FlatList
           data={results}
           keyExtractor={(item) => `${item.kind}:${item.id}`}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.socialSearchResults}
-          ListEmptyComponent={query.trim() && !searching ? <Text style={styles.emptyText}>No matching people or posts.</Text> : null}
+          ListEmptyComponent={
+            query.trim() && !searching ? (
+              <Text style={styles.emptyText}>No matching people or posts.</Text>
+            ) : null
+          }
           renderItem={({ item }) => (
-            <Pressable style={styles.socialSearchResult} onPress={() => openProfile(item.author)}>
+            <Pressable
+              style={styles.socialSearchResult}
+              onPress={() => openProfile(item.author)}
+            >
               <Avatar user={item.author} size={42} />
               <View style={styles.socialSearchResultCopy}>
                 <View style={styles.authorNameRow}>
-                  <Text style={styles.socialSearchResultTitle}>{item.author.displayName}</Text>
-                  {item.author.verifiedProfessional ? <Text style={styles.verifiedDot}>✓</Text> : null}
+                  <Text style={styles.socialSearchResultTitle}>
+                    {item.author.displayName}
+                  </Text>
+                  {item.author.verifiedProfessional ? (
+                    <Text style={styles.verifiedDot}>✓</Text>
+                  ) : null}
                 </View>
-                <Text style={styles.meta}>@{item.author.handle}{item.kind === "post" ? " · post" : ""}</Text>
-                {item.body ? <Text numberOfLines={2} style={styles.socialSearchBody}>{item.body}</Text> : null}
+                <Text style={styles.meta}>
+                  @{item.author.handle}
+                  {item.kind === "post" ? " · post" : ""}
+                </Text>
+                {item.body ? (
+                  <Text numberOfLines={2} style={styles.socialSearchBody}>
+                    {item.body}
+                  </Text>
+                ) : null}
               </View>
             </Pressable>
           )}
@@ -841,7 +1123,13 @@ function StoryThumbnail({ story }: { story: SocialStory }) {
   if (story.contentType === "text")
     return (
       <View style={styles.storyThumbnailClip}>
-        <View style={[styles.storyThumbnail, styles.textStory, storyBackground(story.backgroundStyle)]}>
+        <View
+          style={[
+            styles.storyThumbnail,
+            styles.textStory,
+            storyBackground(story.backgroundStyle),
+          ]}
+        >
           <Text numberOfLines={3} style={styles.textStoryThumbnailCopy}>
             {story.textContent}
           </Text>
@@ -891,7 +1179,9 @@ function StoryViewer({
   const [activeIndex, setActiveIndex] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const visible = initialIndex !== null && stories.length > 0;
-  const story = visible ? stories[Math.min(activeIndex, stories.length - 1)] : null;
+  const story = visible
+    ? stories[Math.min(activeIndex, stories.length - 1)]
+    : null;
   const duration = story?.mediaType === "video" ? 15000 : 7000;
 
   useEffect(() => {
@@ -987,8 +1277,16 @@ function StoryViewer({
             </View>
             <View style={styles.storyMedia}>
               {story.contentType === "text" ? (
-                <View style={[styles.storyMediaAsset, styles.textStory, storyBackground(story.backgroundStyle)]}>
-                  <Text style={styles.textStoryViewerCopy}>{story.textContent}</Text>
+                <View
+                  style={[
+                    styles.storyMediaAsset,
+                    styles.textStory,
+                    storyBackground(story.backgroundStyle),
+                  ]}
+                >
+                  <Text style={styles.textStoryViewerCopy}>
+                    {story.textContent}
+                  </Text>
                 </View>
               ) : story.mediaUrl ? (
                 story.mediaType === "video" ? (
@@ -1072,11 +1370,11 @@ function PostCard({
         >
           <View style={styles.authorNameRow}>
             <Text style={styles.authorName}>{post.author.handle}</Text>
-            {post.author.verifiedProfessional ? <Text style={styles.verifiedDot}>✓</Text> : null}
+            {post.author.verifiedProfessional ? (
+              <Text style={styles.verifiedDot}>✓</Text>
+            ) : null}
           </View>
-          <Text style={styles.meta}>
-            {post.author.displayName}
-          </Text>
+          <Text style={styles.meta}>{post.author.displayName}</Text>
         </Pressable>
         {!ownPost ? (
           <Pressable
@@ -1158,9 +1456,13 @@ function PostCard({
         </Text>
       ) : null}
       <Pressable onPress={() => onComments?.(post)}>
-        <Text style={styles.commentsPreview}>View all {post.commentCount} comments</Text>
+        <Text style={styles.commentsPreview}>
+          View all {post.commentCount} comments
+        </Text>
       </Pressable>
-      <Text style={styles.timestamp}>{ago(post.createdAt).toUpperCase()} AGO</Text>
+      <Text style={styles.timestamp}>
+        {ago(post.createdAt).toUpperCase()} AGO
+      </Text>
     </View>
   );
 }
@@ -1579,6 +1881,87 @@ const styles = StyleSheet.create({
     borderColor: "#ffffff",
   },
   notificationBadgeText: { color: "#ffffff", fontSize: 10, fontWeight: "800" },
+  notificationModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(16,24,40,0.48)",
+    justifyContent: "flex-end",
+  },
+  notificationModalCard: {
+    width: "100%",
+    maxWidth: 680,
+    maxHeight: "86%",
+    alignSelf: "center",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: "#ffffff",
+    overflow: "hidden",
+  },
+  notificationModalHeader: {
+    padding: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e4e7ec",
+  },
+  notificationModalTitle: { color: ink, fontSize: 24, fontWeight: "900" },
+  notificationModalSubtitle: { color: "#667085", fontSize: 13, marginTop: 3 },
+  notificationClose: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#f2f4f7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  markAllButton: {
+    alignSelf: "flex-end",
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+  },
+  markAllText: { color: brand, fontSize: 14, fontWeight: "800" },
+  notificationLoading: { padding: 48 },
+  notificationList: { paddingHorizontal: 14, paddingBottom: 28 },
+  notificationEmpty: { color: "#667085", textAlign: "center", padding: 42 },
+  notificationRow: {
+    minHeight: 88,
+    padding: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e4e7ec",
+    flexDirection: "row",
+    gap: 11,
+    borderRadius: 16,
+  },
+  notificationRowUnread: { backgroundColor: "#eefbf3" },
+  notificationDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: brand,
+    marginTop: 7,
+  },
+  notificationDotRead: { backgroundColor: "#d0d5dd" },
+  notificationCopy: { flex: 1, minWidth: 0 },
+  notificationTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  notificationTitle: { flex: 1, color: ink, fontSize: 16, fontWeight: "800" },
+  notificationSource: {
+    color: "#087c43",
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  notificationBody: {
+    color: "#475467",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  notificationTime: { color: "#98a2b3", fontSize: 11, marginTop: 6 },
   livePill: { display: "none" },
   liveDot: { display: "none" },
   liveText: { display: "none" },
@@ -1684,7 +2067,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#ffffff",
   },
-  storyName: { maxWidth: 74, fontSize: 13, color: "#111111", textAlign: "center" },
+  storyName: {
+    maxWidth: 74,
+    fontSize: 13,
+    color: "#111111",
+    textAlign: "center",
+  },
   avatar: {
     backgroundColor: "#dff4e7",
     alignItems: "center",
@@ -1880,9 +2268,19 @@ const styles = StyleSheet.create({
     textAlign: "center",
     textAlignVertical: "center",
   },
-  storyPalette: { flexDirection: "row", gap: 13, paddingVertical: 18, justifyContent: "center" },
+  storyPalette: {
+    flexDirection: "row",
+    gap: 13,
+    paddingVertical: 18,
+    justifyContent: "center",
+  },
   storySwatch: { width: 38, height: 38, borderRadius: 19 },
-  storySwatchSelected: { borderWidth: 4, borderColor: "#ffffff", outlineWidth: 2, outlineColor: brand },
+  storySwatchSelected: {
+    borderWidth: 4,
+    borderColor: "#ffffff",
+    outlineWidth: 2,
+    outlineColor: brand,
+  },
   publishStoryButton: {
     minHeight: 54,
     borderRadius: 18,

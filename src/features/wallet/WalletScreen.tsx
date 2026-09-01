@@ -52,8 +52,9 @@ export default function WalletScreen({ repository = unavailableRewardRepository 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     const refresh = setInterval(() => void load(), 30_000);
-    return () => { clearInterval(timer); clearInterval(refresh); };
-  }, [load]);
+    const unsubscribe = repository.subscribe(() => void load());
+    return () => { clearInterval(timer); clearInterval(refresh); unsubscribe(); };
+  }, [load, repository]);
 
   const active = Boolean(snapshot?.activeSessionId && snapshot.endsAt && new Date(snapshot.endsAt).getTime() > now);
   const remaining = active && snapshot?.endsAt ? Math.max(0, new Date(snapshot.endsAt).getTime() - now) : 0;
