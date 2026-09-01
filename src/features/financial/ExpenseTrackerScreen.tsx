@@ -279,7 +279,7 @@ export default function ExpenseTrackerScreen() {
                   style={styles.searchInput}
                 />
               </View>
-              <Pressable style={styles.filterBox}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Reset transaction category filter" onPress={() => setCategoryFilter("All Categories")} style={styles.filterBox}>
                 <Text style={styles.filterText}>{categoryFilter}</Text>
               </Pressable>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPills}>

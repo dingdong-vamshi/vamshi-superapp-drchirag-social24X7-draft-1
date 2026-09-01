@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import {
+  Alert,
   Image,
   Pressable,
   SafeAreaView,
@@ -82,6 +83,7 @@ export default function FoodScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Search restaurants"
+          onPress={() => Alert.alert("Restaurant search", "Coming Soon. Browse the listed restaurants below.")}
           style={styles.headerButton}
         >
           <Search color="#475467" size={30} strokeWidth={2.1} />
@@ -132,6 +134,7 @@ function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Add ${restaurant.name}`}
+        onPress={() => Alert.alert(restaurant.name, "Coming Soon. Restaurant ordering is not enabled in this release.")}
         style={styles.addButton}
       >
         <Plus color="#ffffff" size={28} strokeWidth={2.2} />

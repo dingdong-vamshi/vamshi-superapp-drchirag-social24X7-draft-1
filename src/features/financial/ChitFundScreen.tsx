@@ -328,7 +328,7 @@ export default function ChitFundScreen() {
         <View style={styles.headerCopy}>
           <Text style={styles.headerTitle}>Chit{"\n"}Fund</Text>
         </View>
-        <Pressable style={styles.headerButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Chit fund notifications" onPress={() => Alert.alert("Chit notifications", "Coming Soon. Group activity remains visible inside each chit group.")} style={styles.headerButton}>
           <Bell color="#111827" size={22} />
         </Pressable>
         <Pressable onPress={() => setCreateOpen(true)} style={styles.createButton}>
