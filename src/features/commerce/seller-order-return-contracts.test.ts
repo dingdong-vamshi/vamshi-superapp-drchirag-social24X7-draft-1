@@ -36,3 +36,26 @@ test('Return tracking remains an internal projection of persisted Return state',
   assert.match(repository, /"Returned to Seller"/);
   assert.doesNotMatch(repository, /courierGps|fakeTracking|trackingLatitude/i);
 });
+
+test('Seller Returns and chat desks use their mobile containment layouts', () => {
+  assert.match(
+    screen,
+    /activeSection === "orders_returns"[\s\S]*?style=\{\[styles\.orderToolbar, mobileLayout && styles\.orderToolbarMobile\]\}/,
+  );
+  assert.match(
+    screen,
+    /activeSection === "business_chat"[\s\S]*?style=\{\[styles\.businessDesk, mobileLayout && styles\.businessDeskMobile\]\}/,
+  );
+  assert.match(
+    screen,
+    /style=\{\[styles\.businessList, mobileLayout && styles\.businessListMobile\]\}/,
+  );
+  assert.match(
+    screen,
+    /style=\{\[styles\.threadHeader, mobileLayout && styles\.threadHeaderMobile\]\}/,
+  );
+  assert.match(
+    screen,
+    /threadHeaderMobile:\s*\{[\s\S]*?flexDirection: "column",[\s\S]*?alignItems: "stretch"/,
+  );
+});

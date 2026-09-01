@@ -1024,7 +1024,7 @@ export function SellerStudioScreen({
             </Text>
           </View>
           <View style={[styles.topActions, mobileLayout && styles.topActionsMobile]}>
-            <Pressable style={styles.iconButton} accessibilityLabel="Notifications">
+            <Pressable onPress={() => Alert.alert("Seller notifications", "Coming Soon. Order updates are available in Manage Orders now.")} style={styles.iconButton} accessibilityLabel="Notifications">
               <Bell size={18} color={ink} strokeWidth={2.1} />
               <View style={styles.notificationDot} />
             </Pressable>
@@ -1035,7 +1035,7 @@ export function SellerStudioScreen({
               <Plus size={17} color="#ffffff" strokeWidth={2.7} />
               <Text style={styles.topPrimaryActionText}>{mobileLayout ? "Add" : "Add product"}</Text>
             </Pressable> : null}
-            <Pressable style={styles.accountButton}>
+            <Pressable onPress={() => Alert.alert("Seller account", "Use the sidebar storefront card and account settings for seller account details.")} style={styles.accountButton}>
               <View style={styles.accountAvatar}>
                 <Text style={styles.accountAvatarText}>
                   {(dashboard?.storefront?.name || "S").slice(0, 1).toUpperCase()}
@@ -1715,7 +1715,7 @@ export function SellerStudioScreen({
             title="Manage Returns"
             subtitle="Review authoritative buyer Return requests, supporting evidence, and Seller decisions without duplicating Return state."
           >
-            <View style={styles.orderToolbar}>
+            <View style={[styles.orderToolbar, mobileLayout && styles.orderToolbarMobile]}>
               <View><Text style={styles.tableTitle}>Return queue</Text><Text style={styles.orderToolbarCopy}>Approve, reject, or request more information. Refund handoff remains provider-neutral.</Text></View>
               <Pressable style={styles.secondaryButton} onPress={() => void loadReturns()}><Text style={styles.secondaryButtonText}>Refresh returns</Text></Pressable>
             </View>
@@ -1898,8 +1898,12 @@ export function SellerStudioScreen({
             subtitle=""
             showArtwork={false}
           >
-            <View style={styles.businessDesk}>
-              <View style={styles.businessList}>
+            <View style={[styles.businessDesk, mobileLayout && styles.businessDeskMobile]}>
+              <ScrollView
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={false}
+                style={[styles.businessList, mobileLayout && styles.businessListMobile]}
+              >
                 <View style={styles.businessListHeader}>
                   <View><Text style={styles.businessListTitle}>Inbox</Text><Text style={styles.businessListMeta}>Customer conversations</Text></View>
                   <View style={styles.onlineBadge}><View style={styles.onlineDot} /><Text style={styles.onlineText}>Live</Text></View>
@@ -1919,18 +1923,18 @@ export function SellerStudioScreen({
                     </View>
                   </Pressable>
                 )) : <View style={styles.inboxEmpty}><View style={styles.inboxEmptyMark}><MessageSquareText size={22} color={green} /></View><Text style={styles.inboxEmptyTitle}>Nothing new</Text><Text style={styles.inboxEmptyCopy}>Customer questions and product enquiries will appear here.</Text></View>}
-              </View>
+              </ScrollView>
               <View style={styles.businessThread}>
                 {selectedBusinessConversation ? (
                   <>
-                    <View style={styles.threadHeader}>
+                    <View style={[styles.threadHeader, mobileLayout && styles.threadHeaderMobile]}>
                       <View style={styles.threadIdentity}>
                         <View style={styles.businessAvatar}><Text style={styles.businessAvatarText}>{selectedBusinessConversation.customerName.slice(0, 1).toUpperCase()}</Text></View>
                         <View><Text style={styles.businessCustomerName}>{selectedBusinessConversation.customerName}</Text><Text style={styles.threadMeta}>@{selectedBusinessConversation.customerUsername} · Customer</Text></View>
                       </View>
                       <View style={styles.threadActions}>
-                        <Pressable style={styles.iconButton}><PhoneCall size={17} color={ink} /></Pressable>
-                        <Pressable style={styles.iconButton}><Video size={17} color={ink} /></Pressable>
+                        <Pressable accessibilityRole="button" accessibilityLabel="Start seller voice call" onPress={() => Alert.alert("Seller calls", "Coming Soon. Continue securely in Business Chat.")} style={styles.iconButton}><PhoneCall size={17} color={ink} /></Pressable>
+                        <Pressable accessibilityRole="button" accessibilityLabel="Start seller video call" onPress={() => Alert.alert("Seller video", "Coming Soon. Continue securely in Business Chat.")} style={styles.iconButton}><Video size={17} color={ink} /></Pressable>
                       </View>
                     </View>
                     <ScrollView style={styles.messageRail} contentContainerStyle={styles.messageRailContent}>
@@ -1953,7 +1957,11 @@ export function SellerStudioScreen({
         {activeSection === "creator_chat" ? (
           <SectionShell title="Creator Chats" subtitle="Dedicated Product and promotion conversations with Creators, isolated from customer Business Chat." showArtwork={false}>
             <View style={[styles.businessDesk, mobileLayout && styles.businessDeskMobile]}>
-              <View style={[styles.businessList, mobileLayout && styles.businessListMobile]}>
+              <ScrollView
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={false}
+                style={[styles.businessList, mobileLayout && styles.businessListMobile]}
+              >
                 <View style={styles.businessListHeader}>
                   <View><Text style={styles.businessListTitle}>Creator inbox</Text><Text style={styles.businessListMeta}>Product-context conversations</Text></View>
                   <View style={styles.onlineBadge}><View style={styles.onlineDot} /><Text style={styles.onlineText}>Live</Text></View>
@@ -1967,10 +1975,10 @@ export function SellerStudioScreen({
                     <View style={{ flex: 1 }}><View style={styles.conversationTitleRow}><Text style={styles.businessCustomerName}>{conversation.creatorName}</Text><Text style={styles.businessConversationTime}>{formatTime(conversation.updatedAt)}</Text></View><View style={styles.conversationTitleRow}><Text style={[styles.businessLastMessage, { flex: 1 }]} numberOfLines={1}>{conversation.lastMessage}</Text>{conversation.unreadCount ? <View style={styles.unreadBadge}><Text style={styles.unreadBadgeText}>{conversation.unreadCount}</Text></View> : null}</View></View>
                   </Pressable>
                 )) : <View style={styles.inboxEmpty}><View style={styles.inboxEmptyMark}><MessageCircle size={22} color={green} /></View><Text style={styles.inboxEmptyTitle}>No matching Creator conversations</Text><Text style={styles.inboxEmptyCopy}>Creator enquiries started from Affiliate-enabled Products will appear here.</Text></View>}
-              </View>
+              </ScrollView>
               <View style={styles.businessThread}>
                 {selectedCreatorConversation ? <>
-                  <View style={styles.threadHeader}>
+                  <View style={[styles.threadHeader, mobileLayout && styles.threadHeaderMobile]}>
                     <View style={styles.threadIdentity}><View style={styles.businessAvatar}><Text style={styles.businessAvatarText}>{selectedCreatorConversation.creatorName.slice(0, 1).toUpperCase()}</Text></View><View><Text style={styles.businessCustomerName}>{selectedCreatorConversation.creatorName}</Text><Text style={styles.threadMeta}>@{selectedCreatorConversation.creatorUsername} · Creator commerce</Text></View></View><Pressable accessibilityRole="button" onPress={() => router.push({ pathname: '/seller/creator-chat/[id]', params: { id: selectedCreatorConversation.id } })} style={styles.threadFullChat}><Text style={styles.threadFullChatText}>Open full chat</Text></Pressable>
                   </View>
                   <ScrollView style={styles.messageRail} contentContainerStyle={styles.messageRailContent}>
@@ -3164,7 +3172,7 @@ const styles = StyleSheet.create({
   businessDesk: { minHeight: 620, flexDirection: "row", borderWidth: 1, borderColor: "#dce5e0", borderRadius: 18, overflow: "hidden", backgroundColor: "#ffffff", shadowColor: "#2b4938", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 24, elevation: 5 },
   businessDeskMobile: { minHeight: 720, flexDirection: "column" },
   businessList: { width: 330, borderRightWidth: 1, borderRightColor: "#e5ece8", backgroundColor: "#fbfcfb" },
-  businessListMobile: { width: "100%", maxHeight: 260, borderRightWidth: 0, borderBottomWidth: 1, borderBottomColor: "#e5ece8" },
+  businessListMobile: { width: "100%", maxHeight: 360, borderRightWidth: 0, borderBottomWidth: 1, borderBottomColor: "#e5ece8" },
   businessListHeader: { paddingHorizontal: 18, paddingTop: 18, paddingBottom: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   creatorSearch: { minHeight: 40, marginHorizontal: 14, marginBottom: 8, borderWidth: 1, borderColor: "#dce6df", borderRadius: 10, backgroundColor: "#ffffff", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
   creatorSearchInput: { flex: 1, color: ink, fontSize: 12 },
@@ -3195,10 +3203,11 @@ const styles = StyleSheet.create({
   unreadBadgeText: { color: "#ffffff", fontSize: 9, fontWeight: "900" },
   businessThread: { flex: 1, minWidth: 0, backgroundColor: "#ffffff" },
   threadHeader: { minHeight: 66, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: "#e6ebe8" },
+  threadHeaderMobile: { minHeight: 0, paddingVertical: 12, flexDirection: "column", alignItems: "stretch", gap: 10 },
   threadFullChat: { minHeight: 34, borderRadius: 9, borderWidth: 1, borderColor: "#cfe0d6", paddingHorizontal: 10, alignItems: "center", justifyContent: "center" },
   threadFullChatText: { color: greenDeep, fontSize: 10, fontWeight: "900" },
   chatLink: { color: greenDeep },
-  threadIdentity: { flexDirection: "row", gap: 10, alignItems: "center" },
+  threadIdentity: { minWidth: 0, flexDirection: "row", gap: 10, alignItems: "center" },
   threadMeta: { color: muted, fontSize: 10, marginTop: 3 },
   threadActions: { flexDirection: "row", gap: 8 },
   messageRail: { flex: 1, maxHeight: 370, backgroundColor: "#f8faf9" },
