@@ -116,6 +116,7 @@ test("contextual Assistant accepts an authorized contact display-name alias", ()
   assert.match(orchestrator, /matchingContacts = await searchContacts\(client, plan\.recipientQuery\)/);
   assert.match(orchestrator, /contact\.user_id === scoped\.user_id/);
   assert.match(orchestrator, /contact\.conversation_id === scoped\.conversation_id/);
+  assert.match(orchestrator, /if \(!matchingContacts\.length\)[\s\S]*return \{ kind: "resolved" as const, contact: scoped \}/);
 });
 
 test("global launcher and contextual Personal Chat Ask AI use the existing route shell", () => {

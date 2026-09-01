@@ -262,6 +262,12 @@ const resolveContact = async (
     )) {
       return { kind: "resolved" as const, contact: scoped };
     }
+    if (!matchingContacts.length) {
+      // Inside a scoped chat, an unresolved nickname or pronoun still refers
+      // to the visible counterpart. A query that resolves to another accepted
+      // contact continues to be rejected below.
+      return { kind: "resolved" as const, contact: scoped };
+    }
     return {
       kind: "denied" as const,
       message: `This Assistant is scoped to ${scoped.display_name}. Open the global Assistant to choose another recipient.`,
