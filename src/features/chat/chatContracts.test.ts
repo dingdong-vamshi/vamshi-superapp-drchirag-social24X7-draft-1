@@ -444,6 +444,9 @@ test("mobile chat keeps the supplied dark wallpaper, readable bubbles, and compa
     /wallpaperArea:\s*\{\s*flex: 1,\s*backgroundColor: "#050806"\s*\}/,
   );
   assert.match(chatScreen, /defaultWallpaperImage:\s*\{\s*opacity: 1\s*\}/);
+  assert.match(chatScreen, /resizeMode=\{wallpaperImageUrl \? "cover" : "repeat"\}/);
+  assert.match(chatScreen, /accessibilityLabel=\{segment === "personal" \? "Switch to Business chats" : "Switch to Personal chats"\}/);
+  assert.match(chatScreen, /desktopSegmentedControl/);
   assert.match(
     chatScreen,
     /messagePressRow:\s*\{[\s\S]*?width: "100%",[\s\S]*?maxWidth: "100%"/,

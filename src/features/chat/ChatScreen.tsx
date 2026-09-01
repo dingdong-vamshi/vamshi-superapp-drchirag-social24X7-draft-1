@@ -55,6 +55,7 @@ import {
   Send,
   Settings,
   Share2,
+  Sparkles,
   Store,
   UserPlus,
   UserRound,
@@ -96,6 +97,7 @@ type Props = {
   onViewOrder?: (orderId: string) => void;
   onViewProfile?: (profileId: string) => void;
   onOpenChatDetails?: (conversationId: string) => void;
+  onAskAi?: (conversation: Conversation) => void;
   viewer?: ChatContact | null;
   onOpenOwnProfile?: () => void;
   onOpenQr?: () => void;
@@ -220,6 +222,7 @@ export default function ChatScreen({
   onViewOrder,
   onViewProfile,
   onOpenChatDetails,
+  onAskAi,
   viewer,
   onOpenOwnProfile,
   onOpenQr,
@@ -747,6 +750,18 @@ export default function ChatScreen({
     }
   };
 
+  const switchSegment = (next: "personal" | "business") => {
+    setSegment(next);
+    const selectedKind = selected?.kind ?? "personal";
+    const remainsVisible = next === "business"
+      ? selectedKind === "business"
+      : selectedKind !== "business";
+    if (!remainsVisible) {
+      setSelected(null);
+      setError(null);
+    }
+  };
+
   if (selected)
     return (
       <View
@@ -763,6 +778,26 @@ export default function ChatScreen({
                 style={styles.iconButton}
               >
                 <Plus color="#ffffff" size={22} />
+              </Pressable>
+            </View>
+            <View style={styles.desktopSegmentedControl}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: segment === "personal" }}
+                onPress={() => switchSegment("personal")}
+                style={[styles.desktopSegmentButton, segment === "personal" && styles.segmentButtonActive]}
+              >
+                <UsersRound color={segment === "personal" ? "#16a34a" : "#667085"} size={16} />
+                <Text style={[styles.desktopSegmentLabel, segment === "personal" && styles.segmentLabelActive]}>Personal</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: segment === "business" }}
+                onPress={() => switchSegment("business")}
+                style={[styles.desktopSegmentButton, segment === "business" && styles.segmentButtonActive]}
+              >
+                <Store color={segment === "business" ? "#16a34a" : "#667085"} size={16} />
+                <Text style={[styles.desktopSegmentLabel, segment === "business" && styles.segmentLabelActive]}>Business</Text>
               </Pressable>
             </View>
             <FlatList
@@ -794,7 +829,10 @@ export default function ChatScreen({
             onViewOrder={onViewOrder}
             onViewProfile={onViewProfile}
             onOpenChatDetails={onOpenChatDetails}
+            onAskAi={onAskAi}
             onMessageSent={appendSentMessage}
+            segment={segment}
+            onSwitchSegment={switchSegment}
             acceptRequest={async (conversationId) => {
               const accepted =
                 await dataSource.acceptMessageRequest(conversationId);
@@ -1159,7 +1197,10 @@ function ConversationView({
   onViewOrder,
   onViewProfile,
   onOpenChatDetails,
+  onAskAi,
   onMessageSent,
+  segment,
+  onSwitchSegment,
   acceptRequest,
   onBack,
 }: {
@@ -1175,7 +1216,10 @@ function ConversationView({
   onViewOrder?: (orderId: string) => void;
   onViewProfile?: (profileId: string) => void;
   onOpenChatDetails?: (conversationId: string) => void;
+  onAskAi?: (conversation: Conversation) => void;
   onMessageSent: (message: ChatMessage) => void;
+  segment: "personal" | "business";
+  onSwitchSegment: (next: "personal" | "business") => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
   onRsvpEvent?: (
     eventId: string,
@@ -2158,6 +2202,19 @@ function ConversationView({
           </Pressable>
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel={segment === "personal" ? "Switch to Business chats" : "Switch to Personal chats"}
+            onPress={() => onSwitchSegment(segment === "personal" ? "business" : "personal")}
+            hitSlop={8}
+            style={styles.chatSegmentSwitch}
+          >
+            {segment === "personal" ? (
+              <Store color="#087a4a" size={18} />
+            ) : (
+              <UsersRound color="#087a4a" size={18} />
+            )}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
             accessibilityLabel={
               conversation.kind === "group"
                 ? "View group members"
@@ -2244,7 +2301,7 @@ function ConversationView({
               ? { uri: wallpaperImageUrl }
               : DEFAULT_CHAT_WALLPAPER
           }
-          resizeMode="cover"
+          resizeMode={wallpaperImageUrl ? "cover" : "repeat"}
           imageStyle={[
             styles.wallpaperImage,
             !wallpaperImageUrl && styles.defaultWallpaperImage,
@@ -2517,6 +2574,14 @@ function ConversationView({
         <AttachmentMenu
           visible={attachmentMenuOpen}
           close={() => setAttachmentMenuOpen(false)}
+          askAi={
+            conversation.kind === "personal" && onAskAi
+              ? () => {
+                  setAttachmentMenuOpen(false);
+                  onAskAi(conversation);
+                }
+              : undefined
+          }
           gallery={() => void pickGallery()}
           document={() => void pickDocument()}
           location={() => void shareLocation()}
@@ -3927,6 +3992,7 @@ function WallpaperPicker({
 function AttachmentMenu({
   visible,
   close,
+  askAi,
   gallery,
   document,
   location,
@@ -3941,6 +4007,7 @@ function AttachmentMenu({
 }: {
   visible: boolean;
   close: () => void;
+  askAi?: () => void;
   gallery: () => void;
   document: () => void;
   location: () => void;
@@ -3954,6 +4021,7 @@ function AttachmentMenu({
   wallpaper: () => void;
 }) {
   const actions = [
+    ...(askAi ? [{ label: "Ask AI", icon: Sparkles, action: askAi }] : []),
     { label: "Gallery", icon: ImageIcon, action: gallery },
     { label: "Document", icon: FileText, action: document },
     { label: "Location", icon: MapPin, action: location },
@@ -5710,6 +5778,23 @@ const styles = StyleSheet.create({
     borderBottomColor: "#edf0ee",
   },
   desktopChatRailTitle: { color: "#101828", fontSize: 26, fontWeight: "900" },
+  desktopSegmentedControl: {
+    margin: 12,
+    padding: 4,
+    borderRadius: 16,
+    flexDirection: "row",
+    backgroundColor: "#f2f4f7",
+  },
+  desktopSegmentButton: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  desktopSegmentLabel: { color: "#667085", fontSize: 13, fontWeight: "800" },
   desktopConversationPane: { flex: 1, minWidth: 0 },
   wallpaperArea: { flex: 1, backgroundColor: "#050806" },
   wallpaperSky: { backgroundColor: "#eaf4ff" },
@@ -6443,6 +6528,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: "#cfcfcf",
     backgroundColor: "#ffffff",
+  },
+  chatSegmentSwitch: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#eaf8f0",
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerInfo: { flex: 1, minWidth: 0 },
   storefrontHeaderLink: {

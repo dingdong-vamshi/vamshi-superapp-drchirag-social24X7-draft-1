@@ -5,6 +5,7 @@ import { ActivityIndicator, View } from "react-native";
 import { AuthProvider } from "../src/lib/AuthContext";
 import { useAuth } from "../src/lib/AuthContext";
 import { CallProvider } from "../src/features/chat/CallProvider";
+import AssistantLauncher from "../src/features/assistant/AssistantLauncher";
 
 function RootNavigator() {
   const { loading, session } = useAuth();
@@ -35,6 +36,10 @@ function RootNavigator() {
         <Stack.Screen name="creator-chat/[id]" />
         <Stack.Screen name="seller/creator-chat/[id]" />
         <Stack.Screen name="chat-details/[id]" />
+        <Stack.Screen
+          name="assistant"
+          options={{ presentation: "transparentModal", animation: "fade" }}
+        />
         <Stack.Screen name="social-profile" />
         <Stack.Screen name="cart" />
         <Stack.Screen name="checkout/index" />
@@ -67,7 +72,10 @@ export default function RootLayout() {
     <QueryClientProvider client={client}>
       <AuthProvider>
         <CallProvider>
-          <RootNavigator />
+          <View style={{ flex: 1 }}>
+            <RootNavigator />
+            <AssistantLauncher />
+          </View>
         </CallProvider>
       </AuthProvider>
     </QueryClientProvider>

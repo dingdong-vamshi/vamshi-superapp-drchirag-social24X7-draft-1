@@ -51,7 +51,10 @@
     "test:checkout": "node --test --experimental-strip-types src/features/commerce/checkoutRecovery.test.ts src/features/commerce/shopFilters.test.ts",
     "test:seller-studio": "node --test --experimental-strip-types src/features/commerce/seller-studio-navigation.test.ts src/features/commerce/affiliate-contracts.test.ts src/features/commerce/seller-order-return-filters.test.ts src/features/commerce/seller-order-return-contracts.test.ts",
     "test:nearby": "node --test --experimental-strip-types src/features/discover/nearbyProfileContracts.test.ts",
-    "test:social-wallet": "node --test --experimental-strip-types src/features/social/socialUtils.test.ts src/features/notifications/notificationContracts.test.ts src/features/profile/profileQrUtils.test.ts src/features/profile/profileSettingsContracts.test.ts src/features/wallet/rewardMath.test.ts src/features/wallet/rewardRepository.test.ts"
+    "test:social-wallet": "node --test --experimental-strip-types src/features/social/socialUtils.test.ts src/features/notifications/notificationContracts.test.ts src/features/profile/profileQrUtils.test.ts src/features/profile/profileSettingsContracts.test.ts src/features/wallet/rewardMath.test.ts src/features/wallet/rewardRepository.test.ts",
+    "test:assistant": "node --test --experimental-strip-types src/features/assistant/assistantCore.test.ts src/features/assistant/assistantContracts.test.ts",
+    "test:assistant:e2e": "node --experimental-strip-types scripts/assistantFakeE2E.ts",
+    "test:assistant:e2e:live": "AI_E2E_EXPECTED_PROVIDER=sinorouter:qwen3.8-flash node --experimental-strip-types scripts/assistantFakeE2E.ts"
   },
   "private": true
 }
