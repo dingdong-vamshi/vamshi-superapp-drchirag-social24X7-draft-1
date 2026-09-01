@@ -250,6 +250,13 @@ const resolveContact = async (
     if (scopedNames.some((value) => value.includes(requested) || requested.includes(value))) {
       return { kind: "resolved" as const, contact: scoped };
     }
+    const matchingContacts = await searchContacts(client, plan.recipientQuery);
+    if (matchingContacts.some((contact) =>
+      contact.user_id === scoped.user_id &&
+      contact.conversation_id === scoped.conversation_id
+    )) {
+      return { kind: "resolved" as const, contact: scoped };
+    }
     return {
       kind: "denied" as const,
       message: `This Assistant is scoped to ${scoped.display_name}. Open the global Assistant to choose another recipient.`,

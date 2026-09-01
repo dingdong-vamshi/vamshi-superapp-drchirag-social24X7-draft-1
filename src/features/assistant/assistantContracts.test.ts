@@ -109,6 +109,13 @@ test("global contact discovery is limited to accepted Personal Chat counterparti
   assert.match(migration, /request\.recipient_id = viewer[\s\S]*request\.requester_id = profile\.id/i);
 });
 
+test("contextual Assistant accepts an authorized contact display-name alias", () => {
+  const orchestrator = read("../../../supabase/functions/ai-assistant/index.ts");
+  assert.match(orchestrator, /matchingContacts = await searchContacts\(client, plan\.recipientQuery\)/);
+  assert.match(orchestrator, /contact\.user_id === scoped\.user_id/);
+  assert.match(orchestrator, /contact\.conversation_id === scoped\.conversation_id/);
+});
+
 test("global launcher and contextual Personal Chat Ask AI use the existing route shell", () => {
   const layout = read("../../../app/_layout.tsx");
   const chats = read("../../../app/(tabs)/chats.tsx");
