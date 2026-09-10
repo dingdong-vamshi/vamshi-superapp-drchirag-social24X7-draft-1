@@ -11,6 +11,27 @@ import {
 const orderId = "11111111-1111-4111-8111-111111111111";
 const orderItemId = "22222222-2222-4222-8222-222222222222";
 
+test("keeps profile navigation visible in the desktop conversation rail", () => {
+  const screen = readFileSync(new URL("./ChatScreen.tsx", import.meta.url), "utf8");
+  const route = readFileSync(
+    new URL("../../../app/(tabs)/chats.tsx", import.meta.url),
+    "utf8",
+  );
+  const headerStart = screen.indexOf(
+    '<View style={styles.desktopChatRailHeader}>',
+  );
+  const headerEnd = screen.indexOf(
+    '<View style={styles.desktopSegmentedControl}>',
+    headerStart,
+  );
+
+  assert.ok(headerStart >= 0 && headerEnd > headerStart);
+  const desktopHeader = screen.slice(headerStart, headerEnd);
+  assert.match(desktopHeader, /accessibilityLabel="Open my profile"/);
+  assert.match(desktopHeader, /onPress=\{onOpenOwnProfile\}/);
+  assert.match(route, /onOpenOwnProfile=\{\(\) => router\.push\('\/profile'\)\}/);
+});
+
 test("accepts a versioned server order event and rejects forged shapes", () => {
   const parsed = toOrderEvent({
     version: 1,

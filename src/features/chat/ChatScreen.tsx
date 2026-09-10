@@ -771,14 +771,30 @@ export default function ChatScreen({
           <View style={styles.desktopChatRail}>
             <View style={styles.desktopChatRailHeader}>
               <Text style={styles.desktopChatRailTitle}>Chats</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Start a new chat"
-                onPress={() => setNewChatOpen(true)}
-                style={styles.iconButton}
-              >
-                <Plus color="#ffffff" size={22} />
-              </Pressable>
+              <View style={styles.desktopChatRailActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Start a new chat"
+                  onPress={() => setNewChatOpen(true)}
+                  style={styles.iconButton}
+                >
+                  <Plus color="#ffffff" size={22} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open my profile"
+                  accessibilityHint="Open profile, Creator Commerce, and sign out"
+                  disabled={!onOpenOwnProfile}
+                  onPress={onOpenOwnProfile}
+                  style={styles.viewerAvatarButton}
+                >
+                  <Avatar
+                    label={viewer?.avatarLabel ?? "M"}
+                    url={viewer?.avatarUrl}
+                    online={false}
+                  />
+                </Pressable>
+              </View>
             </View>
             <View style={styles.desktopSegmentedControl}>
               <Pressable
@@ -5778,6 +5794,11 @@ const styles = StyleSheet.create({
     borderBottomColor: "#edf0ee",
   },
   desktopChatRailTitle: { color: "#101828", fontSize: 26, fontWeight: "900" },
+  desktopChatRailActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
   desktopSegmentedControl: {
     margin: 12,
     padding: 4,
