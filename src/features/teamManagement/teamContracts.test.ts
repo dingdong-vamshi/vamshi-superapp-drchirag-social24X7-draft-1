@@ -12,6 +12,7 @@ const privacy = migration("20260925080121_business_employee_realtime_and_privacy
 const runtimeFixes = migration("20260925093428_fix_team_management_runtime_contracts.sql");
 const activationHookFix = migration("20260925094348_allow_claimed_work_identity_creation.sql");
 const workConversationFix = migration("20260925094757_use_storefront_owner_for_work_conversations.sql");
+const conversationIdFix = migration("20260925094914_disambiguate_work_conversation_id.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
@@ -59,6 +60,12 @@ test("work chat creates the conversation through the storefront owner profile", 
   assert.match(workConversationFix, /'buyer_seller', storefront_owner/);
   assert.doesNotMatch(workConversationFix, /'buyer_seller', viewer/);
   assert.match(workConversationFix, /member\.id, viewer,[\s\S]*'assigned'/);
+});
+
+test("phone-started work chats use an unambiguous conversation identifier", () => {
+  assert.match(conversationIdFix, /created_conversation_id uuid/);
+  assert.match(conversationIdFix, /assignment\.conversation_id = created_conversation_id/);
+  assert.doesNotMatch(conversationIdFix, /where assignment\.conversation_id = conversation_id/);
 });
 
 test("work identities receive PII-safe projections and authoritative badges", () => {
