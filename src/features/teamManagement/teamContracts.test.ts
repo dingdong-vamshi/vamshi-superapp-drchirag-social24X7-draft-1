@@ -9,7 +9,10 @@ const foundation = migration("20260925080113_team_management_foundation.sql");
 const authorization = migration("20260925080116_team_management_authorization.sql");
 const assignment = migration("20260925080118_business_employee_conversation_assignment.sql");
 const privacy = migration("20260925080121_business_employee_realtime_and_privacy.sql");
+const runtimeFixes = migration("20260925093244_fix_team_management_runtime_contracts.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
+const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
+const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
 
 test("team entities are tenant-scoped and protected by RLS", () => {
   for (const table of ["storefront_team_roles", "storefront_team_memberships", "storefront_team_invitations", "storefront_team_audit_events"]) {
@@ -22,9 +25,12 @@ test("team entities are tenant-scoped and protected by RLS", () => {
 test("activation uses server-only admin auth and one-time claim completion", () => {
   assert.match(authorization, /grant execute on function public\.claim_business_team_activation\(text, text\) to service_role/);
   assert.match(authorization, /activation_claim_expires_at = now\(\) \+ interval '5 minutes'/);
+  assert.match(authorization, /invitation\.attempts >= invitation\.max_attempts/);
+  assert.match(authorization, /invitation\.code_hash <> encode\(digest/);
   assert.match(edge, /auth\.admin\.createUser/);
   assert.match(edge, /account_type: "business_employee"/);
   assert.match(edge, /auth\.admin\.deleteUser/);
+  assert.doesNotMatch(edge, /serviceRoleKey[^\n]*(?:json|response)/i);
 });
 
 test("business chat enforces one active assignee and immediate revocation", () => {
@@ -40,4 +46,30 @@ test("work identities receive PII-safe projections and authoritative badges", ()
   assert.match(privacy, /business_representative_payload/);
   assert.match(privacy, /get_business_safe_order_context/);
   assert.doesNotMatch(assignment.match(/create or replace function public\.get_business_workspace_inbox[\s\S]*?\$\$;/)?.[0] ?? "", /phone|email|address/i);
+});
+
+test("member profile saves have a matching authorized RPC", () => {
+  assert.match(teamRepository, /rpc\(client, "update_storefront_team_member"/);
+  assert.match(runtimeFixes, /create or replace function public\.update_storefront_team_member\(/);
+  assert.match(runtimeFixes, /private\.storefront_team_permission\([\s\S]*'business_team_manage'/);
+  assert.match(runtimeFixes, /grant execute on function public\.update_storefront_team_member[\s\S]*to authenticated/);
+});
+
+test("private business helpers and lookup attempts stay inaccessible", () => {
+  assert.match(runtimeFixes, /alter table private\.business_customer_lookup_attempts enable row level security/);
+  for (const helper of [
+    "business_representative_payload",
+    "chat_send_permitted",
+    "reopen_business_conversation_after_customer_message",
+  ]) {
+    assert.match(runtimeFixes, new RegExp(`revoke all on function private\\.${helper}`));
+  }
+});
+
+test("realtime membership changes revoke an inactive open session", () => {
+  assert.match(workspace, /repository\.getContext\(\)/);
+  assert.match(workspace, /nextContext\.status !== "verified"/);
+  assert.match(workspace, /await revokeInactiveSession\(\)/);
+  assert.match(workspace, /setContext\(null\)/);
+  assert.match(workspace, /await signOut\(\)/);
 });
