@@ -14,6 +14,7 @@ const activationHookFix = migration("20260925094348_allow_claimed_work_identity_
 const workConversationFix = migration("20260925094757_use_storefront_owner_for_work_conversations.sql");
 const conversationIdFix = migration("20260925094914_disambiguate_work_conversation_id.sql");
 const workParticipantFix = migration("20260925095059_allow_work_identity_conversation_participants.sql");
+const workMessageFix = migration("20260925095159_preserve_work_message_attribution.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
@@ -72,6 +73,11 @@ test("phone-started work chats use an unambiguous conversation identifier", () =
 test("conversation membership accepts isolated Auth-only work identities", () => {
   assert.match(workParticipantFix, /references auth\.users\(id\) on delete cascade/);
   assert.doesNotMatch(workParticipantFix, /references public\.profiles/);
+});
+
+test("business messages retain Auth-only representative attribution", () => {
+  assert.match(workMessageFix, /foreign key \(sender_id\) references auth\.users\(id\)/);
+  assert.doesNotMatch(workMessageFix, /references public\.profiles/);
 });
 
 test("work identities receive PII-safe projections and authoritative badges", () => {
