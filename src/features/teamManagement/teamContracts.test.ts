@@ -175,3 +175,11 @@ test("limited roles do not receive customer chat mutation controls", () => {
   assert.match(workspace, /selected\.workStatus === "open" && canReply/);
   assert.match(workspace, /Your role can view this assignment but cannot reply to customers\./);
 });
+
+test("member removal uses an in-app confirmation that works on web", () => {
+  assert.match(teamPanel, /const \[confirmRemoval, setConfirmRemoval\] = useState\(false\)/);
+  assert.match(teamPanel, /label="Cancel removal"/);
+  assert.match(teamPanel, /label="Confirm remove member"/);
+  assert.doesNotMatch(teamPanel, /Alert\.alert\(\s*"Remove member\?"/);
+  assert.match(teamPanel, /accessibilityLabel=\{`\$\{label\}: \$\{value\}`\}/);
+});

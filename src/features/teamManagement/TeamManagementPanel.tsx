@@ -779,12 +779,14 @@ function MemberModal({
   const [editTitle, setEditTitle] = useState("");
   const [editDepartment, setEditDepartment] = useState("");
   const [editTagline, setEditTagline] = useState("");
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
 
   useEffect(() => {
     setEditRoleId(member?.roleId ?? "");
     setEditTitle(member?.jobTitle ?? "");
     setEditDepartment(member?.department ?? "");
     setEditTagline(member?.customerTagline ?? "");
+    setConfirmRemoval(false);
     setSelectedConversation(null);
     setMessages([]);
     if (!member) {
@@ -1086,25 +1088,38 @@ function MemberModal({
                 />
               ) : null}
               {member.status !== "removed" ? (
-                <Action
-                  label="Remove"
-                  secondary
-                  disabled={busy}
-                  onPress={() =>
-                    Alert.alert(
-                      "Remove member?",
-                      "Historical messages remain attributed, but access ends immediately.",
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Remove",
-                          style: "destructive",
-                          onPress: () => onTransition(member, "remove"),
-                        },
-                      ],
-                    )
-                  }
-                />
+                confirmRemoval ? (
+                  <View style={styles.removalConfirmation}>
+                    <Text style={styles.removalConfirmationText}>
+                      Remove this member? Historical messages stay attributed, but company access ends immediately.
+                    </Text>
+                    <View style={styles.removalConfirmationActions}>
+                      <Action
+                        label="Cancel removal"
+                        secondary
+                        small
+                        disabled={busy}
+                        onPress={() => setConfirmRemoval(false)}
+                      />
+                      <Action
+                        label="Confirm remove member"
+                        small
+                        disabled={busy}
+                        onPress={() => {
+                          setConfirmRemoval(false);
+                          onTransition(member, "remove");
+                        }}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <Action
+                    label="Remove"
+                    secondary
+                    disabled={busy}
+                    onPress={() => setConfirmRemoval(true)}
+                  />
+                )
               ) : null}
             </View>
           ) : (
@@ -1282,7 +1297,11 @@ function RolesModal({
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.detail}>
+    <View
+      accessible
+      accessibilityLabel={`${label}: ${value}`}
+      style={styles.detail}
+    >
       <Text style={styles.detailLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value}</Text>
     </View>
@@ -1592,6 +1611,27 @@ const styles = StyleSheet.create({
     textTransform: "capitalize",
   },
   modalActions: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
+  removalConfirmation: {
+    flex: 1,
+    minWidth: 240,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#f0c9cd",
+    backgroundColor: "#fff6f6",
+    borderRadius: 14,
+    padding: 12,
+  },
+  removalConfirmationText: {
+    color: "#852936",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  removalConfirmationActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   ownerNote: { color: muted, fontSize: 12, fontStyle: "italic" },
   supervisorDesk: {
     minHeight: 300,
