@@ -212,6 +212,11 @@ export default function BusinessWorkspacePage() {
   };
   const startChat = async () => {
     if (!repository || !phone.trim()) return;
+    if (!context?.permissions.includes("business_chat_reply")) {
+      setError("Your role cannot start or reply to customer chats.");
+      setPhoneOpen(false);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -262,6 +267,8 @@ export default function BusinessWorkspacePage() {
         </Pressable>
       </View>
     );
+
+  const canReply = context.permissions.includes("business_chat_reply");
 
   return (
     <View style={[styles.page, compact && styles.pageCompact]}>
@@ -354,14 +361,16 @@ export default function BusinessWorkspacePage() {
                   <Text style={styles.title}>Customer chats</Text>
                   <Text style={styles.subtitle}>Assigned to you</Text>
                 </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="New customer chat"
-                  onPress={() => setPhoneOpen(true)}
-                  style={styles.addButton}
-                >
-                  <Plus size={16} color="#ffffff" />
-                </Pressable>
+                {canReply ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="New customer chat"
+                    onPress={() => setPhoneOpen(true)}
+                    style={styles.addButton}
+                  >
+                    <Plus size={16} color="#ffffff" />
+                  </Pressable>
+                ) : null}
               </View>
               <View style={styles.filters}>
                 <Filter
@@ -458,7 +467,7 @@ export default function BusinessWorkspacePage() {
                         {selected.workStatus}
                       </Text>
                     </View>
-                    {selected.workStatus === "open" ? (
+                    {selected.workStatus === "open" && canReply ? (
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Resolve conversation"
@@ -481,7 +490,7 @@ export default function BusinessWorkspacePage() {
                       />
                     ))}
                   </ScrollView>
-                  {selected.workStatus === "open" ? (
+                  {selected.workStatus === "open" && canReply ? (
                     <View style={styles.composer}>
                       <TextInput
                         accessibilityLabel="Reply to customer"
@@ -510,12 +519,18 @@ export default function BusinessWorkspacePage() {
                         )}
                       </Pressable>
                     </View>
-                  ) : (
+                  ) : selected.workStatus === "resolved" ? (
                     <View style={styles.resolved}>
                       <CheckCheck size={18} color={green} />
                       <Text style={styles.resolvedText}>
                         Resolved. A new customer message reopens this chat
                         automatically.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.resolved}>
+                      <Text style={styles.resolvedText}>
+                        Your role can view this assignment but cannot reply to customers.
                       </Text>
                     </View>
                   )}

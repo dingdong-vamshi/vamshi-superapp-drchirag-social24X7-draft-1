@@ -165,3 +165,10 @@ test("business workspace exposes named chat controls", () => {
   }
   assert.match(workspace, /accessibilityLabel=\{`Open chat with \$\{item\.customerDisplayName\}`\}/);
 });
+
+test("limited roles do not receive customer chat mutation controls", () => {
+  assert.match(workspace, /const canReply = context\.permissions\.includes\("business_chat_reply"\)/);
+  assert.match(workspace, /\{canReply \? \([\s\S]*accessibilityLabel="New customer chat"/);
+  assert.match(workspace, /selected\.workStatus === "open" && canReply/);
+  assert.match(workspace, /Your role can view this assignment but cannot reply to customers\./);
+});
