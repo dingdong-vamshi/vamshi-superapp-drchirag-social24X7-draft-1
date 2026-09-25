@@ -6,9 +6,12 @@ import { AuthProvider } from "../src/lib/AuthContext";
 import { useAuth } from "../src/lib/AuthContext";
 import { CallProvider } from "../src/features/chat/CallProvider";
 import AssistantLauncher from "../src/features/assistant/AssistantLauncher";
+import { isBusinessWorkIdentity } from "../src/features/businessWorkspace/businessAuth";
 
 function RootNavigator() {
-  const { loading, session } = useAuth();
+  const { loading, session, user } = useAuth();
+  const workIdentity = isBusinessWorkIdentity(user);
+  const personalSession = Boolean(session?.user) && !workIdentity;
 
   if (loading) {
     return (
@@ -27,7 +30,7 @@ function RootNavigator() {
 
   return (
     <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
-      <Stack.Protected guard={Boolean(session?.user)}>
+      <Stack.Protected guard={personalSession}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="(creator-commerce)" />
         <Stack.Screen name="seller/index" />
@@ -52,13 +55,24 @@ function RootNavigator() {
         <Stack.Screen name="games/index" />
         <Stack.Screen name="games/[id]" />
       </Stack.Protected>
+      <Stack.Protected guard={Boolean(session?.user) && workIdentity}>
+        <Stack.Screen name="business-workspace" />
+      </Stack.Protected>
       <Stack.Protected guard={!session?.user}>
         <Stack.Screen name="(auth)" />
+        <Stack.Screen name="business-login" />
+        <Stack.Screen name="business-activate" />
       </Stack.Protected>
       <Stack.Screen name="store/[slug]" />
       <Stack.Screen name="store/[slug]/product/[productSlug]" />
     </Stack>
   );
+}
+
+function ProtectedAssistantLauncher() {
+  const { user } = useAuth();
+  if (!user || isBusinessWorkIdentity(user)) return null;
+  return <AssistantLauncher />;
 }
 
 export default function RootLayout() {
@@ -74,7 +88,7 @@ export default function RootLayout() {
         <CallProvider>
           <View style={{ flex: 1 }}>
             <RootNavigator />
-            <AssistantLauncher />
+            <ProtectedAssistantLauncher />
           </View>
         </CallProvider>
       </AuthProvider>

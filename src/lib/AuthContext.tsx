@@ -15,6 +15,7 @@ import {
   type User,
 } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./supabase";
+import { businessLoginEmail, type BusinessWorkContext } from "../features/businessWorkspace/businessAuth";
 
 type AuthContextValue = {
   initialized: boolean;
@@ -27,6 +28,7 @@ type AuthContextValue = {
     phone: string;
     password: string;
   }) => Promise<AuthResponse>;
+  signInBusiness: (input: { loginId: string; password: string }) => Promise<AuthResponse>;
   signUp: (input: {
     email: string;
     phone: string;
@@ -167,6 +169,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const signInBusiness = useCallback(async (input: { loginId: string; password: string }) => {
+    if (!supabase) throw authNotReady;
+    const email = businessLoginEmail(input.loginId);
+    const result = await supabase.auth.signInWithPassword({ email, password: input.password });
+    if (result.error || !result.data.session) return result;
+    if (result.data.user.app_metadata?.account_type !== "business_employee") {
+      await supabase.auth.signOut();
+      setSession(null);
+      return { data: { user: null, session: null }, error: new AuthError("This is not a business work login.", 403, "invalid_credentials") };
+    }
+    const { data: context, error: contextError } = await supabase.rpc("get_my_business_work_context");
+    const work = context as BusinessWorkContext | null;
+    if (contextError || !work || work.status !== "verified") {
+      await supabase.auth.signOut();
+      setSession(null);
+      const message = work?.status === "awaiting_approval"
+        ? "Your password is set. Ask the business owner to approve your work account."
+        : work?.status === "suspended" || work?.status === "removed"
+          ? "This work account no longer has access. Contact the business owner."
+          : "This work account is not ready yet.";
+      return { data: { user: null, session: null }, error: new AuthError(message, 403, "work_account_inactive") };
+    }
+    setSession(result.data.session);
+    return result;
+  }, []);
+
   const signOut = useCallback(async () => {
     if (supabase) {
       const { error } = await supabase.auth.signOut();
@@ -183,11 +211,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: session?.user ?? null,
       configured: supabaseConfigured,
       signIn,
+      signInBusiness,
       signUp,
       signOut,
       refreshSession,
     }),
-    [loading, session, signIn, signUp, signOut, refreshSession],
+    [loading, session, signIn, signInBusiness, signUp, signOut, refreshSession],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

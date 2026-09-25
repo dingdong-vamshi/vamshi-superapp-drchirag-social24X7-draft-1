@@ -201,6 +201,9 @@ export default function LoginScreen() {
                 Create account
               </Link>
             </View>
+            <Link href="/business-login" style={styles.businessLink}>
+              Employee or company representative? Use Business Login
+            </Link>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -359,5 +362,16 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 14,
     paddingVertical: 8,
+  },
+  businessLink: {
+    color: "#087a49",
+    backgroundColor: "#eef8f3",
+    borderRadius: 12,
+    overflow: "hidden",
+    fontWeight: "800",
+    fontSize: 12,
+    textAlign: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 10,
   },
 });
