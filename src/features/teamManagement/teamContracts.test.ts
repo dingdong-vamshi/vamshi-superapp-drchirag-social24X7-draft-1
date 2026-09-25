@@ -16,6 +16,7 @@ const conversationIdFix = migration("20260925094914_disambiguate_work_conversati
 const workParticipantFix = migration("20260925095059_allow_work_identity_conversation_participants.sql");
 const workMessageFix = migration("20260925095159_preserve_work_message_attribution.sql");
 const customRoleFix = migration("20260925095528_allow_storefront_custom_roles.sql");
+const cryptoPathFix = migration("20260925095804_secure_team_activation_crypto_path.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const teamPanel = readFileSync(join(root, "src", "features", "teamManagement", "TeamManagementPanel.tsx"), "utf8");
@@ -38,6 +39,15 @@ test("activation uses server-only admin auth and one-time claim completion", () 
   assert.match(edge, /account_type: "business_employee"/);
   assert.match(edge, /auth\.admin\.deleteUser/);
   assert.doesNotMatch(edge, /serviceRoleKey[^\n]*(?:json|response)/i);
+  for (const routine of [
+    "create_storefront_team_invitation",
+    "resend_storefront_team_activation",
+    "claim_business_team_activation",
+    "complete_business_team_activation",
+  ]) {
+    assert.match(cryptoPathFix, new RegExp(`alter function public\\.${routine}`));
+  }
+  assert.match(cryptoPathFix, /set search_path = pg_catalog, extensions/g);
 });
 
 test("auth insert bypass requires a live server-issued activation claim", () => {
