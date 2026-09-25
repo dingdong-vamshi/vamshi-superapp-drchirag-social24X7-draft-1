@@ -122,6 +122,11 @@ test("hydrates personal profiles without relying on the Auth participant foreign
   assert.match(repository, /participant\.profiles = profile \? \[profile\] : \[\]/);
 });
 
+test("customer business messages expose the verified representative badge", () => {
+  const screen = readFileSync(new URL("./ChatScreen.tsx", import.meta.url), "utf8");
+  assert.match(screen, /message\.businessRepresentative\.verified[\s\S]*accessibilityLabel="Verified representative"/);
+});
+
 test("validates location bounds", () => {
   assert.deepEqual(
     toLocation({

@@ -3277,7 +3277,13 @@ function MessageBubble({
                   {message.businessRepresentative.name}
                 </Text>
                 {message.businessRepresentative.verified ? (
-                  <CheckCircle2 size={13} color={mine ? "#d9f3ff" : "#55b9ff"} />
+                  <View
+                    accessible
+                    accessibilityRole="image"
+                    accessibilityLabel="Verified representative"
+                  >
+                    <CheckCircle2 size={13} color={mine ? "#d9f3ff" : "#55b9ff"} />
+                  </View>
                 ) : null}
               </View>
               <Text style={[styles.representativeTagline, mine && styles.representativeTaglineMine]}>

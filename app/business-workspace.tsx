@@ -659,7 +659,13 @@ function MessageBubble({
             {message.senderDisplayName}
           </Text>
           {message.representativeVerified ? (
-            <BadgeCheck size={14} color={mine ? "#d9f3ff" : "#147ac6"} />
+            <View
+              accessible
+              accessibilityRole="image"
+              accessibilityLabel="Verified representative"
+            >
+              <BadgeCheck size={14} color={mine ? "#d9f3ff" : "#147ac6"} />
+            </View>
           ) : null}
         </View>
         {message.senderTagline ? (
