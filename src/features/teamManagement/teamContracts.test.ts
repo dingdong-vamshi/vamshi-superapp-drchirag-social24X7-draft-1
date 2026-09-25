@@ -150,6 +150,9 @@ test("team actions and member fields expose accessible control names", () => {
   assert.match(teamPanel, /accessibilityLabel=\{`Open team member \$\{member\.fullName\}`\}/);
   assert.match(teamPanel, /accessibilityLabel=\{`Monitor chat with \$\{conversation\.customerDisplayName\}`\}/);
   assert.match(teamPanel, /accessibilityLabel=\{`Reassign conversation to \$\{candidate\.fullName\}`\}/);
+  assert.match(teamPanel, /accessibilityLabel=\{`Select \$\{role\.name\} role for \$\{member\.fullName\}`\}/);
+  assert.match(teamPanel, /accessibilityLabel=\{`Edit role \$\{role\.name\}`\}/);
+  assert.match(teamPanel, /accessibilityRole="checkbox"[\s\S]*accessibilityLabel=\{permission\.label\}/);
 });
 
 test("business workspace exposes named chat controls", () => {

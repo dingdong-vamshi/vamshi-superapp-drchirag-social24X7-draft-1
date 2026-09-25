@@ -930,6 +930,9 @@ function MemberModal({
                   {roles.map((role) => (
                     <Pressable
                       key={role.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Select ${role.name} role for ${member.fullName}`}
+                      accessibilityState={{ selected: editRoleId === role.id }}
                       onPress={() => setEditRoleId(role.id)}
                       style={[
                         styles.roleChoice,
@@ -1189,7 +1192,11 @@ function RolesModal({
                   Custom roles stay inside {dashboard.storefront.name}.
                 </Text>
               </View>
-              <Pressable onPress={onClose}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close roles and permissions"
+                onPress={onClose}
+              >
                 <X size={21} color={ink} />
               </Pressable>
             </View>
@@ -1203,6 +1210,9 @@ function RolesModal({
                 {dashboard.roles.map((role) => (
                   <Pressable
                     key={role.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit role ${role.name}`}
+                    accessibilityState={{ selected: selected?.id === role.id }}
                     onPress={() => choose(role)}
                     style={[
                       styles.roleRailItem,
@@ -1230,6 +1240,9 @@ function RolesModal({
                   return (
                     <Pressable
                       key={permission.code}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={permission.label}
+                      accessibilityState={{ checked: active }}
                       onPress={() =>
                         setPermissions((current) =>
                           active
