@@ -183,3 +183,8 @@ test("member removal uses an in-app confirmation that works on web", () => {
   assert.doesNotMatch(teamPanel, /Alert\.alert\(\s*"Remove member\?"/);
   assert.match(teamPanel, /accessibilityLabel=\{`\$\{label\}: \$\{value\}`\}/);
 });
+
+test("the invitation sheet lets narrow screens scroll its complete card", () => {
+  assert.match(teamPanel, /function InviteModal[\s\S]*<ScrollView contentContainerStyle=\{styles\.modalScroll\}>/);
+  assert.doesNotMatch(teamPanel, /modalCard:\s*\{[^}]*maxHeight/);
+});
