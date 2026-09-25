@@ -11,6 +11,7 @@ const assignment = migration("20260925080118_business_employee_conversation_assi
 const privacy = migration("20260925080121_business_employee_realtime_and_privacy.sql");
 const runtimeFixes = migration("20260925093428_fix_team_management_runtime_contracts.sql");
 const activationHookFix = migration("20260925094348_allow_claimed_work_identity_creation.sql");
+const workConversationFix = migration("20260925094757_use_storefront_owner_for_work_conversations.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
@@ -52,6 +53,12 @@ test("business chat enforces one active assignee and immediate revocation", () =
   assert.match(assignment, /Only the active verified assignee may reply/);
   assert.match(assignment, /delete from public\.conversation_participants/);
   assert.match(assignment, /reopen_business_conversation_after_customer_message/);
+});
+
+test("work chat creates the conversation through the storefront owner profile", () => {
+  assert.match(workConversationFix, /'buyer_seller', storefront_owner/);
+  assert.doesNotMatch(workConversationFix, /'buyer_seller', viewer/);
+  assert.match(workConversationFix, /member\.id, viewer,[\s\S]*'assigned'/);
 });
 
 test("work identities receive PII-safe projections and authoritative badges", () => {
