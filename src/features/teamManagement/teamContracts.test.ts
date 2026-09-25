@@ -188,3 +188,9 @@ test("the invitation sheet lets narrow screens scroll its complete card", () => 
   assert.match(teamPanel, /function InviteModal[\s\S]*<ScrollView contentContainerStyle=\{styles\.modalScroll\}>/);
   assert.doesNotMatch(teamPanel, /modalCard:\s*\{[^}]*maxHeight/);
 });
+
+test("the role editor keeps stacked fields compact on phones", () => {
+  assert.match(teamPanel, /label="Role name"[^>]*stacked/);
+  assert.match(teamPanel, /label="Description"[\s\S]*?stacked/);
+  assert.match(teamPanel, /fieldStacked:\s*\{ flexGrow: 0, flexBasis: "auto" \}/);
+});

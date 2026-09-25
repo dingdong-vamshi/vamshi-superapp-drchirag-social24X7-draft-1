@@ -552,14 +552,16 @@ function Field({
   value,
   onChangeText,
   placeholder,
+  stacked,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
+  stacked?: boolean;
 }) {
   return (
-    <View style={styles.field}>
+    <View style={[styles.field, stacked && styles.fieldStacked]}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
@@ -1243,11 +1245,12 @@ function RolesModal({
                 ))}
               </View>
               <View style={styles.roleEditor}>
-                <Field label="Role name" value={name} onChangeText={setName} />
+                <Field label="Role name" value={name} onChangeText={setName} stacked />
                 <Field
                   label="Description"
                   value={description}
                   onChangeText={setDescription}
+                  stacked
                 />
                 <Text style={styles.permissionTitle}>Permissions</Text>
                 {dashboard.permissionCatalog.map((permission) => {
@@ -1543,6 +1546,7 @@ const styles = StyleSheet.create({
   },
   formGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   field: { flexGrow: 1, flexBasis: 220, gap: 6 },
+  fieldStacked: { flexGrow: 0, flexBasis: "auto" },
   fieldLabel: { color: "#425469", fontSize: 11, fontWeight: "900" },
   input: {
     minHeight: 45,
