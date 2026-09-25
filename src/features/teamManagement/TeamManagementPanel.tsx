@@ -863,6 +863,8 @@ function MemberModal({
   };
   const saveProfile = async () => {
     if (!member || !editRoleId || !editTitle.trim() || !editDepartment.trim() || !editTagline.trim()) return;
+    const selectedRole = roles.find((role) => role.id === editRoleId);
+    if (!selectedRole) return;
     setChatBusy(true);
     try {
       await repository.updateMember({
@@ -872,7 +874,7 @@ function MemberModal({
         customerTagline: editTagline,
         jobTitle: editTitle,
         department: editDepartment,
-        permissions: null,
+        permissions: selectedRole.permissions,
       });
       onChanged();
     } catch (cause) {
