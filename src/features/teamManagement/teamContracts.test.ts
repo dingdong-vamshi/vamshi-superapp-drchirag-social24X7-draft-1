@@ -15,6 +15,7 @@ const workConversationFix = migration("20260925094757_use_storefront_owner_for_w
 const conversationIdFix = migration("20260925094914_disambiguate_work_conversation_id.sql");
 const workParticipantFix = migration("20260925095059_allow_work_identity_conversation_participants.sql");
 const workMessageFix = migration("20260925095159_preserve_work_message_attribution.sql");
+const customRoleFix = migration("20260925095528_allow_storefront_custom_roles.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
@@ -78,6 +79,13 @@ test("conversation membership accepts isolated Auth-only work identities", () =>
 test("business messages retain Auth-only representative attribution", () => {
   assert.match(workMessageFix, /foreign key \(sender_id\) references auth\.users\(id\)/);
   assert.doesNotMatch(workMessageFix, /references public\.profiles/);
+});
+
+test("custom roles are accepted while the owner role stays protected", () => {
+  const customRoleChecks = customRoleFix.match(/role\.system_key is distinct from 'owner'/g) ?? [];
+  assert.equal(customRoleChecks.length, 2);
+  assert.match(customRoleFix, /create_storefront_team_invitation/);
+  assert.match(customRoleFix, /update_storefront_team_member_access/);
 });
 
 test("work identities receive PII-safe projections and authoritative badges", () => {
