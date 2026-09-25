@@ -64,6 +64,20 @@ export default function BusinessWorkspacePage() {
   const [phoneOpen, setPhoneOpen] = useState(false);
   const [phone, setPhone] = useState("");
 
+  const clearWorkspaceData = useCallback(() => {
+    setContext(null);
+    setInbox([]);
+    setMessages([]);
+    setSelected(null);
+    setFeed(null);
+  }, []);
+
+  const revokeInactiveSession = useCallback(async () => {
+    clearWorkspaceData();
+    await signOut();
+    router.replace("/business-login");
+  }, [clearWorkspaceData, signOut]);
+
   const loadInbox = useCallback(async () => {
     if (!repository) return;
     const rows = await repository.listInbox(filter);
@@ -94,10 +108,10 @@ export default function BusinessWorkspacePage() {
     setError(null);
     try {
       const nextContext = await repository.getContext();
-      if (!nextContext || nextContext.status !== "verified")
-        throw new Error(
-          "This work account is not approved for business access.",
-        );
+      if (!nextContext || nextContext.status !== "verified") {
+        await revokeInactiveSession();
+        return;
+      }
       setContext(nextContext);
       await loadInbox();
     } catch (cause) {
@@ -109,7 +123,7 @@ export default function BusinessWorkspacePage() {
     } finally {
       setLoading(false);
     }
-  }, [repository, loadInbox]);
+  }, [repository, loadInbox, revokeInactiveSession]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -120,10 +134,33 @@ export default function BusinessWorkspacePage() {
   useEffect(() => {
     if (!repository || !context) return;
     return repository.subscribe(context.storefrontId, () => {
-      void loadInbox();
-      if (selected) void loadMessages(selected.conversationId);
+      void (async () => {
+        try {
+          const nextContext = await repository.getContext();
+          if (!nextContext || nextContext.status !== "verified") {
+            await revokeInactiveSession();
+            return;
+          }
+          setContext(nextContext);
+          await loadInbox();
+          if (selected) await loadMessages(selected.conversationId);
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Business workspace could not be refreshed.",
+          );
+        }
+      })();
     });
-  }, [repository, context, selected?.conversationId, loadInbox, loadMessages]);
+  }, [
+    repository,
+    context,
+    selected?.conversationId,
+    loadInbox,
+    loadMessages,
+    revokeInactiveSession,
+  ]);
 
   const openFeed = async () => {
     setTab("feed");
