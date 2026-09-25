@@ -175,6 +175,18 @@ export function createBusinessWorkspaceRepository(
             onChange,
           ),
         client
+          .channel(`business-workspace-assignment-events:${storefrontId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "business_conversation_assignment_events",
+              filter: `storefront_id=eq.${storefrontId}`,
+            },
+            onChange,
+          ),
+        client
           .channel(`business-workspace-member:${storefrontId}`)
           .on(
             "postgres_changes",

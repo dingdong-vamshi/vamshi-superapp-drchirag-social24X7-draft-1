@@ -18,10 +18,12 @@ const workMessageFix = migration("20260925095159_preserve_work_message_attributi
 const customRoleFix = migration("20260925095528_allow_storefront_custom_roles.sql");
 const cryptoPathFix = migration("20260925095804_secure_team_activation_crypto_path.sql");
 const storefrontBootstrap = migration("20260925110000_bootstrap_new_storefront_teams.sql");
+const reassignmentRealtime = migration("20260925184500_notify_reassigned_workspaces.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const teamPanel = readFileSync(join(root, "src", "features", "teamManagement", "TeamManagementPanel.tsx"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
+const workspaceRepository = readFileSync(join(root, "src", "features", "businessWorkspace", "businessWorkspaceRepository.ts"), "utf8");
 
 test("team entities are tenant-scoped and protected by RLS", () => {
   for (const table of ["storefront_team_roles", "storefront_team_memberships", "storefront_team_invitations", "storefront_team_audit_events"]) {
@@ -141,6 +143,13 @@ test("realtime membership changes revoke an inactive open session", () => {
   assert.match(workspace, /await revokeInactiveSession\(\)/);
   assert.match(workspace, /setContext\(null\)/);
   assert.match(workspace, /await signOut\(\)/);
+});
+
+test("reassignment events refresh both previous and next employee workspaces", () => {
+  assert.match(reassignmentRealtime, /previous_assignee_membership_id/);
+  assert.match(reassignmentRealtime, /assignee_membership_id/);
+  assert.match(reassignmentRealtime, /member\.auth_user_id = auth\.uid\(\)/);
+  assert.match(workspaceRepository, /business_conversation_assignment_events/);
 });
 
 test("team actions and member fields expose accessible control names", () => {
