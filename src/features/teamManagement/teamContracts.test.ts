@@ -10,6 +10,7 @@ const authorization = migration("20260925080116_team_management_authorization.sq
 const assignment = migration("20260925080118_business_employee_conversation_assignment.sql");
 const privacy = migration("20260925080121_business_employee_realtime_and_privacy.sql");
 const runtimeFixes = migration("20260925093428_fix_team_management_runtime_contracts.sql");
+const activationHookFix = migration("20260925094348_allow_claimed_work_identity_creation.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
@@ -31,6 +32,19 @@ test("activation uses server-only admin auth and one-time claim completion", () 
   assert.match(edge, /account_type: "business_employee"/);
   assert.match(edge, /auth\.admin\.deleteUser/);
   assert.doesNotMatch(edge, /serviceRoleKey[^\n]*(?:json|response)/i);
+});
+
+test("auth insert bypass requires a live server-issued activation claim", () => {
+  const claimedIdentity = activationHookFix.match(
+    /create or replace function private\.is_claimed_business_work_identity[\s\S]*?\$\$;/,
+  )?.[0] ?? "";
+  assert.match(claimedIdentity, /membership\.status = 'not_activated'/);
+  assert.match(claimedIdentity, /membership\.auth_user_id is null/);
+  assert.match(claimedIdentity, /invitation\.activation_claim_hash is not null/);
+  assert.match(claimedIdentity, /invitation\.activation_claim_expires_at > now\(\)/);
+  assert.doesNotMatch(claimedIdentity, /raw_user_meta_data|work_only/);
+  assert.match(activationHookFix, /handle_new_auth_user[\s\S]*is_claimed_business_work_identity/);
+  assert.match(activationHookFix, /create_creator_commerce_access_for_user[\s\S]*is_claimed_business_work_identity/);
 });
 
 test("business chat enforces one active assignee and immediate revocation", () => {
