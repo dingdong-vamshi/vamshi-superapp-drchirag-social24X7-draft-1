@@ -148,3 +148,17 @@ test("team actions and member fields expose accessible control names", () => {
   assert.match(teamPanel, /function Field\([\s\S]*<TextInput[\s\S]*accessibilityLabel=\{label\}/);
   assert.match(teamPanel, /accessibilityLabel=\{`Select \$\{role\.name\} role`\}/);
 });
+
+test("business workspace exposes named chat controls", () => {
+  for (const label of [
+    "New customer chat",
+    "Exact customer phone number",
+    "Open assigned chat",
+    "Reply to customer",
+    "Send business reply",
+    "Resolve conversation",
+  ]) {
+    assert.match(workspace, new RegExp(`accessibilityLabel="${label}"`));
+  }
+  assert.match(workspace, /accessibilityLabel=\{`Open chat with \$\{item\.customerDisplayName\}`\}/);
+});

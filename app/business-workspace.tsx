@@ -319,6 +319,7 @@ export default function BusinessWorkspacePage() {
             </Text>
           </View>
           <Pressable
+            accessibilityRole="button"
             accessibilityLabel="Sign out"
             onPress={() =>
               void signOut().then(() => router.replace("/business-login"))
@@ -354,6 +355,8 @@ export default function BusinessWorkspacePage() {
                   <Text style={styles.subtitle}>Assigned to you</Text>
                 </View>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="New customer chat"
                   onPress={() => setPhoneOpen(true)}
                   style={styles.addButton}
                 >
@@ -377,7 +380,11 @@ export default function BusinessWorkspacePage() {
                     setSelected(null);
                   }}
                 />
-                <Pressable onPress={() => void loadInbox()}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Refresh customer chats"
+                  onPress={() => void loadInbox()}
+                >
                   <RefreshCw size={16} color={green} />
                 </Pressable>
               </View>
@@ -385,6 +392,9 @@ export default function BusinessWorkspacePage() {
                 {inbox.map((item) => (
                   <Pressable
                     key={item.conversationId}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open chat with ${item.customerDisplayName}`}
+                    accessibilityState={{ selected: selected?.conversationId === item.conversationId }}
                     onPress={() => setSelected(item)}
                     style={[
                       styles.conversation,
@@ -450,6 +460,9 @@ export default function BusinessWorkspacePage() {
                     </View>
                     {selected.workStatus === "open" ? (
                       <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Resolve conversation"
+                        accessibilityState={{ disabled: busy }}
                         disabled={busy}
                         onPress={() => void resolve()}
                         style={styles.resolve}
@@ -471,6 +484,7 @@ export default function BusinessWorkspacePage() {
                   {selected.workStatus === "open" ? (
                     <View style={styles.composer}>
                       <TextInput
+                        accessibilityLabel="Reply to customer"
                         value={draft}
                         onChangeText={setDraft}
                         multiline
@@ -479,6 +493,9 @@ export default function BusinessWorkspacePage() {
                         style={styles.composerInput}
                       />
                       <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Send business reply"
+                        accessibilityState={{ disabled: busy || !draft.trim(), busy }}
                         disabled={busy || !draft.trim()}
                         onPress={() => void send()}
                         style={[
@@ -537,11 +554,16 @@ export default function BusinessWorkspacePage() {
                   search and customer directory browsing are disabled.
                 </Text>
               </View>
-              <Pressable onPress={() => setPhoneOpen(false)}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close customer phone dialog"
+                onPress={() => setPhoneOpen(false)}
+              >
                 <X size={20} color={ink} />
               </Pressable>
             </View>
             <TextInput
+              accessibilityLabel="Exact customer phone number"
               value={phone}
               onChangeText={setPhone}
               keyboardType="phone-pad"
@@ -550,6 +572,9 @@ export default function BusinessWorkspacePage() {
               style={styles.phoneInput}
             />
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open assigned chat"
+              accessibilityState={{ disabled: busy || !phone.trim(), busy }}
               disabled={busy || !phone.trim()}
               onPress={() => void startChat()}
               style={[
@@ -583,6 +608,9 @@ function Nav({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: active }}
       onPress={onPress}
       style={[styles.nav, active && styles.navActive]}
     >
@@ -604,6 +632,9 @@ function Filter({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label} conversations`}
+      accessibilityState={{ selected: active }}
       onPress={onPress}
       style={[styles.filter, active && styles.filterActive]}
     >
