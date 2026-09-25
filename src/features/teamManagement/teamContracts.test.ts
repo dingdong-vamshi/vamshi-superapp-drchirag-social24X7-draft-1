@@ -18,6 +18,7 @@ const workMessageFix = migration("20260925095159_preserve_work_message_attributi
 const customRoleFix = migration("20260925095528_allow_storefront_custom_roles.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
+const teamPanel = readFileSync(join(root, "src", "features", "teamManagement", "TeamManagementPanel.tsx"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
 
 test("team entities are tenant-scoped and protected by RLS", () => {
@@ -86,6 +87,7 @@ test("custom roles are accepted while the owner role stays protected", () => {
   assert.equal(customRoleChecks.length, 2);
   assert.match(customRoleFix, /create_storefront_team_invitation/);
   assert.match(customRoleFix, /update_storefront_team_member_access/);
+  assert.match(teamPanel, /permissions: selectedRole\.permissions/);
 });
 
 test("work identities receive PII-safe projections and authoritative badges", () => {
