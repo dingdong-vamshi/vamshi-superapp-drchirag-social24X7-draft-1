@@ -9,6 +9,7 @@ import { localShopRepository } from "../../src/features/commerce/shopRepository"
 import { getCreatorCommerceAccess } from "../../src/features/creatorCommerce/accessRepository";
 import { useAuth } from "../../src/lib/AuthContext";
 import { supabase } from "../../src/lib/supabase";
+import { createTeamRepository } from "../../src/features/teamManagement/teamRepository";
 
 export default function SellerStudioPage() {
   const params = useLocalSearchParams<{ section?: string }>();
@@ -24,6 +25,7 @@ export default function SellerStudioPage() {
     });
   }, [user]);
   const initialSection = isSellerSection(params.section) ? params.section : undefined;
+  const teamRepository = useMemo(() => supabase ? createTeamRepository(supabase) : undefined, []);
 
   const verifySellerAccess = useCallback(async () => {
     setChecking(true);
@@ -76,6 +78,7 @@ export default function SellerStudioPage() {
       repository={repository}
       initialSection={initialSection}
       persistenceKey={user ? `seller-studio-work:${user.id}` : undefined}
+      teamRepository={teamRepository}
       onSignOut={async () => {
         await signOut();
         router.replace("/login");

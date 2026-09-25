@@ -12,7 +12,7 @@ import {
 test("Seller Studio exposes the requested hierarchy without a flat module list", () => {
   assert.deepEqual(sellerNavigation.filter((group) => !group.utility).map((group) => group.label), [
     "Home", "Orders", "Products", "Logistics", "Marketing", "Affiliate", "LIVE & Video",
-    "Growth", "Apps & Partners", "Analytics", "Account Health", "Finance",
+    "Growth", "Apps & Partners", "Analytics", "Account Health", "Finance", "Team & verification",
   ]);
   assert.deepEqual(sellerNavigation.find((group) => group.key === "orders")?.children.map((item) => item.label), [
     "Manage Orders", "Manage Returns", "Return Settings",
@@ -41,4 +41,5 @@ test("functional and Coming Soon routes are explicit and refresh-safe", () => {
   assert.equal(isSellerSection("catalog"), false);
   assert.equal(sellerNavigation.find((group) => group.key === "account_health")?.children[0]?.status, "coming_soon");
   assert.equal(sellerNavigation.find((group) => group.key === "analytics")?.children[0]?.status, "functional");
+  assert.equal(sellerNavigation.find((group) => group.key === "team")?.children[0]?.status, "functional");
 });

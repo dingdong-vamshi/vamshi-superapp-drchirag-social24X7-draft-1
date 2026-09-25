@@ -45,6 +45,7 @@ import {
   Truck,
   Video,
   WalletCards,
+  Users,
   X,
 } from "lucide-react-native";
 import {
@@ -90,6 +91,8 @@ import {
   toggleSellerNavigationGroup,
   type SellerSection,
 } from "./seller-studio-navigation";
+import TeamManagementPanel from "../teamManagement/TeamManagementPanel";
+import type { TeamRepository } from "../teamManagement/teamRepository";
 
 type Props = {
   repository: ShopRepository;
@@ -97,6 +100,7 @@ type Props = {
   persistenceKey?: string;
   initialSection?: SellerSection;
   onSignOut?: () => void | Promise<void>;
+  teamRepository?: TeamRepository;
 };
 
 const ink = "#0e1726";
@@ -136,6 +140,7 @@ const navigationIcons: Record<string, React.ComponentType<{ size?: number; color
   analytics: BarChart3,
   account_health: PackageCheck,
   finance: WalletCards,
+  team: Users,
   storefront: Store,
   business_chat: MessageSquareText,
   creator_chat: MessageCircle,
@@ -202,6 +207,7 @@ export function SellerStudioScreen({
   persistenceKey,
   initialSection,
   onSignOut,
+  teamRepository,
 }: Props) {
   const { width: viewportWidth } = useWindowDimensions();
   const mobileLayout = viewportWidth < 900;
@@ -1886,6 +1892,14 @@ export function SellerStudioScreen({
               </PreviewCard>
             </> : <EmptyHint text="Finance data is unavailable for this Seller workspace." />}
           </SectionShell>
+        ) : null}
+
+        {activeSection === "team" && dashboard?.storefront && teamRepository ? (
+          <TeamManagementPanel storefrontId={dashboard.storefront.id} repository={teamRepository} />
+        ) : null}
+
+        {activeSection === "team" && (!dashboard?.storefront || !teamRepository) ? (
+          <EmptyHint text="A live approved storefront is required before team members can be added." />
         ) : null}
 
         {sellerSections.find((item) => item.key === activeSection)?.status === "coming_soon" ? (

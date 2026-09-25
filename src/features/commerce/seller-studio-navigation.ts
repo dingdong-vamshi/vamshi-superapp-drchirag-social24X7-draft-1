@@ -27,6 +27,7 @@ export type SellerSection =
   | "analytics"
   | "account_health"
   | "finance"
+  | "team"
   | "storefront"
   | "business_chat"
   | "creator_chat"
@@ -77,6 +78,7 @@ export const sellerNavigation: SellerNavigationGroup[] = [
   { key: "analytics", label: "Analytics", defaultSection: "analytics", children: [child("analytics", "Analytics")] },
   { key: "account_health", label: "Account Health", defaultSection: "account_health", children: [child("account_health", "Account Health", "coming_soon")] },
   { key: "finance", label: "Finance", defaultSection: "finance", children: [child("finance", "Finance")] },
+  { key: "team", label: "Team & verification", defaultSection: "team", children: [child("team", "Team & verification")] },
   { key: "storefront", label: "Storefront", defaultSection: "storefront", utility: true, children: [child("storefront", "Storefront")] },
   { key: "business_chat", label: "Business Chat", defaultSection: "business_chat", utility: true, children: [child("business_chat", "Business Chat")] },
   { key: "creator_chat", label: "Creator Chats", defaultSection: "creator_chat", utility: true, children: [child("creator_chat", "Creator Chats")] },
