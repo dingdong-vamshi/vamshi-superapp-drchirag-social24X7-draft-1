@@ -194,3 +194,10 @@ test("the role editor keeps stacked fields compact on phones", () => {
   assert.match(teamPanel, /label="Description"[\s\S]*?stacked/);
   assert.match(teamPanel, /fieldStacked:\s*\{ flexGrow: 0, flexBasis: "auto" \}/);
 });
+
+test("member supervision remains vertically reachable on narrow screens", () => {
+  assert.match(
+    teamPanel,
+    /function MemberModal[\s\S]*?<View style=\{styles\.modalScrim\}>\s*<ScrollView contentContainerStyle=\{styles\.modalScroll\}>\s*<View style=\{styles\.modalCardWide\}>/,
+  );
+});

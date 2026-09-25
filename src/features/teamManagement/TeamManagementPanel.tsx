@@ -902,7 +902,8 @@ function MemberModal({
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalScrim}>
-        <View style={styles.modalCardWide}>
+        <ScrollView contentContainerStyle={styles.modalScroll}>
+          <View style={styles.modalCardWide}>
           <View style={styles.modalHeader}>
             <View>
               <Text style={styles.modalTitle}>{member.fullName}</Text>
@@ -1129,7 +1130,8 @@ function MemberModal({
               The root Owner identity is protected.
             </Text>
           )}
-        </View>
+          </View>
+        </ScrollView>
       </View>
     </Modal>
   );
