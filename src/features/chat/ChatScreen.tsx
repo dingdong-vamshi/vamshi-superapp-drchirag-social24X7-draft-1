@@ -3270,6 +3270,21 @@ function MessageBubble({
               </Text>
             </View>
           )}
+          {message.businessRepresentative ? (
+            <View style={styles.representativeIdentity}>
+              <View style={styles.representativeNameRow}>
+                <Text style={[styles.representativeName, mine && styles.representativeNameMine]}>
+                  {message.businessRepresentative.name}
+                </Text>
+                {message.businessRepresentative.verified ? (
+                  <CheckCircle2 size={13} color={mine ? "#d9f3ff" : "#55b9ff"} />
+                ) : null}
+              </View>
+              <Text style={[styles.representativeTagline, mine && styles.representativeTaglineMine]}>
+                {message.businessRepresentative.tagline || `from ${message.businessRepresentative.company}`}
+              </Text>
+            </View>
+          ) : null}
           {message.type === "order_event" && message.order ? (
             <View
               style={[styles.orderEventCard, mine && styles.orderEventCardMine]}
@@ -6664,6 +6679,12 @@ const styles = StyleSheet.create({
   messageAvatarImage: { width: "100%", height: "100%" },
   messageAvatarText: { color: "#078549", fontSize: 9, fontWeight: "900" },
   messageText: { color: "#f6f8f7", fontSize: 15, lineHeight: 21 },
+  representativeIdentity: { marginBottom: 5 },
+  representativeNameRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  representativeName: { color: "#76e6b5", fontSize: 10, fontWeight: "900" },
+  representativeNameMine: { color: "#ffffff" },
+  representativeTagline: { color: "#b5c6bd", fontSize: 9, marginTop: 1 },
+  representativeTaglineMine: { color: "#d5f3e4" },
   messageLink: { color: "#76e6b5" },
   hiddenMessageBody: { display: "none" },
   orderEventCard: {

@@ -182,6 +182,12 @@ export type ChatMessage = {
   poll?: ChatPoll;
   event?: ChatEvent;
   reactions?: MessageReaction[];
+  businessRepresentative?: {
+    name: string;
+    tagline: string;
+    company: string;
+    verified: boolean;
+  };
 };
 
 export type BusinessStorefrontIdentity = {

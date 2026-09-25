@@ -289,6 +289,15 @@ const toMessage = (
         username: stringValue(payload.username),
       }
     : undefined;
+  const representativePayload = payload.business_representative;
+  const businessRepresentative = representativePayload && typeof representativePayload === 'object' && !Array.isArray(representativePayload)
+    ? {
+        name: stringValue((representativePayload as Record<string, unknown>).name),
+        tagline: stringValue((representativePayload as Record<string, unknown>).tagline),
+        company: stringValue((representativePayload as Record<string, unknown>).company),
+        verified: (representativePayload as Record<string, unknown>).verified === true,
+      }
+    : undefined;
   return {
     id: row.id,
     conversationId: row.conversation_id,
@@ -303,6 +312,7 @@ const toMessage = (
     location,
     contact,
     reactions,
+    businessRepresentative: businessRepresentative?.name && businessRepresentative.company ? businessRepresentative : undefined,
   };
 };
 
