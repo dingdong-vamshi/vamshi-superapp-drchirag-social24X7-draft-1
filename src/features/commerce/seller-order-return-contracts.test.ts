@@ -38,6 +38,9 @@ test('Return tracking remains an internal projection of persisted Return state',
 });
 
 test('Seller Returns and chat desks use their mobile containment layouts', () => {
+  assert.match(screen, /const narrowHeader = viewportWidth <= 430/);
+  assert.match(screen, /narrowHeader && styles\.topBarNarrow/);
+  assert.match(screen, /topBarNarrow:\s*\{ flexDirection: "column", alignItems: "stretch" \}/);
   assert.match(
     screen,
     /activeSection === "orders_returns"[\s\S]*?style=\{\[styles\.orderToolbar, mobileLayout && styles\.orderToolbarMobile\]\}/,

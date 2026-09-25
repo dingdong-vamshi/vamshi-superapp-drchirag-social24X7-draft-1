@@ -211,6 +211,7 @@ export function SellerStudioScreen({
 }: Props) {
   const { width: viewportWidth } = useWindowDimensions();
   const mobileLayout = viewportWidth < 900;
+  const narrowHeader = viewportWidth <= 430;
   const [dashboard, setDashboard] = useState<SellerDashboard | null>(null);
   const [sellerDraft, setSellerDraft] =
     useState<SellerApplicationDraft>(defaultSellerDraft);
@@ -1020,7 +1021,7 @@ export function SellerStudioScreen({
       </View>
 
       <ScrollView style={[styles.main, mobileLayout && styles.mainMobile]} contentContainerStyle={[styles.mainContent, mobileLayout && styles.mainContentMobile]}>
-        <View style={[styles.topBar, mobileLayout && styles.topBarMobile]}>
+        <View style={[styles.topBar, mobileLayout && styles.topBarMobile, narrowHeader && styles.topBarNarrow]}>
           <View style={styles.topBarCopy}>
             <Text style={styles.topBarTitle}>{sellerSectionLabel(activeSection)}</Text>
             <Text style={styles.topBarMeta}>
@@ -1029,7 +1030,7 @@ export function SellerStudioScreen({
               {dashboard?.storefront ? "Live workspace" : "Setup in progress"}
             </Text>
           </View>
-          <View style={[styles.topActions, mobileLayout && styles.topActionsMobile]}>
+          <View style={[styles.topActions, mobileLayout && styles.topActionsMobile, narrowHeader && styles.topActionsNarrow]}>
             <Pressable onPress={() => Alert.alert("Seller notifications", "Coming Soon. Order updates are available in Manage Orders now.")} style={styles.iconButton} accessibilityLabel="Notifications">
               <Bell size={18} color={ink} strokeWidth={2.1} />
               <View style={styles.notificationDot} />
@@ -2807,12 +2808,14 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   topBarMobile: { alignItems: "flex-start", gap: 10 },
+  topBarNarrow: { flexDirection: "column", alignItems: "stretch" },
   topBarCopy: { flex: 1, minWidth: 0 },
   topBarTitle: { color: ink, fontFamily: commerceFont, fontSize: 20, fontWeight: "800", letterSpacing: -0.45 },
   topBarMeta: { marginTop: 4, color: muted, fontSize: 12 },
   topBarDot: { color: "#b4bfc8" },
   topActions: { flexDirection: "row", alignItems: "center", gap: 10 },
   topActionsMobile: { flexShrink: 0, gap: 8 },
+  topActionsNarrow: { justifyContent: "flex-end" },
   iconButton: { width: 38, height: 38, borderRadius: 11, borderWidth: 1, borderColor: "#e5e8e9", backgroundColor: "#ffffff", alignItems: "center", justifyContent: "center" },
   notificationDot: { position: "absolute", width: 7, height: 7, borderRadius: 4, backgroundColor: green, borderWidth: 1, borderColor: "#ffffff", top: 8, right: 9 },
   topPrimaryAction: { minHeight: 38, paddingHorizontal: 13, borderRadius: 11, backgroundColor: green, flexDirection: "row", gap: 7, alignItems: "center", justifyContent: "center" },
