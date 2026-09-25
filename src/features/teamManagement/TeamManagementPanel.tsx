@@ -520,6 +520,9 @@ function Action({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled) }}
       disabled={disabled}
       onPress={onPress}
       style={[
@@ -554,6 +557,7 @@ function Field({
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -680,6 +684,9 @@ function InviteModal({
                   {dashboard.roles.map((role) => (
                     <Pressable
                       key={role.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Select ${role.name} role`}
+                      accessibilityState={{ selected: invite.roleId === role.id }}
                       onPress={() => patch("roleId", role.id)}
                       style={[
                         styles.roleChoice,

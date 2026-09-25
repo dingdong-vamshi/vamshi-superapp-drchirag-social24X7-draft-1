@@ -142,3 +142,9 @@ test("realtime membership changes revoke an inactive open session", () => {
   assert.match(workspace, /setContext\(null\)/);
   assert.match(workspace, /await signOut\(\)/);
 });
+
+test("team actions and member fields expose accessible control names", () => {
+  assert.match(teamPanel, /function Action\([\s\S]*accessibilityRole="button"[\s\S]*accessibilityLabel=\{label\}/);
+  assert.match(teamPanel, /function Field\([\s\S]*<TextInput[\s\S]*accessibilityLabel=\{label\}/);
+  assert.match(teamPanel, /accessibilityLabel=\{`Select \$\{role\.name\} role`\}/);
+});
