@@ -77,6 +77,7 @@ export default function BusinessLoginPage() {
           <View style={styles.inputWrap}>
             <UserRound size={18} color="#738294" />
             <TextInput
+              accessibilityLabel="Business login ID"
               autoCapitalize="none"
               autoCorrect={false}
               value={loginId}
@@ -92,6 +93,7 @@ export default function BusinessLoginPage() {
           <View style={styles.inputWrap}>
             <LockKeyhole size={18} color="#738294" />
             <TextInput
+              accessibilityLabel="Password"
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!visible}
@@ -101,6 +103,7 @@ export default function BusinessLoginPage() {
               onSubmitEditing={() => void submit()}
             />
             <Pressable
+              accessibilityRole="button"
               accessibilityLabel={visible ? "Hide password" : "Show password"}
               onPress={() => setVisible((current) => !current)}
             >
@@ -113,6 +116,9 @@ export default function BusinessLoginPage() {
           </View>
         </View>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open business workspace"
+          accessibilityState={{ disabled: busy, busy }}
           disabled={busy}
           onPress={() => void submit()}
           style={[styles.primary, busy && styles.disabled]}
@@ -124,6 +130,8 @@ export default function BusinessLoginPage() {
           )}
         </Pressable>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Create your work password"
           onPress={() => router.push("/business-activate")}
           style={styles.secondary}
         >
@@ -131,7 +139,11 @@ export default function BusinessLoginPage() {
             First time? Create your password
           </Text>
         </Pressable>
-        <Pressable onPress={() => router.replace("/login")}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Use a personal Social24 account"
+          onPress={() => router.replace("/login")}
+        >
           <Text style={styles.personal}>
             Use a personal Social24 account instead
           </Text>

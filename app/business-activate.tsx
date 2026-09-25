@@ -95,6 +95,8 @@ export default function BusinessActivatePage() {
               </Text>
             </View>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Go to work login"
               onPress={() => router.replace("/business-login")}
               style={styles.primary}
             >
@@ -134,6 +136,9 @@ export default function BusinessActivatePage() {
               symbol.
             </Text>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Create work password"
+              accessibilityState={{ disabled: busy, busy }}
               disabled={busy}
               onPress={() => void submit()}
               style={[styles.primary, busy && styles.disabled]}
@@ -144,7 +149,11 @@ export default function BusinessActivatePage() {
                 <Text style={styles.primaryText}>Create work password</Text>
               )}
             </Pressable>
-            <Pressable onPress={() => router.replace("/business-login")}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Back to work login"
+              onPress={() => router.replace("/business-login")}
+            >
               <Text style={styles.back}>Back to work login</Text>
             </Pressable>
           </>
@@ -172,6 +181,7 @@ function Field({
       <View style={styles.inputWrap}>
         {icon}
         <TextInput
+          accessibilityLabel={label}
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry={secure}

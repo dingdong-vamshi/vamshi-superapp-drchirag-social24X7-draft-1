@@ -5,6 +5,8 @@ import test from "node:test";
 const rootLayout = readFileSync("app/_layout.tsx", "utf8");
 const authContext = readFileSync("src/lib/AuthContext.tsx", "utf8");
 const supabaseClient = readFileSync("src/lib/supabase.ts", "utf8");
+const businessLogin = readFileSync("app/business-login.tsx", "utf8");
+const businessActivation = readFileSync("app/business-activate.tsx", "utf8");
 
 test("personal and business routes require their isolated authenticated identities", () => {
   assert.match(rootLayout, /const personalSession = Boolean\(session\?\.user\) && !workIdentity/);
@@ -38,4 +40,12 @@ test("business login validates work access before publishing the session", () =>
   assert.match(authContext, /const businessSignInInFlight = useRef\(false\)/);
   assert.match(authContext, /businessSignInInFlight\.current && nextSession/);
   assert.match(authContext, /businessSignInInFlight\.current = true[\s\S]*get_my_business_work_context[\s\S]*businessSignInInFlight\.current = false/);
+});
+
+test("business auth fields and actions expose accessible names", () => {
+  assert.match(businessLogin, /accessibilityLabel="Business login ID"/);
+  assert.match(businessLogin, /accessibilityLabel="Password"/);
+  assert.match(businessLogin, /accessibilityLabel="Open business workspace"/);
+  assert.match(businessActivation, /<TextInput[\s\S]*accessibilityLabel=\{label\}/);
+  assert.match(businessActivation, /accessibilityLabel="Create work password"/);
 });
