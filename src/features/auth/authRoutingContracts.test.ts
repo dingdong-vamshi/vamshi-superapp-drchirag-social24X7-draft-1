@@ -6,16 +6,21 @@ const rootLayout = readFileSync("app/_layout.tsx", "utf8");
 const authContext = readFileSync("src/lib/AuthContext.tsx", "utf8");
 const supabaseClient = readFileSync("src/lib/supabase.ts", "utf8");
 
-test("private application routes are guarded by a real authenticated session", () => {
-  assert.match(rootLayout, /<Stack\.Protected guard=\{Boolean\(session\?\.user\)\}>/);
+test("personal and business routes require their isolated authenticated identities", () => {
+  assert.match(rootLayout, /const personalSession = Boolean\(session\?\.user\) && !workIdentity/);
+  assert.match(rootLayout, /<Stack\.Protected guard=\{personalSession\}>/);
   assert.match(rootLayout, /<Stack\.Screen name="\(tabs\)" \/>/);
   assert.match(rootLayout, /<Stack\.Screen name="seller\/index" \/>/);
   assert.match(rootLayout, /<Stack\.Screen name="checkout\/index" \/>/);
+  assert.match(rootLayout, /<Stack\.Protected guard=\{Boolean\(session\?\.user\) && workIdentity\}>/);
+  assert.match(rootLayout, /<Stack\.Screen name="business-workspace" \/>/);
 });
 
 test("auth screens are only reachable while logged out", () => {
   assert.match(rootLayout, /<Stack\.Protected guard=\{!session\?\.user\}>/);
   assert.match(rootLayout, /<Stack\.Screen name="\(auth\)" \/>/);
+  assert.match(rootLayout, /<Stack\.Screen name="business-login" \/>/);
+  assert.match(rootLayout, /<Stack\.Screen name="business-activate" \/>/);
 });
 
 test("legacy demo sessions cannot satisfy production route guards", () => {
