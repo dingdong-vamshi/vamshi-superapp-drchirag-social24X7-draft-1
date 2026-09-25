@@ -49,7 +49,7 @@ type ParticipantRow = {
   pinned_at?: string | null;
   cleared_at?: string | null;
   member_role?: 'admin' | 'member';
-  profiles: ProfileRow | ProfileRow[] | null;
+  profiles?: ProfileRow | ProfileRow[] | null;
 };
 
 type ConversationRow = {
@@ -206,17 +206,7 @@ const CONVERSATION_SELECT = `
     manually_unread_at,
     pinned_at,
     cleared_at,
-    member_role,
-    profiles!conversation_participants_user_id_fkey(
-      id,
-      username,
-      display_name,
-      phone,
-      phone_discoverable,
-      username_discoverable,
-      is_private,
-      avatar_path
-    )
+    member_role
   )
 `;
 
@@ -408,8 +398,28 @@ export const createSupabaseChatRepository = ({
 
     if (error) throw new Error(error.message);
     const rows = (data as ConversationRow[] | null) ?? [];
+    await hydrateConversationProfiles(rows);
     await hydrateConversationAvatars(rows);
     return rows;
+  };
+
+  const hydrateConversationProfiles = async (rows: ConversationRow[]) => {
+    const participantIds = unique(rows.flatMap((row) =>
+      (row.conversation_participants ?? []).map((participant) => participant.user_id),
+    ));
+    if (!participantIds.length) return;
+    const { data, error } = await client
+      .from('profiles')
+      .select('id,username,display_name,phone,phone_discoverable,username_discoverable,is_private,avatar_path')
+      .in('id', participantIds);
+    if (error) throw new Error(error.message);
+    const profiles = new Map(
+      (((data as ProfileRow[] | null) ?? []).map((profile) => [profile.id, profile])),
+    );
+    rows.forEach((row) => row.conversation_participants?.forEach((participant) => {
+      const profile = profiles.get(participant.user_id);
+      participant.profiles = profile ? [profile] : [];
+    }));
   };
 
   const hydrateConversationAvatars = async (rows: ConversationRow[]) => {
@@ -445,6 +455,7 @@ export const createSupabaseChatRepository = ({
     if (error) throw new Error(error.message);
     const row = data as ConversationRow | null;
     if (!row) return null;
+    await hydrateConversationProfiles([row]);
     await hydrateConversationAvatars([row]);
     return row;
   };

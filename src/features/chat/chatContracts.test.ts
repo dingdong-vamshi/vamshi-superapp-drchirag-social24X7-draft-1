@@ -109,6 +109,19 @@ test("keeps capture provenance distinct from gallery uploads", () => {
   );
 });
 
+test("hydrates personal profiles without relying on the Auth participant foreign key", () => {
+  const repository = readFileSync(
+    new URL("./supabaseChatRepository.ts", import.meta.url),
+    "utf8",
+  );
+  const select = repository.match(/const CONVERSATION_SELECT = `[\s\S]*?`;/)?.[0] ?? "";
+
+  assert.doesNotMatch(select, /profiles!conversation_participants_user_id_fkey/);
+  assert.match(repository, /const hydrateConversationProfiles = async/);
+  assert.match(repository, /\.from\('profiles'\)[\s\S]*\.in\('id', participantIds\)/);
+  assert.match(repository, /participant\.profiles = profile \? \[profile\] : \[\]/);
+});
+
 test("validates location bounds", () => {
   assert.deepEqual(
     toLocation({
