@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -50,6 +51,7 @@ const authNotReady = new Error(
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const businessSignInInFlight = useRef(false);
 
   const refreshSession = useCallback(async () => {
     if (!supabase) {
@@ -97,6 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (businessSignInInFlight.current && nextSession) return;
       if (mounted) setSession(nextSession);
     });
 
@@ -171,28 +174,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInBusiness = useCallback(async (input: { loginId: string; password: string }) => {
     if (!supabase) throw authNotReady;
-    const email = businessLoginEmail(input.loginId);
-    const result = await supabase.auth.signInWithPassword({ email, password: input.password });
-    if (result.error || !result.data.session) return result;
-    if (result.data.user.app_metadata?.account_type !== "business_employee") {
-      await supabase.auth.signOut();
-      setSession(null);
-      return { data: { user: null, session: null }, error: new AuthError("This is not a business work login.", 403, "invalid_credentials") };
+    businessSignInInFlight.current = true;
+    try {
+      const email = businessLoginEmail(input.loginId);
+      const result = await supabase.auth.signInWithPassword({ email, password: input.password });
+      if (result.error || !result.data.session) return result;
+      if (result.data.user.app_metadata?.account_type !== "business_employee") {
+        await supabase.auth.signOut();
+        setSession(null);
+        return { data: { user: null, session: null }, error: new AuthError("This is not a business work login.", 403, "invalid_credentials") };
+      }
+      const { data: context, error: contextError } = await supabase.rpc("get_my_business_work_context");
+      const work = context as BusinessWorkContext | null;
+      if (contextError || !work || work.status !== "verified") {
+        await supabase.auth.signOut();
+        setSession(null);
+        const message = work?.status === "awaiting_approval"
+          ? "Your password is set. Ask the business owner to approve your work account."
+          : work?.status === "suspended" || work?.status === "removed"
+            ? "This work account no longer has access. Contact the business owner."
+            : "This work account is not ready yet.";
+        return { data: { user: null, session: null }, error: new AuthError(message, 403, "work_account_inactive") };
+      }
+      setSession(result.data.session);
+      return result;
+    } finally {
+      businessSignInInFlight.current = false;
     }
-    const { data: context, error: contextError } = await supabase.rpc("get_my_business_work_context");
-    const work = context as BusinessWorkContext | null;
-    if (contextError || !work || work.status !== "verified") {
-      await supabase.auth.signOut();
-      setSession(null);
-      const message = work?.status === "awaiting_approval"
-        ? "Your password is set. Ask the business owner to approve your work account."
-        : work?.status === "suspended" || work?.status === "removed"
-          ? "This work account no longer has access. Contact the business owner."
-          : "This work account is not ready yet.";
-      return { data: { user: null, session: null }, error: new AuthError(message, 403, "work_account_inactive") };
-    }
-    setSession(result.data.session);
-    return result;
   }, []);
 
   const signOut = useCallback(async () => {

@@ -33,3 +33,9 @@ test("web confirmation redirects are detected and session persistence is enabled
   assert.match(supabaseClient, /autoRefreshToken: true/);
   assert.match(supabaseClient, /detectSessionInUrl: Platform\.OS === 'web'/);
 });
+
+test("business login validates work access before publishing the session", () => {
+  assert.match(authContext, /const businessSignInInFlight = useRef\(false\)/);
+  assert.match(authContext, /businessSignInInFlight\.current && nextSession/);
+  assert.match(authContext, /businessSignInInFlight\.current = true[\s\S]*get_my_business_work_context[\s\S]*businessSignInInFlight\.current = false/);
+});
