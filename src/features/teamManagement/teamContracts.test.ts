@@ -13,6 +13,7 @@ const runtimeFixes = migration("20260925093428_fix_team_management_runtime_contr
 const activationHookFix = migration("20260925094348_allow_claimed_work_identity_creation.sql");
 const workConversationFix = migration("20260925094757_use_storefront_owner_for_work_conversations.sql");
 const conversationIdFix = migration("20260925094914_disambiguate_work_conversation_id.sql");
+const workParticipantFix = migration("20260925095059_allow_work_identity_conversation_participants.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const workspace = readFileSync(join(root, "app", "business-workspace.tsx"), "utf8");
@@ -66,6 +67,11 @@ test("phone-started work chats use an unambiguous conversation identifier", () =
   assert.match(conversationIdFix, /created_conversation_id uuid/);
   assert.match(conversationIdFix, /assignment\.conversation_id = created_conversation_id/);
   assert.doesNotMatch(conversationIdFix, /where assignment\.conversation_id = conversation_id/);
+});
+
+test("conversation membership accepts isolated Auth-only work identities", () => {
+  assert.match(workParticipantFix, /references auth\.users\(id\) on delete cascade/);
+  assert.doesNotMatch(workParticipantFix, /references public\.profiles/);
 });
 
 test("work identities receive PII-safe projections and authoritative badges", () => {
