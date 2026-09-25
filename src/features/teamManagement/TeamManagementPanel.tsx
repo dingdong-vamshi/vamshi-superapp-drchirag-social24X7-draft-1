@@ -337,6 +337,9 @@ export default function TeamManagementPanel({
         ).map((item) => (
           <Pressable
             key={item}
+            accessibilityRole="button"
+            accessibilityLabel={`${item === "all" ? "All" : teamStatusLabel[item]} members`}
+            accessibilityState={{ selected: filter === item }}
             onPress={() => setFilter(item)}
             style={[styles.filter, filter === item && styles.filterActive]}
           >
@@ -361,6 +364,8 @@ export default function TeamManagementPanel({
           return (
             <Pressable
               key={member.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Open team member ${member.fullName}`}
               onPress={() => setSelected(member)}
               style={[styles.memberRow, compact && styles.memberRowCompact]}
             >
@@ -965,6 +970,9 @@ function MemberModal({
               {conversations.map((conversation) => (
                 <Pressable
                   key={conversation.conversationId}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Monitor chat with ${conversation.customerDisplayName}`}
+                  accessibilityState={{ selected: selectedConversation?.conversationId === conversation.conversationId }}
                   onPress={() => setSelectedConversation(conversation)}
                   style={[
                     styles.supervisorConversation,
@@ -1021,6 +1029,9 @@ function MemberModal({
                       {reassignable.map((candidate) => (
                         <Pressable
                           key={candidate.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Reassign conversation to ${candidate.fullName}`}
+                          accessibilityState={{ disabled: chatBusy }}
                           disabled={chatBusy}
                           onPress={() => void reassign(candidate)}
                           style={styles.reassignButton}
