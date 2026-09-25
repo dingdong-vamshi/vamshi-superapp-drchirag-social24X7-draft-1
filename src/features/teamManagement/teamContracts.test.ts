@@ -17,6 +17,7 @@ const workParticipantFix = migration("20260925095059_allow_work_identity_convers
 const workMessageFix = migration("20260925095159_preserve_work_message_attribution.sql");
 const customRoleFix = migration("20260925095528_allow_storefront_custom_roles.sql");
 const cryptoPathFix = migration("20260925095804_secure_team_activation_crypto_path.sql");
+const storefrontBootstrap = migration("20260925110000_bootstrap_new_storefront_teams.sql");
 const edge = readFileSync(join(root, "supabase", "functions", "business-work-auth", "index.ts"), "utf8");
 const teamRepository = readFileSync(join(root, "src", "features", "teamManagement", "teamRepository.ts"), "utf8");
 const teamPanel = readFileSync(join(root, "src", "features", "teamManagement", "TeamManagementPanel.tsx"), "utf8");
@@ -28,6 +29,14 @@ test("team entities are tenant-scoped and protected by RLS", () => {
   }
   assert.match(authorization, /business_team_manage/);
   assert.match(authorization, /identity_kind = 'work'/);
+});
+
+test("new storefronts receive isolated roles and an owner membership", () => {
+  assert.match(storefrontBootstrap, /after insert on public\.storefronts/);
+  assert.match(storefrontBootstrap, /private\.bootstrap_storefront_team\(new\.id\)/);
+  assert.match(storefrontBootstrap, /on conflict \(storefront_id, system_key\)[\s\S]*do nothing/);
+  assert.match(storefrontBootstrap, /on conflict \(storefront_id, auth_user_id\) do nothing/);
+  assert.match(storefrontBootstrap, /revoke all on function private\.bootstrap_storefront_team\(uuid\) from public/);
 });
 
 test("activation uses server-only admin auth and one-time claim completion", () => {
